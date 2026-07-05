@@ -2,11 +2,11 @@ import { useMemo, useState } from 'react'
 import { buildQuizQuestions } from '../../lib/quizGenerator.js'
 import QuestionCard from './QuestionCard.jsx'
 
-export default function QuizSession({ pool, allCards, title, onRecordReview, onFinish }) {
+export default function QuizSession({ pool, config, title, onRecordReview, onChangeMode, onFinish }) {
   const questions = useMemo(() => {
     const shuffledPool = [...pool].sort(() => Math.random() - 0.5)
-    return buildQuizQuestions(shuffledPool, allCards)
-  }, [pool, allCards])
+    return buildQuizQuestions(shuffledPool, config)
+  }, [pool, config])
 
   const [index, setIndex] = useState(0)
   const [tally, setTally] = useState({ correct: 0, wrong: 0 })
@@ -14,8 +14,10 @@ export default function QuizSession({ pool, allCards, title, onRecordReview, onF
   if (questions.length === 0) {
     return (
       <div className="quiz-session">
-        <p>目前沒有可以出題的內容（這些字卡缺少足夠的例句/欄位）。</p>
-        <button onClick={onFinish}>返回</button>
+        <p>這批字卡沒有符合目前設定（{config.unit === 'sentence' ? '例句' : '單字'}）的內容可以出題。</p>
+        <button className="primary-button" onClick={onChangeMode}>
+          重新選擇模式
+        </button>
       </div>
     )
   }
@@ -27,7 +29,9 @@ export default function QuizSession({ pool, allCards, title, onRecordReview, onF
         <p>
           共 {questions.length} 題，答對 {tally.correct} 題，答錯 {tally.wrong} 題。
         </p>
-        <button onClick={onFinish}>完成</button>
+        <button className="primary-button" onClick={onFinish}>
+          完成
+        </button>
       </div>
     )
   }

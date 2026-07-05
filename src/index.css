@@ -167,6 +167,11 @@ button {
   font-size: 13px;
   margin-left: 8px;
 }
+.primary-button:disabled,
+.setup-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* Calendar */
 .calendar-header {
@@ -370,28 +375,6 @@ button {
   font-size: 22px;
   margin: 0;
 }
-.question-options {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.option-button {
-  text-align: left;
-  padding: 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  font-size: 15px;
-}
-.option-correct {
-  border-color: var(--correct);
-  background: color-mix(in srgb, var(--correct) 15%, var(--surface));
-}
-.option-wrong {
-  border-color: var(--wrong);
-  background: color-mix(in srgb, var(--wrong) 15%, var(--surface));
-}
 .reveal-button {
   align-self: flex-start;
   padding: 8px 16px;
@@ -403,6 +386,12 @@ button {
 .question-answer {
   font-size: 20px;
   color: var(--primary);
+}
+.question-correct-banner {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--correct);
+  margin: 0;
 }
 .self-grade-buttons {
   display: flex;
@@ -422,16 +411,101 @@ button {
 .grade-wrong {
   background: var(--wrong);
 }
-.continue-button {
-  align-self: flex-end;
-  padding: 8px 20px;
-  border-radius: 8px;
-  border: none;
-  background: var(--primary);
-  color: var(--primary-text);
-}
 .quiz-summary {
   text-align: center;
+}
+
+.typing-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.typing-form input {
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 18px;
+}
+.typing-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.typing-actions .primary-button {
+  flex: 1;
+}
+
+.diff-line {
+  font-size: 20px;
+  line-height: 1.6;
+  padding: 10px 0;
+  word-break: break-all;
+}
+.diff-match {
+  color: var(--text);
+}
+.diff-wrong {
+  background: color-mix(in srgb, var(--wrong) 30%, transparent);
+  border-radius: 4px;
+}
+.diff-missing-char,
+.diff-missing-space {
+  color: var(--weak);
+  font-weight: 600;
+}
+
+.practice-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.setup-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.setup-label {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.setup-options {
+  display: flex;
+  gap: 8px;
+}
+.setup-option {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 16px;
+}
+.setup-option small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.setup-option.active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 15%, var(--surface));
+}
+.setup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.secondary-button {
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
 }
 
 /* Vocab book */

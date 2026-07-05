@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthContext.jsx'
 import { useCards } from '../../contexts/CardsContext.jsx'
 import { isDueToday } from '../../lib/srs.js'
 import { recordReview } from '../../lib/firestoreApi.js'
-import QuizSession from '../Quiz/QuizSession.jsx'
+import PracticeFlow from '../Quiz/PracticeFlow.jsx'
 
 export default function DueTodayPanel() {
   const { user } = useAuth()
@@ -16,9 +16,8 @@ export default function DueTodayPanel() {
 
   if (reviewing) {
     return (
-      <QuizSession
+      <PracticeFlow
         pool={dueCards}
-        allCards={cards}
         title="今日複習"
         onRecordReview={(cardId, wasCorrect) => recordReview(user.uid, cardId, wasCorrect)}
         onFinish={() => {

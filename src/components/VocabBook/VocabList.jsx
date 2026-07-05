@@ -4,7 +4,7 @@ import { useCards } from '../../contexts/CardsContext.jsx'
 import { masteryOf, MASTERY, MASTERY_LABEL } from '../../lib/mastery.js'
 import { recordReview } from '../../lib/firestoreApi.js'
 import VocabDetailPanel from './VocabDetailPanel.jsx'
-import QuizSession from '../Quiz/QuizSession.jsx'
+import PracticeFlow from '../Quiz/PracticeFlow.jsx'
 
 export default function VocabList() {
   const { user } = useAuth()
@@ -34,9 +34,8 @@ export default function VocabList() {
 
   if (practicing) {
     return (
-      <QuizSession
+      <PracticeFlow
         pool={filtered}
-        allCards={cards}
         title="單字本複習"
         onRecordReview={(cardId, wasCorrect) => recordReview(user.uid, cardId, wasCorrect)}
         onFinish={() => {

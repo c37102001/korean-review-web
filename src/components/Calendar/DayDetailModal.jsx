@@ -4,11 +4,11 @@ import { useCards } from '../../contexts/CardsContext.jsx'
 import { fetchCardsForDate, recordReview } from '../../lib/firestoreApi.js'
 import CardView from '../CardView.jsx'
 import JsonImportForm from './JsonImportForm.jsx'
-import QuizSession from '../Quiz/QuizSession.jsx'
+import PracticeFlow from '../Quiz/PracticeFlow.jsx'
 
 export default function DayDetailModal({ date, onClose }) {
   const { user } = useAuth()
-  const { cards, refresh } = useCards()
+  const { refresh } = useCards()
   const [dayCards, setDayCards] = useState(null)
   const [loading, setLoading] = useState(true)
   const [mode, setMode] = useState('view') // 'view' | 'import' | 'practice'
@@ -82,9 +82,8 @@ export default function DayDetailModal({ date, onClose }) {
         )}
 
         {mode === 'practice' && dayCards && dayCards.length > 0 && (
-          <QuizSession
+          <PracticeFlow
             pool={dayCards}
-            allCards={cards}
             title={`練習 ${date}`}
             onRecordReview={(cardId, wasCorrect) => recordReview(user.uid, cardId, wasCorrect)}
             onFinish={async () => {
