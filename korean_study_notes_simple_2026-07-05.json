@@ -1,0 +1,987 @@
+{
+  "data": [
+    {
+      "ko": "뉴스",
+      "zh": "新聞",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "新聞",
+      "examples": [
+        {
+          "ko": "9시 뉴스입니다.",
+          "zh": "現在是九點新聞。"
+        }
+      ]
+    },
+    {
+      "ko": "질문",
+      "zh": "問題、提問",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "質問/問題",
+      "examples": [
+        {
+          "ko": "질문 있습니까?",
+          "zh": "有問題嗎？"
+        }
+      ],
+      "notes": [
+        "指向別人提出的 question。筆記中特別和 문제 做區分。"
+      ],
+      "related": [
+        "문제"
+      ]
+    },
+    {
+      "ko": "사진",
+      "zh": "照片",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "照片",
+      "examples": [
+        {
+          "ko": "이 사진을 보세요.",
+          "zh": "請看這張照片。"
+        }
+      ]
+    },
+    {
+      "ko": "햄버거",
+      "zh": "漢堡",
+      "type": "vocabulary",
+      "pos": "noun"
+    },
+    {
+      "ko": "일기",
+      "zh": "日記",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "日記"
+    },
+    {
+      "ko": "간호사",
+      "zh": "護士",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "護士"
+    },
+    {
+      "ko": "의자",
+      "zh": "椅子",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "椅子"
+    },
+    {
+      "ko": "문제",
+      "zh": "問題、狀況；考試題目",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "問題",
+      "examples": [
+        {
+          "ko": "문제 상황",
+          "zh": "問題狀況。"
+        },
+        {
+          "ko": "시험 문제",
+          "zh": "考試題目。"
+        }
+      ],
+      "notes": [
+        "和 질문 不同，문제 可以是 problem / issue，也可以是考試題目。"
+      ],
+      "related": [
+        "질문",
+        "문제를 풀다"
+      ]
+    },
+    {
+      "ko": "문제를 풀다",
+      "zh": "解題、解決問題",
+      "type": "collocation",
+      "pos": "verb_phrase",
+      "forms": {
+        "dictionary": "문제를 풀다",
+        "polite_present": "문제를 풀어요"
+      },
+      "examples": [
+        {
+          "ko": "문제를 풀어요.",
+          "zh": "解題。"
+        }
+      ],
+      "notes": [
+        "풀다 在這裡是解開、解決。"
+      ]
+    },
+    {
+      "ko": "꺼내다",
+      "zh": "拿出來、取出",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "꺼내다",
+        "polite_present": "꺼내요",
+        "polite_past": "꺼냈어요"
+      },
+      "examples": [
+        {
+          "ko": "가방에서 지갑을 꺼내요.",
+          "zh": "從包包裡拿出錢包。"
+        },
+        {
+          "ko": "주머니에서 핸드폰을 꺼냈어요.",
+          "zh": "從口袋裡拿出了手機。"
+        },
+        {
+          "ko": "냉장고에서 물을 꺼내 주세요.",
+          "zh": "請從冰箱裡把水拿出來。"
+        }
+      ]
+    },
+    {
+      "ko": "신발",
+      "zh": "鞋子",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "鞋子"
+    },
+    {
+      "ko": "양말",
+      "zh": "襪子",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "襪子"
+    },
+    {
+      "ko": "구두",
+      "zh": "皮鞋",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "皮鞋"
+    },
+    {
+      "ko": "운동화",
+      "zh": "運動鞋",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "運動鞋"
+    },
+    {
+      "ko": "슬리퍼",
+      "zh": "拖鞋",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "拖鞋"
+    },
+    {
+      "ko": "부츠",
+      "zh": "靴子、長靴",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "靴子"
+    },
+    {
+      "ko": "서다",
+      "zh": "站；停",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "서다",
+        "polite_present": "서요",
+        "polite_past": "섰어요"
+      },
+      "senses": [
+        {
+          "zh": "站",
+          "examples": [
+            {
+              "ko": "저는 문 앞에 서 있어요.",
+              "zh": "我站在門前。"
+            },
+            {
+              "ko": "일어서세요.",
+              "zh": "請站起來。"
+            }
+          ]
+        },
+        {
+          "zh": "停",
+          "examples": [
+            {
+              "ko": "버스가 섰어요.",
+              "zh": "巴士停了。"
+            },
+            {
+              "ko": "차가 신호등 앞에 섰어요.",
+              "zh": "車停在紅綠燈前。"
+            }
+          ]
+        }
+      ],
+      "notes": [
+        "서 있어요 表示站著的狀態。",
+        "일어서다 = 站起來；일어나다 = 起床、起來。"
+      ],
+      "related": [
+        "일어서다",
+        "일어나다"
+      ]
+    },
+    {
+      "ko": "일어서다",
+      "zh": "站起來",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "일어서다",
+        "imperative_polite": "일어서세요"
+      },
+      "examples": [
+        {
+          "ko": "일어서세요.",
+          "zh": "請站起來。"
+        }
+      ]
+    },
+    {
+      "ko": "일어나다",
+      "zh": "起床、起來",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "일어나다"
+      },
+      "notes": [
+        "筆記用來和 일어서다（站起來）區分。"
+      ]
+    },
+    {
+      "ko": "인터넷",
+      "zh": "網路、網際網路",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "網路",
+      "examples": [
+        {
+          "ko": "인터넷에 문제가 있어요.",
+          "zh": "網路有問題。"
+        }
+      ],
+      "notes": [
+        "인터넷에 可連音成類似 [인터네세]。"
+      ]
+    },
+    {
+      "ko": "설명하다",
+      "zh": "說明、解釋",
+      "type": "verb",
+      "pos": "verb",
+      "hanja": "說明/解釋",
+      "forms": {
+        "dictionary": "설명하다",
+        "polite_present": "설명해요"
+      },
+      "examples": [
+        {
+          "ko": "이 문제를 다시 설명해 주세요.",
+          "zh": "請再說明一次這題。"
+        }
+      ]
+    },
+    {
+      "ko": "숙제하다",
+      "zh": "做作業、做功課",
+      "type": "verb",
+      "pos": "verb",
+      "hanja": "宿題",
+      "forms": {
+        "dictionary": "숙제하다"
+      }
+    },
+    {
+      "ko": "달리기를 하다",
+      "zh": "跑步",
+      "type": "expression",
+      "pos": "verb_phrase",
+      "forms": {
+        "polite_present": "달리기를 해요"
+      },
+      "examples": [
+        {
+          "ko": "달리기를 해요.",
+          "zh": "跑步。"
+        }
+      ]
+    },
+    {
+      "ko": "주위",
+      "zh": "周圍、附近；身邊的人",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "周圍/附近/身邊的人",
+      "examples": [
+        {
+          "ko": "주위 사람들이 다 결혼했어요.",
+          "zh": "身邊的人都結婚了。"
+        },
+        {
+          "ko": "주위에 한국어를 하는 사람이 없어요.",
+          "zh": "身邊沒有會說韓文的人。"
+        }
+      ]
+    },
+    {
+      "ko": "지구는 태양 주위를 돌아요.",
+      "zh": "地球繞著太陽轉。",
+      "type": "example_sentence",
+      "pos": "sentence",
+      "components": [
+        {
+          "ko": "지구",
+          "zh": "地球"
+        },
+        {
+          "ko": "태양",
+          "zh": "太陽"
+        },
+        {
+          "ko": "주위",
+          "zh": "周圍"
+        },
+        {
+          "ko": "돌다",
+          "zh": "轉、繞行"
+        }
+      ]
+    },
+    {
+      "ko": "지구",
+      "zh": "地球",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "地球"
+    },
+    {
+      "ko": "태양",
+      "zh": "太陽",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "太陽"
+    },
+    {
+      "ko": "돌다",
+      "zh": "轉、繞、繞行",
+      "type": "verb",
+      "pos": "verb",
+      "hanja": "轉",
+      "forms": {
+        "dictionary": "돌다",
+        "polite_present": "돌아요"
+      },
+      "examples": [
+        {
+          "ko": "지구는 태양 주위를 돌아요.",
+          "zh": "地球繞著太陽轉。"
+        }
+      ]
+    },
+    {
+      "ko": "태어나다",
+      "zh": "出生",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "태어나다",
+        "polite_present": "태어나요",
+        "polite_past": "태어났어요"
+      },
+      "examples": [
+        {
+          "ko": "1994년 4월 14일에 태어났어요.",
+          "zh": "我在 1994 年 4 月 14 日出生。"
+        }
+      ]
+    },
+    {
+      "ko": "부르다",
+      "zh": "叫、呼喚；稱作；唱",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "부르다",
+        "polite_present": "불러요",
+        "polite_past": "불렀어요"
+      },
+      "senses": [
+        {
+          "zh": "叫、呼喚某人",
+          "pattern": "사람을 부르다",
+          "examples": [
+            {
+              "ko": "선생님을 불러요.",
+              "zh": "叫老師。"
+            },
+            {
+              "ko": "이름을 불러 주세요.",
+              "zh": "請叫名字。"
+            }
+          ]
+        },
+        {
+          "zh": "把 A 叫作 B",
+          "pattern": "A를 B라고 부르다",
+          "examples": [
+            {
+              "ko": "저를 지호라고 불러 주세요.",
+              "zh": "請叫我 지호。"
+            },
+            {
+              "ko": "이걸 한국어로 뭐라고 불러요?",
+              "zh": "這個用韓文叫什麼？"
+            }
+          ]
+        },
+        {
+          "zh": "唱",
+          "pattern": "노래를 부르다",
+          "examples": [
+            {
+              "ko": "노래를 불러요.",
+              "zh": "唱歌。"
+            }
+          ]
+        }
+      ],
+      "notes": [
+        "르 불규칙：부르다 → 불러요 → 불렀어요。"
+      ]
+    },
+    {
+      "ko": "게임하다",
+      "zh": "玩遊戲",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "게임하다"
+      }
+    },
+    {
+      "ko": "낚시하다",
+      "zh": "釣魚",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "낚시하다"
+      }
+    },
+    {
+      "ko": "샤워하다",
+      "zh": "沖澡、淋浴",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "샤워하다"
+      }
+    },
+    {
+      "ko": "전화를 받다",
+      "zh": "接電話",
+      "type": "collocation",
+      "pos": "verb_phrase",
+      "forms": {
+        "polite_present": "전화를 받아요"
+      },
+      "examples": [
+        {
+          "ko": "전화를 받아요.",
+          "zh": "接電話。"
+        }
+      ]
+    },
+    {
+      "ko": "갈아입다",
+      "zh": "換衣服",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "갈아입다",
+        "polite_present": "갈아입어요"
+      },
+      "examples": [
+        {
+          "ko": "옷을 갈아입어요.",
+          "zh": "換衣服。"
+        }
+      ]
+    },
+    {
+      "ko": "붓다",
+      "zh": "倒、倒入、注入；腫起來、浮腫",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "붓다",
+        "polite_present": "부어요",
+        "polite_past": "부었어요",
+        "future": "부을 거예요"
+      },
+      "senses": [
+        {
+          "zh": "倒、倒入、注入",
+          "examples": [
+            {
+              "ko": "물을 컵에 부어요.",
+              "zh": "把水倒進杯子裡。"
+            },
+            {
+              "ko": "냄비에 물을 부었어요.",
+              "zh": "把水倒進鍋子裡了。"
+            },
+            {
+              "ko": "소스를 조금 부어 주세요.",
+              "zh": "請倒一點醬汁。"
+            }
+          ]
+        },
+        {
+          "zh": "腫起來、浮腫",
+          "examples": [
+            {
+              "ko": "얼굴이 부었어요.",
+              "zh": "臉腫了。"
+            },
+            {
+              "ko": "눈이 많이 부었어요.",
+              "zh": "眼睛腫很多。"
+            },
+            {
+              "ko": "다리가 부었어요.",
+              "zh": "腿腫了。"
+            }
+          ]
+        }
+      ],
+      "notes": [
+        "ㅅ 불규칙：붓다 → 부어요，不是 붓어요。"
+      ]
+    },
+    {
+      "ko": "불다",
+      "zh": "吹",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "불다",
+        "polite_present": "불어요"
+      },
+      "examples": [
+        {
+          "ko": "바람이 불어요.",
+          "zh": "風在吹。"
+        }
+      ]
+    },
+    {
+      "ko": "불다 / 부르다 / 붓다",
+      "zh": "相似發音動詞比較",
+      "type": "contrast",
+      "items": [
+        {
+          "ko": "불다 → 불어요",
+          "zh": "吹：바람이 불어요."
+        },
+        {
+          "ko": "부르다 → 불러요",
+          "zh": "叫/唱：노래를 불러요."
+        },
+        {
+          "ko": "붓다 → 부어요",
+          "zh": "倒入/腫：물을 부어요."
+        }
+      ]
+    },
+    {
+      "ko": "돕다",
+      "zh": "幫助",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "돕다",
+        "polite_present": "도와요",
+        "future": "도울 거예요"
+      },
+      "notes": [
+        "ㅂ 불규칙：돕다 → 도와요。"
+      ],
+      "related": [
+        "도와주다"
+      ]
+    },
+    {
+      "ko": "도와주다",
+      "zh": "幫忙、給予幫助",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "도와주다",
+        "polite_present": "도와줘요",
+        "future_commitment": "도와줄게요"
+      },
+      "examples": [
+        {
+          "ko": "좀 도와주세요.",
+          "zh": "請幫我一下。"
+        },
+        {
+          "ko": "누가 도와줄 수 있어요?",
+          "zh": "有人可以幫忙嗎？"
+        },
+        {
+          "ko": "제가 도와줄게요.",
+          "zh": "我來幫你。"
+        }
+      ]
+    },
+    {
+      "ko": "똑같다",
+      "zh": "一模一樣、完全一樣",
+      "type": "adjective",
+      "pos": "adjective",
+      "forms": {
+        "dictionary": "똑같다",
+        "polite_present": "똑같아요",
+        "adverb": "똑같이"
+      },
+      "examples": [
+        {
+          "ko": "이거랑 저거랑 똑같아요.",
+          "zh": "這個跟那個一模一樣。"
+        },
+        {
+          "ko": "두 사람이 정말 똑같이 생겼어요.",
+          "zh": "兩個人長得真的一模一樣。"
+        },
+        {
+          "ko": "색깔이 똑같아요.",
+          "zh": "顏色一模一樣。"
+        },
+        {
+          "ko": "제 생각도 똑같아요.",
+          "zh": "我的想法也一樣。"
+        }
+      ]
+    },
+    {
+      "ko": "고향",
+      "zh": "老家、故鄉",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "老家",
+      "examples": [
+        {
+          "ko": "언제 고향에 돌아가요?",
+          "zh": "什麼時候回老家？"
+        }
+      ]
+    },
+    {
+      "ko": "내년",
+      "zh": "明年",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "明年",
+      "examples": [
+        {
+          "ko": "내년에 돌아갈 거예요.",
+          "zh": "明年會回去。"
+        }
+      ]
+    },
+    {
+      "ko": "피아노를 치다",
+      "zh": "彈鋼琴",
+      "type": "collocation",
+      "pos": "verb_phrase",
+      "forms": {
+        "polite_present": "피아노를 쳐요"
+      }
+    },
+    {
+      "ko": "세수하다",
+      "zh": "洗臉",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "세수하다",
+        "polite_present": "세수해요"
+      }
+    },
+    {
+      "ko": "손을 씻다",
+      "zh": "洗手",
+      "type": "collocation",
+      "pos": "verb_phrase",
+      "forms": {
+        "dictionary": "손을 씻다",
+        "polite_present": "손을 씻어요"
+      }
+    },
+    {
+      "ko": "샤워하다",
+      "zh": "洗澡、沖澡",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "샤워하다",
+        "polite_present": "샤워해요"
+      }
+    },
+    {
+      "ko": "머리를 감다",
+      "zh": "洗頭",
+      "type": "collocation",
+      "pos": "verb_phrase",
+      "forms": {
+        "dictionary": "머리를 감다",
+        "polite_present": "머리를 감아요"
+      }
+    },
+    {
+      "ko": "반지",
+      "zh": "戒指",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "戒指"
+    },
+    {
+      "ko": "사다",
+      "zh": "買",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "사다"
+      },
+      "related": [
+        "싸다"
+      ]
+    },
+    {
+      "ko": "싸다",
+      "zh": "便宜",
+      "type": "adjective",
+      "pos": "adjective",
+      "forms": {
+        "dictionary": "싸다"
+      },
+      "related": [
+        "사다"
+      ]
+    },
+    {
+      "ko": "길다",
+      "zh": "長",
+      "type": "adjective",
+      "pos": "adjective",
+      "hanja": "長",
+      "forms": {
+        "dictionary": "길다",
+        "polite_present": "길어요"
+      },
+      "examples": [
+        {
+          "ko": "머리가 길어요.",
+          "zh": "頭髮很長。"
+        }
+      ]
+    },
+    {
+      "ko": "친절하다",
+      "zh": "親切、熱心",
+      "type": "adjective",
+      "pos": "adjective",
+      "forms": {
+        "dictionary": "친절하다",
+        "polite_present": "친절해요",
+        "adverb": "친절하게"
+      },
+      "examples": [
+        {
+          "ko": "직원이 친절해요.",
+          "zh": "店員很親切。"
+        }
+      ]
+    },
+    {
+      "ko": "한가하다",
+      "zh": "空閒、不忙、閒",
+      "type": "adjective",
+      "pos": "adjective",
+      "forms": {
+        "dictionary": "한가하다",
+        "polite_present": "한가해요"
+      },
+      "examples": [
+        {
+          "ko": "오늘 좀 한가해요.",
+          "zh": "今天比較不忙。"
+        },
+        {
+          "ko": "한가할 때 연락해 주세요.",
+          "zh": "有空的時候請聯絡我。"
+        }
+      ]
+    },
+    {
+      "ko": "담배를 피우다",
+      "zh": "抽菸",
+      "type": "collocation",
+      "pos": "verb_phrase",
+      "forms": {
+        "dictionary": "담배를 피우다",
+        "polite_present": "담배를 피워요"
+      },
+      "examples": [
+        {
+          "ko": "담배를 끊었어요.",
+          "zh": "戒菸了。"
+        }
+      ],
+      "related": [
+        "끊다"
+      ]
+    },
+    {
+      "ko": "현재",
+      "zh": "現在",
+      "type": "vocabulary",
+      "pos": "noun/adverb",
+      "hanja": "現在"
+    },
+    {
+      "ko": "안경",
+      "zh": "眼鏡",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "眼鏡"
+    },
+    {
+      "ko": "치마",
+      "zh": "裙子",
+      "type": "vocabulary",
+      "pos": "noun",
+      "hanja": "裙子"
+    },
+    {
+      "ko": "끝나다",
+      "zh": "結束、結束了（事情自己結束）",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "끝나다",
+        "polite_past": "끝났어요"
+      },
+      "examples": [
+        {
+          "ko": "수업이 끝났어요.",
+          "zh": "課結束了。"
+        },
+        {
+          "ko": "일이 끝났어요.",
+          "zh": "工作/事情結束了。"
+        }
+      ],
+      "notes": [
+        "偏向事情、課程、工作等自己結束；英文可理解為 end。"
+      ],
+      "related": [
+        "끝내다",
+        "끊다"
+      ]
+    },
+    {
+      "ko": "끝내다",
+      "zh": "完成、把某事結束掉",
+      "type": "verb",
+      "pos": "verb",
+      "forms": {
+        "dictionary": "끝내다",
+        "polite_past": "끝냈어요"
+      },
+      "examples": [
+        {
+          "ko": "숙제를 끝냈어요.",
+          "zh": "把作業做完了。"
+        },
+        {
+          "ko": "일을 끝냈어요.",
+          "zh": "把工作/事情完成了。"
+        }
+      ],
+      "notes": [
+        "偏向人主動把某件事情做完；英文可理解為 finish something。"
+      ],
+      "related": [
+        "끝나다",
+        "끊다"
+      ]
+    },
+    {
+      "ko": "끊다",
+      "zh": "切斷、斷開、戒掉",
+      "type": "verb",
+      "pos": "verb",
+      "hanja": "切斷/斷開/戒掉",
+      "forms": {
+        "dictionary": "끊다",
+        "polite_present": "끊어요",
+        "polite_past": "끊었어요"
+      },
+      "examples": [
+        {
+          "ko": "담배를 끊었어요.",
+          "zh": "戒菸了。"
+        },
+        {
+          "ko": "술을 끊었어요.",
+          "zh": "戒酒了。"
+        },
+        {
+          "ko": "연락을 끊었어요.",
+          "zh": "斷了聯絡。"
+        },
+        {
+          "ko": "전화를 끊었어요.",
+          "zh": "掛電話了。"
+        }
+      ],
+      "notes": [
+        "不是 끝다。和 끝나다/끝내다 的『結束』不同，끊다 有切斷、戒掉、掛斷的意思。"
+      ],
+      "related": [
+        "끝나다",
+        "끝내다"
+      ]
+    },
+    {
+      "ko": "끝나다 / 끝내다 / 끊다",
+      "zh": "結束、完成、切斷/戒掉 的比較",
+      "type": "contrast",
+      "items": [
+        {
+          "ko": "끝나다",
+          "zh": "自己結束：수업이 끝났어요."
+        },
+        {
+          "ko": "끝내다",
+          "zh": "把事情完成：숙제를 끝냈어요."
+        },
+        {
+          "ko": "끊다",
+          "zh": "切斷/戒掉/掛斷：담배를 끊었어요 / 전화를 끊었어요."
+        }
+      ]
+    }
+  ]
+}
