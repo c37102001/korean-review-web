@@ -1,6 +1,6 @@
 # 韓文複習網頁
 
-依「艾賓浩斯遺忘曲線」(1 → 3 → 7 → 14 → 30 → 90 天) 安排複習，含月曆學習紀錄、每日自動複習待辦（考試形式，多元題型）、單字本（依詞性/熟練度篩選）。前端 Vite + React，資料庫用 Firebase（Firestore + Auth，皆為免費 Spark 方案），部署到 GitLab Pages。
+依「艾賓浩斯遺忘曲線」(1 → 3 → 7 → 14 → 30 → 90 天) 安排複習，含月曆學習紀錄、每日自動複習待辦（考試形式，多元題型）、單字本（依詞性/熟練度篩選）。前端 Vite + React，資料庫用 Firebase（Firestore + Auth，皆為免費 Spark 方案），部署到 GitHub Pages。
 
 ## 本機開發
 
@@ -39,21 +39,22 @@ npm run dev
 
 之後每天把讀書筆記整理成同樣格式的 JSON（可參考 `README.txt` 的格式說明；實際欄位不需要完全照著 enum，程式會盡量寬容解析），貼到當天日期即可。
 
-## 部署到 GitLab Pages
+## 部署到 GitHub Pages
 
-1. 在 GitLab 建立一個新專案，**名稱務必是 `korean-review-web`**（因為 `vite.config.js` 裡的 `base` 設定是 `/korean-review-web/`；如果你想用別的專案名稱，記得同步修改該設定）。
+1. 在 GitHub 建立一個新專案，**名稱務必是 `korean-review-web`**（因為 `vite.config.js` 裡的 `base` 設定是 `/korean-review-web/`；如果你想用別的專案名稱，記得同步修改該設定）。
 2. 把這個資料夾初始化 git 並 push 上去：
    ```bash
    git init
    git add .
    git commit -m "Initial commit"
-   git remote add origin <你的 GitLab 專案 git URL>
+   git remote add origin <你的 GitHub 專案 git URL>
    git push -u origin main
    ```
-3. Push 後 GitLab CI/CD 會自動依 `.gitlab-ci.yml` 執行 `pages` job，完成後網站會在：
-   `https://<你的 GitLab 帳號>.gitlab.io/korean-review-web/`
-   （在專案的 **Deploy → Pages** 頁面可以看到確切網址與部署狀態。）
-4. 之後每次 push 到預設分支都會自動重新部署。
+3. **重要**：到 GitHub 專案的 **Settings → Pages**，把 **Source** 改成 **GitHub Actions**（預設是 "Deploy from a branch"，不改的話 `.github/workflows/deploy.yml` 就算跑成功也不會真的發佈，會一直 404）。
+4. Push 後（或去 **Actions** 分頁手動觸發 `Deploy to GitHub Pages` workflow）會自動 build 並部署，完成後網站會在：
+   `https://<你的 GitHub 帳號>.github.io/korean-review-web/`
+   （在專案的 **Settings → Pages** 頁面可以看到確切網址；在 **Actions** 分頁可以看部署進度/log。）
+5. 之後每次 push 到 `main` 分支都會自動重新部署。「No releases published」是 GitHub 的 Releases 功能（跟 Pages 部署無關），不用理它。
 
 ## 架構重點（給未來維護參考）
 
