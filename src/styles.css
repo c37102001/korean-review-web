@@ -463,7 +463,7 @@ main {
   border-color: #2fb9a3;
 }
 
-.day.today > span {
+.day.today > span:not(.day-flame) {
   display: grid;
   place-items: center;
   width: 30px;
@@ -476,24 +476,23 @@ main {
 
 .day-flame {
   position: absolute;
-  right: 9px;
-  bottom: 8px;
+  right: 7px;
+  bottom: 7px;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  color: #f26a21;
-  background: transparent;
-  transform: rotate(-5deg);
-  box-shadow: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: linear-gradient(145deg, #ff7a2f, #ffbe3a);
+  box-shadow: 0 0 0 2.5px #fff8ef, 0 3px 10px rgba(255, 100, 20, 0.38);
+  transform: none;
 }
 
 .day-flame svg {
-  width: 20px;
-  height: 20px;
-  fill: #ff9f2f;
-  transform: rotate(5deg);
-  filter: drop-shadow(0 2px 3px rgba(188, 73, 18, 0.32));
+  width: 15px;
+  height: 15px;
+  fill: #f04040;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
 }
 
 .day.selected {
@@ -659,6 +658,17 @@ main {
   perspective: 1200px;
   background: transparent;
   box-shadow: none;
+  cursor: pointer;
+}
+
+.card-speak-btn {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 4px 12px rgba(58, 73, 84, 0.15);
+  color: #2fb9a3;
 }
 
 .card-arrow {
@@ -713,7 +723,7 @@ main {
 }
 
 .flash-face strong {
-  font-size: clamp(36px, 8vw, 76px);
+  font-size: clamp(26px, 5vw, 52px);
   line-height: 1.1;
   text-align: center;
 }

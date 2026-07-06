@@ -708,7 +708,7 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
       current: date.getMonth() === cursor.getMonth(),
       hasStudy: items.some((item) => item.date === key),
       isToday: key === today,
-      hasCompletedToday: key === today && store.attempts.some((attempt) => attempt.time.startsWith(today)),
+      hasCompletedToday: key === today && dueQuestions(store, questions, today).length === 0 && store.attempts.some((attempt) => attempt.time.startsWith(today)),
     });
   }
   const selectedItems = items.filter((item) => item.date === selectedDate);
@@ -734,7 +734,7 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
           {days.map((day) => (
             <button key={day.key} className={`day ${day.current ? '' : 'muted'} ${day.hasStudy ? 'has-study' : ''} ${day.isToday ? 'today' : ''} ${day.key === selectedDate ? 'selected' : ''}`} onClick={() => setSelectedDate(day.key)}>
               <span>{day.day}</span>
-              {day.hasCompletedToday && <span className="day-flame"><Flame size={16} /></span>}
+              {day.hasCompletedToday && <span className="day-flame"><Flame /></span>}
             </button>
           ))}
         </div>
@@ -1264,17 +1264,24 @@ function StudyPage({ store, updateStore, set }) {
       </div>
       <div className="flashcard-wrap">
         <button className="card-arrow left" onClick={goPrev} aria-label="上一張"><ChevronLeft size={26} /></button>
-        <button className={`flashcard ${flipped ? 'flipped' : ''}`} onClick={() => {
-          const next = !flipped;
-          setFlipped(next);
-          if (playVoice) speakText(next ? backText : frontText, next ? backLang : frontLang);
-        }}>
-          <div className="flash-face front"><span>{index + 1} / {ordered.length}</span><strong>{frontText}</strong><small>{frontSide === 'ko' ? item.pos || '比較' : '點擊看韓文'}</small></div>
-          <div className="flash-face back"><strong>{backText}</strong><small>{frontSide === 'ko' ? '點擊可以翻回韓文' : item.pos || '比較'}</small></div>
-        </button>
+        <div className={`flashcard ${flipped ? 'flipped' : ''}`} role="button" tabIndex={0}
+          onClick={() => { const next = !flipped; setFlipped(next); if (playVoice) speakText(next ? backText : frontText, next ? backLang : frontLang); }}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { const next = !flipped; setFlipped(next); if (playVoice) speakText(next ? backText : frontText, next ? backLang : frontLang); } }}
+        >
+          <div className="flash-face front">
+            <span>{index + 1} / {ordered.length}</span>
+            <strong>{frontText}</strong>
+            <small>{frontSide === 'ko' ? item.pos || '比較' : '點擊看韓文'}</small>
+            <button className="card-speak-btn" onClick={(e) => { e.stopPropagation(); speakText(frontText, frontLang); }} aria-label="播放發音"><Volume2 size={18} /></button>
+          </div>
+          <div className="flash-face back">
+            <strong>{backText}</strong>
+            <button className="card-speak-btn" onClick={(e) => { e.stopPropagation(); speakText(backText, backLang); }} aria-label="播放發音"><Volume2 size={18} /></button>
+          </div>
+        </div>
         <button className="card-arrow right" onClick={goNext} aria-label="下一張"><ChevronRight size={26} /></button>
       </div>
-      <div className="card-details"><StudyDetails item={item} allItems={set.items} onOpenRelated={setRelatedItems} /></div>
+      {flipped && <div className="card-details"><StudyDetails item={item} allItems={set.items} onOpenRelated={setRelatedItems} /></div>}
       {relatedItems && <RelatedCardsModal items={relatedItems} onClose={() => setRelatedItems(null)} />}
       <div className="study-controls">
         <button onClick={() => mark('想再看一次')} className={learning?.status === '想再看一次' ? 'selected-soft' : ''}>想再看一次</button>
