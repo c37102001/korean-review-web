@@ -1,20 +1,25 @@
 {
   "name": "korean-review-web",
-  "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "在學習語言或背誦知識時，有一個很重要的記憶理論叫做「艾賓浩斯遺忘曲線」，搭配的實際學習方法則叫做「間隔重複」。",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview --host 0.0.0.0"
   },
+  "keywords": [],
+  "author": "",
+  "private": true,
+  "license": "ISC",
   "dependencies": {
     "firebase": "^10.14.1",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "lucide-react": "^1.23.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^5.4.11"
+    "vite": "^5.4.14"
   }
 }

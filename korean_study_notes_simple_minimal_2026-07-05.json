@@ -3,9 +3,7 @@
     {
       "ko": "뉴스",
       "zh": "新聞",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "新聞",
+      "pos": "名詞",
       "examples": [
         {
           "ko": "9시 뉴스입니다.",
@@ -16,9 +14,7 @@
     {
       "ko": "질문",
       "zh": "問題、提問",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "質問/問題",
+      "pos": "名詞",
       "examples": [
         {
           "ko": "질문 있습니까?",
@@ -35,9 +31,7 @@
     {
       "ko": "사진",
       "zh": "照片",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "照片",
+      "pos": "名詞",
       "examples": [
         {
           "ko": "이 사진을 보세요.",
@@ -48,36 +42,27 @@
     {
       "ko": "햄버거",
       "zh": "漢堡",
-      "type": "vocabulary",
-      "pos": "noun"
+      "pos": "名詞"
     },
     {
       "ko": "일기",
       "zh": "日記",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "日記"
+      "pos": "名詞"
     },
     {
       "ko": "간호사",
       "zh": "護士",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "護士"
+      "pos": "名詞"
     },
     {
       "ko": "의자",
       "zh": "椅子",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "椅子"
+      "pos": "名詞"
     },
     {
       "ko": "문제",
       "zh": "問題、狀況；考試題目",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "問題",
+      "pos": "名詞",
       "examples": [
         {
           "ko": "문제 상황",
@@ -99,12 +84,7 @@
     {
       "ko": "문제를 풀다",
       "zh": "解題、解決問題",
-      "type": "collocation",
-      "pos": "verb_phrase",
-      "forms": {
-        "dictionary": "문제를 풀다",
-        "polite_present": "문제를 풀어요"
-      },
+      "pos": "動詞片語",
       "examples": [
         {
           "ko": "문제를 풀어요.",
@@ -118,13 +98,7 @@
     {
       "ko": "꺼내다",
       "zh": "拿出來、取出",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "꺼내다",
-        "polite_present": "꺼내요",
-        "polite_past": "꺼냈어요"
-      },
+      "pos": "動詞",
       "examples": [
         {
           "ko": "가방에서 지갑을 꺼내요.",
@@ -143,55 +117,37 @@
     {
       "ko": "신발",
       "zh": "鞋子",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "鞋子"
+      "pos": "名詞"
     },
     {
       "ko": "양말",
       "zh": "襪子",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "襪子"
+      "pos": "名詞"
     },
     {
       "ko": "구두",
       "zh": "皮鞋",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "皮鞋"
+      "pos": "名詞"
     },
     {
       "ko": "운동화",
       "zh": "運動鞋",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "運動鞋"
+      "pos": "名詞"
     },
     {
       "ko": "슬리퍼",
       "zh": "拖鞋",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "拖鞋"
+      "pos": "名詞"
     },
     {
       "ko": "부츠",
       "zh": "靴子、長靴",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "靴子"
+      "pos": "名詞"
     },
     {
       "ko": "서다",
       "zh": "站；停",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "서다",
-        "polite_present": "서요",
-        "polite_past": "섰어요"
-      },
+      "pos": "動詞",
       "senses": [
         {
           "zh": "站",
@@ -232,12 +188,7 @@
     {
       "ko": "일어서다",
       "zh": "站起來",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "일어서다",
-        "imperative_polite": "일어서세요"
-      },
+      "pos": "動詞",
       "examples": [
         {
           "ko": "일어서세요.",
@@ -248,11 +199,7 @@
     {
       "ko": "일어나다",
       "zh": "起床、起來",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "일어나다"
-      },
+      "pos": "動詞",
       "notes": [
         "筆記用來和 일어서다（站起來）區分。"
       ]
@@ -260,9 +207,7 @@
     {
       "ko": "인터넷",
       "zh": "網路、網際網路",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "網路",
+      "pos": "名詞",
       "examples": [
         {
           "ko": "인터넷에 문제가 있어요.",
@@ -276,13 +221,7 @@
     {
       "ko": "설명하다",
       "zh": "說明、解釋",
-      "type": "verb",
-      "pos": "verb",
-      "hanja": "說明/解釋",
-      "forms": {
-        "dictionary": "설명하다",
-        "polite_present": "설명해요"
-      },
+      "pos": "動詞",
       "examples": [
         {
           "ko": "이 문제를 다시 설명해 주세요.",
@@ -293,21 +232,12 @@
     {
       "ko": "숙제하다",
       "zh": "做作業、做功課",
-      "type": "verb",
-      "pos": "verb",
-      "hanja": "宿題",
-      "forms": {
-        "dictionary": "숙제하다"
-      }
+      "pos": "動詞"
     },
     {
       "ko": "달리기를 하다",
       "zh": "跑步",
-      "type": "expression",
-      "pos": "verb_phrase",
-      "forms": {
-        "polite_present": "달리기를 해요"
-      },
+      "pos": "動詞片語",
       "examples": [
         {
           "ko": "달리기를 해요.",
@@ -318,9 +248,7 @@
     {
       "ko": "주위",
       "zh": "周圍、附近；身邊的人",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "周圍/附近/身邊的人",
+      "pos": "名詞",
       "examples": [
         {
           "ko": "주위 사람들이 다 결혼했어요.",
@@ -335,8 +263,7 @@
     {
       "ko": "지구는 태양 주위를 돌아요.",
       "zh": "地球繞著太陽轉。",
-      "type": "example_sentence",
-      "pos": "sentence",
+      "pos": "句子",
       "components": [
         {
           "ko": "지구",
@@ -359,27 +286,17 @@
     {
       "ko": "지구",
       "zh": "地球",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "地球"
+      "pos": "名詞"
     },
     {
       "ko": "태양",
       "zh": "太陽",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "太陽"
+      "pos": "名詞"
     },
     {
       "ko": "돌다",
       "zh": "轉、繞、繞行",
-      "type": "verb",
-      "pos": "verb",
-      "hanja": "轉",
-      "forms": {
-        "dictionary": "돌다",
-        "polite_present": "돌아요"
-      },
+      "pos": "動詞",
       "examples": [
         {
           "ko": "지구는 태양 주위를 돌아요.",
@@ -390,13 +307,7 @@
     {
       "ko": "태어나다",
       "zh": "出生",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "태어나다",
-        "polite_present": "태어나요",
-        "polite_past": "태어났어요"
-      },
+      "pos": "動詞",
       "examples": [
         {
           "ko": "1994년 4월 14일에 태어났어요.",
@@ -407,13 +318,7 @@
     {
       "ko": "부르다",
       "zh": "叫、呼喚；稱作；唱",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "부르다",
-        "polite_present": "불러요",
-        "polite_past": "불렀어요"
-      },
+      "pos": "動詞",
       "senses": [
         {
           "zh": "叫、呼喚某人",
@@ -461,38 +366,22 @@
     {
       "ko": "게임하다",
       "zh": "玩遊戲",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "게임하다"
-      }
+      "pos": "動詞"
     },
     {
       "ko": "낚시하다",
       "zh": "釣魚",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "낚시하다"
-      }
+      "pos": "動詞"
     },
     {
       "ko": "샤워하다",
       "zh": "沖澡、淋浴",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "샤워하다"
-      }
+      "pos": "動詞"
     },
     {
       "ko": "전화를 받다",
       "zh": "接電話",
-      "type": "collocation",
-      "pos": "verb_phrase",
-      "forms": {
-        "polite_present": "전화를 받아요"
-      },
+      "pos": "動詞片語",
       "examples": [
         {
           "ko": "전화를 받아요.",
@@ -503,12 +392,7 @@
     {
       "ko": "갈아입다",
       "zh": "換衣服",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "갈아입다",
-        "polite_present": "갈아입어요"
-      },
+      "pos": "動詞",
       "examples": [
         {
           "ko": "옷을 갈아입어요.",
@@ -519,14 +403,7 @@
     {
       "ko": "붓다",
       "zh": "倒、倒入、注入；腫起來、浮腫",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "붓다",
-        "polite_present": "부어요",
-        "polite_past": "부었어요",
-        "future": "부을 거예요"
-      },
+      "pos": "動詞",
       "senses": [
         {
           "zh": "倒、倒入、注入",
@@ -570,12 +447,7 @@
     {
       "ko": "불다",
       "zh": "吹",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "불다",
-        "polite_present": "불어요"
-      },
+      "pos": "動詞",
       "examples": [
         {
           "ko": "바람이 불어요.",
@@ -586,7 +458,6 @@
     {
       "ko": "불다 / 부르다 / 붓다",
       "zh": "相似發音動詞比較",
-      "type": "contrast",
       "items": [
         {
           "ko": "불다 → 불어요",
@@ -605,13 +476,7 @@
     {
       "ko": "돕다",
       "zh": "幫助",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "돕다",
-        "polite_present": "도와요",
-        "future": "도울 거예요"
-      },
+      "pos": "動詞",
       "notes": [
         "ㅂ 불규칙：돕다 → 도와요。"
       ],
@@ -622,13 +487,7 @@
     {
       "ko": "도와주다",
       "zh": "幫忙、給予幫助",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "도와주다",
-        "polite_present": "도와줘요",
-        "future_commitment": "도와줄게요"
-      },
+      "pos": "動詞",
       "examples": [
         {
           "ko": "좀 도와주세요.",
@@ -647,13 +506,7 @@
     {
       "ko": "똑같다",
       "zh": "一模一樣、完全一樣",
-      "type": "adjective",
-      "pos": "adjective",
-      "forms": {
-        "dictionary": "똑같다",
-        "polite_present": "똑같아요",
-        "adverb": "똑같이"
-      },
+      "pos": "形容詞",
       "examples": [
         {
           "ko": "이거랑 저거랑 똑같아요.",
@@ -676,9 +529,7 @@
     {
       "ko": "고향",
       "zh": "老家、故鄉",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "老家",
+      "pos": "名詞",
       "examples": [
         {
           "ko": "언제 고향에 돌아가요?",
@@ -689,9 +540,7 @@
     {
       "ko": "내년",
       "zh": "明年",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "明年",
+      "pos": "名詞",
       "examples": [
         {
           "ko": "내년에 돌아갈 거예요.",
@@ -702,67 +551,37 @@
     {
       "ko": "피아노를 치다",
       "zh": "彈鋼琴",
-      "type": "collocation",
-      "pos": "verb_phrase",
-      "forms": {
-        "polite_present": "피아노를 쳐요"
-      }
+      "pos": "動詞片語"
     },
     {
       "ko": "세수하다",
       "zh": "洗臉",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "세수하다",
-        "polite_present": "세수해요"
-      }
+      "pos": "動詞"
     },
     {
       "ko": "손을 씻다",
       "zh": "洗手",
-      "type": "collocation",
-      "pos": "verb_phrase",
-      "forms": {
-        "dictionary": "손을 씻다",
-        "polite_present": "손을 씻어요"
-      }
+      "pos": "動詞片語"
     },
     {
       "ko": "샤워하다",
       "zh": "洗澡、沖澡",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "샤워하다",
-        "polite_present": "샤워해요"
-      }
+      "pos": "動詞"
     },
     {
       "ko": "머리를 감다",
       "zh": "洗頭",
-      "type": "collocation",
-      "pos": "verb_phrase",
-      "forms": {
-        "dictionary": "머리를 감다",
-        "polite_present": "머리를 감아요"
-      }
+      "pos": "動詞片語"
     },
     {
       "ko": "반지",
       "zh": "戒指",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "戒指"
+      "pos": "名詞"
     },
     {
       "ko": "사다",
       "zh": "買",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "사다"
-      },
+      "pos": "動詞",
       "related": [
         "싸다"
       ]
@@ -770,11 +589,7 @@
     {
       "ko": "싸다",
       "zh": "便宜",
-      "type": "adjective",
-      "pos": "adjective",
-      "forms": {
-        "dictionary": "싸다"
-      },
+      "pos": "形容詞",
       "related": [
         "사다"
       ]
@@ -782,13 +597,7 @@
     {
       "ko": "길다",
       "zh": "長",
-      "type": "adjective",
-      "pos": "adjective",
-      "hanja": "長",
-      "forms": {
-        "dictionary": "길다",
-        "polite_present": "길어요"
-      },
+      "pos": "形容詞",
       "examples": [
         {
           "ko": "머리가 길어요.",
@@ -799,13 +608,7 @@
     {
       "ko": "친절하다",
       "zh": "親切、熱心",
-      "type": "adjective",
-      "pos": "adjective",
-      "forms": {
-        "dictionary": "친절하다",
-        "polite_present": "친절해요",
-        "adverb": "친절하게"
-      },
+      "pos": "形容詞",
       "examples": [
         {
           "ko": "직원이 친절해요.",
@@ -816,12 +619,7 @@
     {
       "ko": "한가하다",
       "zh": "空閒、不忙、閒",
-      "type": "adjective",
-      "pos": "adjective",
-      "forms": {
-        "dictionary": "한가하다",
-        "polite_present": "한가해요"
-      },
+      "pos": "形容詞",
       "examples": [
         {
           "ko": "오늘 좀 한가해요.",
@@ -836,12 +634,7 @@
     {
       "ko": "담배를 피우다",
       "zh": "抽菸",
-      "type": "collocation",
-      "pos": "verb_phrase",
-      "forms": {
-        "dictionary": "담배를 피우다",
-        "polite_present": "담배를 피워요"
-      },
+      "pos": "動詞片語",
       "examples": [
         {
           "ko": "담배를 끊었어요.",
@@ -855,33 +648,22 @@
     {
       "ko": "현재",
       "zh": "現在",
-      "type": "vocabulary",
-      "pos": "noun/adverb",
-      "hanja": "現在"
+      "pos": "名詞/副詞"
     },
     {
       "ko": "안경",
       "zh": "眼鏡",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "眼鏡"
+      "pos": "名詞"
     },
     {
       "ko": "치마",
       "zh": "裙子",
-      "type": "vocabulary",
-      "pos": "noun",
-      "hanja": "裙子"
+      "pos": "名詞"
     },
     {
       "ko": "끝나다",
       "zh": "結束、結束了（事情自己結束）",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "끝나다",
-        "polite_past": "끝났어요"
-      },
+      "pos": "動詞",
       "examples": [
         {
           "ko": "수업이 끝났어요.",
@@ -903,12 +685,7 @@
     {
       "ko": "끝내다",
       "zh": "完成、把某事結束掉",
-      "type": "verb",
-      "pos": "verb",
-      "forms": {
-        "dictionary": "끝내다",
-        "polite_past": "끝냈어요"
-      },
+      "pos": "動詞",
       "examples": [
         {
           "ko": "숙제를 끝냈어요.",
@@ -930,14 +707,7 @@
     {
       "ko": "끊다",
       "zh": "切斷、斷開、戒掉",
-      "type": "verb",
-      "pos": "verb",
-      "hanja": "切斷/斷開/戒掉",
-      "forms": {
-        "dictionary": "끊다",
-        "polite_present": "끊어요",
-        "polite_past": "끊었어요"
-      },
+      "pos": "動詞",
       "examples": [
         {
           "ko": "담배를 끊었어요.",
@@ -967,7 +737,6 @@
     {
       "ko": "끝나다 / 끝내다 / 끊다",
       "zh": "結束、完成、切斷/戒掉 的比較",
-      "type": "contrast",
       "items": [
         {
           "ko": "끝나다",
