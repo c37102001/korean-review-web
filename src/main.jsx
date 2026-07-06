@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   BookOpen,
@@ -202,53 +202,42 @@ function normalizeRecords(records) {
   }));
 
   const questions = [];
-  items.forEach((item) => {
+  const seenExamples = new Set();
+  const addExampleQuestion = (item, example, id) => {
+    const key = `${example.ko}\n${example.zh}`;
+    if (seenExamples.has(key)) return;
+    seenExamples.add(key);
     questions.push({
-      id: item.id,
+      id,
       itemId: item.id,
       date: item.date,
-      kind: 'term',
-      pos: item.pos || '比較',
-      ko: item.ko,
-      zh: item.zh,
+      kind: 'example',
+      pos: '例句',
+      ko: example.ko,
+      zh: example.zh,
       source: item,
     });
-    (item.examples || []).forEach((example, exampleIndex) => {
+  };
+  items.forEach((item) => {
+    const isComparisonCard = !!item.items?.length && !item.examples?.length && !item.senses?.length;
+    if (!isComparisonCard) {
       questions.push({
-        id: `${item.id}-ex-${exampleIndex}`,
-        itemId: item.id,
-        date: item.date,
-        kind: 'example',
-        pos: '例句',
-        ko: example.ko,
-        zh: example.zh,
-        source: item,
-      });
-    });
-    (item.senses || []).forEach((sense, senseIndex) => {
-      (sense.examples || []).forEach((example, exampleIndex) => {
-        questions.push({
-          id: `${item.id}-sense-${senseIndex}-ex-${exampleIndex}`,
-          itemId: item.id,
-          date: item.date,
-          kind: 'example',
-          pos: '例句',
-          ko: example.ko,
-          zh: example.zh,
-          source: item,
-        });
-      });
-    });
-    (item.items || []).forEach((compare, compareIndex) => {
-      questions.push({
-        id: `${item.id}-compare-${compareIndex}`,
+        id: item.id,
         itemId: item.id,
         date: item.date,
         kind: 'term',
-        pos: '比較',
-        ko: compare.ko,
-        zh: compare.zh,
+        pos: item.pos || '比較',
+        ko: item.ko,
+        zh: item.zh,
         source: item,
+      });
+    }
+    (item.examples || []).forEach((example, exampleIndex) => {
+      addExampleQuestion(item, example, `${item.id}-ex-${exampleIndex}`);
+    });
+    (item.senses || []).forEach((sense, senseIndex) => {
+      (sense.examples || []).forEach((example, exampleIndex) => {
+        addExampleQuestion(item, example, `${item.id}-sense-${senseIndex}-ex-${exampleIndex}`);
       });
     });
   });
@@ -366,6 +355,10 @@ function dueQuestions(store, questions, date = todayString()) {
   return questions.filter((question) => getProgress(store, question).nextDue <= date);
 }
 
+function termQuestions(questions) {
+  return questions.filter((question) => question.kind === 'term');
+}
+
 function groupTasks(store, questions, date = todayString()) {
   const groups = new Map();
   dueQuestions(store, questions, date).forEach((question) => {
@@ -418,13 +411,29 @@ function normalizeAnswer(text) {
   return [...text.replace(PUNCTUATION_RE, '')];
 }
 
+function countKoreanLetters(text) {
+  return [...text].filter((char) => /\p{Script=Hangul}/u.test(char)).length;
+}
+
 function compareAnswer(input, answer) {
   const user = normalizeAnswer(input.trim());
   const correct = normalizeAnswer(answer.trim());
   const dp = Array.from({ length: correct.length + 1 }, () => Array(user.length + 1).fill(0));
-  for (let i = correct.length - 1; i >= 0; i -= 1) {
-    for (let j = user.length - 1; j >= 0; j -= 1) {
-      dp[i][j] = correct[i] === user[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  for (let i = correct.length; i >= 0; i -= 1) {
+    for (let j = user.length; j >= 0; j -= 1) {
+      if (i === correct.length) {
+        dp[i][j] = user.length - j;
+      } else if (j === user.length) {
+        dp[i][j] = correct.length - i;
+      } else if (correct[i] === user[j]) {
+        dp[i][j] = dp[i + 1][j + 1];
+      } else {
+        dp[i][j] = 1 + Math.min(
+          dp[i + 1][j + 1],
+          dp[i][j + 1],
+          dp[i + 1][j],
+        );
+      }
     }
   }
   const parts = [];
@@ -435,7 +444,11 @@ function compareAnswer(input, answer) {
       parts.push({ type: 'ok', text: correct[i] });
       i += 1;
       j += 1;
-    } else if (j < user.length && (i === correct.length || dp[i][j + 1] >= dp[i + 1]?.[j])) {
+    } else if (i < correct.length && j < user.length && dp[i][j] === 1 + dp[i + 1][j + 1]) {
+      parts.push({ type: 'replace', text: user[j], expected: correct[i] });
+      i += 1;
+      j += 1;
+    } else if (j < user.length && (i === correct.length || dp[i][j] === 1 + dp[i][j + 1])) {
       parts.push({ type: user[j] === ' ' ? 'extra-space' : 'extra', text: user[j] });
       j += 1;
     } else if (i < correct.length) {
@@ -504,8 +517,8 @@ function App() {
     setPage(pageStack[pageStack.length - 1]);
     setPageStack(pageStack.slice(0, -1));
   };
-  const startPractice = (sourceQuestions, label) => {
-    setPracticeSet({ questions: sourceQuestions, label });
+  const startPractice = (sourceQuestions, label, options = {}) => {
+    setPracticeSet({ questions: sourceQuestions, label, dueOnly: !!options.dueOnly });
     navChild('practice');
   };
   const startStudy = (sourceItems, label) => {
@@ -545,13 +558,14 @@ function App() {
   if (authLoading) return <LoadingScreen text="正在確認登入狀態" />;
   if (!user) return <LoginPage />;
   if (storeLoading) return <LoadingScreen text="正在同步 Firebase 資料" />;
+  const dailyQuestions = termQuestions(questions);
 
   const views = {
-    home: <HomePage store={store} items={items} questions={questions} onPractice={startPractice} onStudy={startStudy} />,
+    home: <HomePage store={store} items={items} questions={dailyQuestions} onPractice={startPractice} onStudy={startStudy} />,
     calendar: <CalendarPage store={store} items={items} questions={questions} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} />,
     notes: <NotesPage items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} />,
-    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: dueQuestions(store, questions), label: '今日複習' }} />,
+    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: dailyQuestions, label: '今日複習', dueOnly: true }} />,
     notebook: <NotebookPage store={store} items={items} questions={questions} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
   };
 
@@ -652,7 +666,7 @@ function HomePage({ store, items, questions, onPractice, onStudy }) {
           <h1>今天也來練一點韓文</h1>
           <p>目前有 {due.length} 題等待主動回想，答錯會自動回到第一階段重新安排。</p>
           <div className="actions">
-            <button className="primary" disabled={!due.length} onClick={() => onPractice(due, '今日複習')}><Dumbbell size={18} /> 開始今日複習</button>
+            <button className="primary" disabled={!due.length} onClick={() => onPractice(due, '今日複習', { dueOnly: true })}><Dumbbell size={18} /> 開始今日複習</button>
             <button onClick={() => onStudy(items, '全部內容')}><BookOpen size={18} /> 先用單字卡學習</button>
           </div>
         </div>
@@ -680,7 +694,7 @@ function HomePage({ store, items, questions, onPractice, onStudy }) {
                   <h3>{dateLabel(task.studyDate)} 的內容</h3>
                   <p>到期日 {task.dueDate} · {task.questions.length} 題 · 未完成</p>
                 </div>
-                <button className="primary small" onClick={() => onPractice(task.questions, `${task.studyDate} 複習`)}>開始</button>
+                <button className="primary small" onClick={() => onPractice(task.questions, `${task.studyDate} 複習`, { dueOnly: true })}>開始</button>
               </div>
             ))}
             {!tasks.length && <div className="empty">今天沒有排程到期。你可以從日曆或單字本主動練習。</div>}
@@ -704,6 +718,7 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
   const [cursor, setCursor] = useState(new Date(`${selectedDate}T00:00:00`));
   const [addOpen, setAddOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const dailyQuestions = termQuestions(questions);
   const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
   const days = [];
   const start = new Date(first);
@@ -719,7 +734,7 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
       current: date.getMonth() === cursor.getMonth(),
       hasStudy: items.some((item) => item.date === key),
       isToday: key === today,
-      hasCompletedToday: key === today && dueQuestions(store, questions, today).length === 0 && store.attempts.some((attempt) => attempt.time.startsWith(today)),
+      hasCompletedToday: key === today && dueQuestions(store, dailyQuestions, today).length === 0 && store.attempts.some((attempt) => attempt.time.startsWith(today)),
     });
   }
   const selectedItems = items.filter((item) => item.date === selectedDate);
@@ -1235,10 +1250,19 @@ function StudyPage({ store, updateStore, set }) {
     setFlipped(false);
   };
 
+  useLayoutEffect(() => {
+    setFlipped(false);
+  }, [item?.id]);
+
   useEffect(() => {
     setIndex(0);
     setFlipped(false);
   }, [filter, random, shuffleSeed, frontSide]);
+
+  useEffect(() => {
+    if (autoPlay || !playVoice || !item) return;
+    speakText(frontText, frontLang);
+  }, [autoPlay, playVoice, item?.id, frontSide]);
 
   useEffect(() => {
     if (!autoPlay || !item) return undefined;
@@ -1271,7 +1295,6 @@ function StudyPage({ store, updateStore, set }) {
         <button className={random ? 'selected-soft' : ''} onClick={() => { setRandom(!random); setShuffleSeed(Date.now()); }}><Shuffle size={16} /> 隨機</button>
         <button className={autoPlay ? 'selected-soft' : ''} onClick={() => setAutoPlay(!autoPlay)}>{autoPlay ? <Pause size={16} /> : <Play size={16} />} 自動</button>
         <button className={playVoice ? 'selected-soft' : ''} onClick={() => setPlayVoice(!playVoice)}>{playVoice ? <Volume2 size={16} /> : <VolumeX size={16} />} 語音</button>
-        <button onClick={() => speakText(flipped ? backText : frontText, flipped ? backLang : frontLang)}><Volume2 size={16} /> 播放</button>
       </div>
       <div className="flashcard-wrap">
         <button className="card-arrow left" onClick={goPrev} aria-label="上一張"><ChevronLeft size={26} /></button>
@@ -1380,67 +1403,99 @@ function StudyDetails({ item, allItems, onOpenRelated }) {
 function PracticePage({ store, updateStore, set }) {
   const [direction, setDirection] = useState('zh-ko');
   const [source, setSource] = useState('term');
+  const fixedTermOnly = set.termOnly || set.dueOnly;
   const [started, setStarted] = useState(false);
+  const [questionQueue, setQuestionQueue] = useState([]);
   const [index, setIndex] = useState(0);
   const [input, setInput] = useState('');
   const [result, setResult] = useState(null);
   const [revealed, setRevealed] = useState(false);
-  const [sessionResults, setSessionResults] = useState([]);
-  const [summary, setSummary] = useState(false);
-  const queue = set.questions.filter((q) => source === 'all' || q.kind === source);
+  const [graded, setGraded] = useState(false);
+  const [lastCorrect, setLastCorrect] = useState(null);
+  const sourceQuestions = useMemo(() => {
+    const activeSource = fixedTermOnly ? 'term' : source;
+    const filtered = set.questions.filter((q) => activeSource === 'all' || q.kind === activeSource);
+    return set.dueOnly ? dueQuestions(store, filtered) : filtered;
+  }, [set.questions, source, fixedTermOnly, set.dueOnly, store]);
+  const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
-  const submit = (correct) => {
-    updateStore((current) => recordAnswer(current, question, correct));
-    const nextResults = [...sessionResults, { question, correct }];
-    setSessionResults(nextResults);
+  const resetSession = () => {
+    setStarted(false);
+    setQuestionQueue([]);
+    setIndex(0);
     setInput('');
     setResult(null);
     setRevealed(false);
+    setGraded(false);
+    setLastCorrect(null);
+  };
+  const startSession = () => {
+    const nextQuestions = shuffleItems(sourceQuestions, Date.now());
+    if (!nextQuestions.length) {
+      resetSession();
+      return;
+    }
+    setQuestionQueue(nextQuestions);
+    setStarted(true);
+    setIndex(0);
+    setInput('');
+    setResult(null);
+    setRevealed(false);
+    setGraded(false);
+    setLastCorrect(null);
+  };
+  const goNext = () => {
+    setInput('');
+    setResult(null);
+    setRevealed(false);
+    setGraded(false);
+    setLastCorrect(null);
     if (index + 1 < queue.length) setIndex(index + 1);
-    else setSummary(true);
+    else resetSession();
+  };
+  // Used by the 公佈答案 give-up path and 韓翻中's self-grade buttons: records
+  // the answer and immediately moves on, same as before.
+  const submit = (correct) => {
+    updateStore((current) => recordAnswer(current, question, correct));
+    goNext();
+  };
+  // Used when 確認/Enter auto-grades a typed answer: records the result right
+  // away (no manual 答對/答錯 choice) but keeps the question on screen so the
+  // outcome is visible until the user presses Enter for the next one.
+  const gradeAndRecord = (correct) => {
+    updateStore((current) => recordAnswer(current, question, correct));
+    setGraded(true);
+    setLastCorrect(correct);
+  };
+  const handleConfirm = () => {
+    if (graded || !input.trim()) return;
+    const checkResult = compareAnswer(input, question.ko);
+    setResult(checkResult);
+    if (checkResult.isCorrect) {
+      gradeAndRecord(true);
+    } else {
+      setRevealed(true);
+      gradeAndRecord(false);
+    }
+  };
+  const revealTypedAnswerAsWrong = () => {
+    if (graded) return;
+    setRevealed(true);
+    setResult(null);
+    gradeAndRecord(false);
   };
 
-  if (summary) {
-    const correctCount = sessionResults.filter((entry) => entry.correct).length;
-    const wrongItems = sessionResults.filter((entry) => !entry.correct);
-    const rate = sessionResults.length ? Math.round((correctCount / sessionResults.length) * 100) : 0;
-    return (
-      <section className="page practice-start">
-        <div className="panel start-panel">
-          <span className="eyebrow">Practice Summary · {set.label}</span>
-          <h1>練習摘要</h1>
-          <div className="summary-grid">
-            <Stat icon={<Check />} label="答對" value={`${correctCount}`} />
-            <Stat icon={<X />} label="答錯" value={`${wrongItems.length}`} />
-            <Stat icon={<Target />} label="答對率" value={`${rate}%`} />
-          </div>
-          {!!wrongItems.length && (
-            <div className="wrong-list">
-              <h2>錯題</h2>
-              {wrongItems.map(({ question: wrongQuestion }) => (
-                <div className="mini" key={wrongQuestion.id}><strong>{wrongQuestion.ko}</strong><span>{wrongQuestion.zh}</span></div>
-              ))}
-            </div>
-          )}
-          {!sessionResults.length && <div className="empty">這次還沒有完成任何題目。</div>}
-          <div className="actions">
-            <button className="primary" onClick={() => {
-              setSummary(false);
-              setStarted(true);
-              setIndex(0);
-              setSessionResults([]);
-            }}>重新開始</button>
-            <button onClick={() => {
-              setSummary(false);
-              setStarted(false);
-              setIndex(0);
-              setSessionResults([]);
-            }}>回到設定</button>
-          </div>
-        </div>
-      </section>
-    );
-  }
+  useEffect(() => {
+    if (!started) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === 'Enter' && graded && !event.isComposing) {
+        event.preventDefault();
+        goNext();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [started, graded, index, queue.length]);
 
   if (!started) {
     return (
@@ -1452,13 +1507,17 @@ function PracticePage({ store, updateStore, set }) {
             <button className={direction === 'zh-ko' ? 'active' : ''} onClick={() => setDirection('zh-ko')}>中翻韓</button>
             <button className={direction === 'ko-zh' ? 'active' : ''} onClick={() => setDirection('ko-zh')}>韓翻中</button>
           </div>
-          <div className="segmented">
-            <button className={source === 'term' ? 'active' : ''} onClick={() => setSource('term')}>單字 / 片語</button>
-            <button className={source === 'example' ? 'active' : ''} onClick={() => setSource('example')}>例句</button>
-            <button className={source === 'all' ? 'active' : ''} onClick={() => setSource('all')}>全部</button>
-          </div>
-          <p>{queue.length} 題可練習。中翻韓只會出打字題，韓翻中會先思考再公佈答案。</p>
-          <button className="primary wide" disabled={!queue.length} onClick={() => { setStarted(true); setSummary(false); setSessionResults([]); setIndex(0); }}>開始</button>
+          {fixedTermOnly ? (
+            <div className="fixed-source-note">每日複習只包含單字 / 片語。</div>
+          ) : (
+            <div className="segmented">
+              <button className={source === 'term' ? 'active' : ''} onClick={() => setSource('term')}>單字 / 片語</button>
+              <button className={source === 'example' ? 'active' : ''} onClick={() => setSource('example')}>例句</button>
+              <button className={source === 'all' ? 'active' : ''} onClick={() => setSource('all')}>全部</button>
+            </div>
+          )}
+          <p>{sourceQuestions.length} 題可練習。中翻韓只會出打字題，韓翻中會先思考再公佈答案。</p>
+          <button className="primary wide" disabled={!sourceQuestions.length} onClick={startSession}>開始</button>
         </div>
       </section>
     );
@@ -1466,41 +1525,129 @@ function PracticePage({ store, updateStore, set }) {
 
   return (
     <section className="page practice-page">
-      <div className="practice-shell">
-        <div className="progress-line"><span style={{ width: `${((index + 1) / queue.length) * 100}%` }} /></div>
-        <div className="quiz-meta quiz-meta-row"><span>{index + 1} / {queue.length} · {direction === 'zh-ko' ? '中翻韓' : '韓翻中'}</span><button onClick={() => setSummary(true)}>結束練習</button></div>
-        {direction === 'zh-ko' ? (
-          <>
-            <div className="prompt"><span>請輸入韓文</span><h1>{question.zh}</h1></div>
-            <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder="여기에 한국어를 입력하세요" autoFocus />
-            <div className="actions">
-              <button className="primary" onClick={() => setResult(compareAnswer(input, question.ko))}><Check size={18} /> 確認</button>
-              <button onClick={() => setRevealed(true)}><RotateCcw size={18} /> 公佈答案</button>
-            </div>
-            {result && <DiffResult result={result} />}
-            {(result?.isCorrect || revealed) && <AnswerPanel question={question} revealed={revealed} onCorrect={() => submit(true)} onWrong={() => submit(false)} />}
-          </>
-        ) : (
-          <>
-            <div className="prompt ko"><span>請在心中想中文意思</span><h1>{question.ko}</h1></div>
-            {!revealed ? <button className="primary wide" onClick={() => setRevealed(true)}>公佈答案</button> : <AnswerPanel question={question} revealed onCorrect={() => submit(true)} onWrong={() => submit(false)} />}
-          </>
-        )}
+      <div className="practice-layout">
+        <div className="practice-shell">
+          <div className="progress-line"><span style={{ width: `${((index + 1) / queue.length) * 100}%` }} /></div>
+          <div className="quiz-meta quiz-meta-row"><span>{index + 1} / {queue.length} · {direction === 'zh-ko' ? '中翻韓' : '韓翻中'}</span><button onClick={() => setSummary(true)}>結束練習</button></div>
+          {direction === 'zh-ko' ? (
+            <>
+              <div className="prompt">
+                <span>請輸入韓文</span>
+                <h1>{question.zh}</h1>
+                <small className="answer-length-hint">答案 {countKoreanLetters(question.ko)} 個韓文字</small>
+              </div>
+              <div className="typed-answer-area">
+                <textarea
+                  key={question.id}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleConfirm();
+                    }
+                  }}
+                  placeholder="여기에 한국어를 입력하세요 (Enter 送出)"
+                  autoFocus
+                  disabled={graded}
+                />
+                <div className="actions answer-actions">
+                  {!graded && !revealed ? (
+                    <>
+                      <button className="primary" onClick={handleConfirm}><Check size={18} /> 確認</button>
+                      <button onClick={revealTypedAnswerAsWrong}><RotateCcw size={18} /> 公佈答案</button>
+                    </>
+                  ) : (
+                    graded && lastCorrect && <CorrectFireworks />
+                  )}
+                </div>
+              </div>
+              {result && <DiffResult result={result} />}
+            </>
+          ) : (
+            <>
+              <div className="prompt ko"><span>請在心中想中文意思</span><h1>{question.ko}</h1></div>
+              {!revealed ? <button className="primary wide" onClick={() => setRevealed(true)}>公佈答案</button> : (
+                <div className="answer-panel grade-banner">
+                  <strong><Check size={18} /> 請看右側單字卡後自評</strong>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <PracticeAnswerPanel
+          question={question}
+          visible={revealed || graded}
+          graded={graded}
+          correct={lastCorrect}
+          onCorrect={() => submit(true)}
+          onWrong={() => submit(false)}
+          onNext={goNext}
+        />
       </div>
     </section>
   );
 }
 
-function DiffResult({ result }) {
+function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, onWrong, onNext }) {
   return (
-    <div className={`diff-box ${result.isCorrect ? 'correct' : ''}`}>
-      <strong>{result.isCorrect ? '答案正確，請自行選擇答對或答錯。' : '請依提示修改後再確認。'}</strong>
+    <aside className={`practice-answer-panel ${visible ? 'visible' : ''}`}>
+      <div className="answer-panel-inner">
+        {!visible ? (
+          <div className="answer-placeholder">
+            <span>答案卡片</span>
+            <strong>答題後會顯示完整單字卡</strong>
+          </div>
+        ) : (
+          <>
+            <div className="answer-review-head">
+              <span>{graded ? (correct ? '答對' : '答錯') : '公布答案'}</span>
+              {question.kind === 'example' && <strong>例句來自這張卡片</strong>}
+              {graded && <small>再按 Enter 進入下一題</small>}
+            </div>
+            <div className="answer-card-stage">
+              <NoteCard item={question.source} />
+            </div>
+            <div className="answer-review-actions">
+              {graded ? (
+                <button className="primary wide" onClick={onNext}><ChevronRight size={18} /> 下一題</button>
+              ) : (
+                <>
+                  <button className="success" onClick={onCorrect}><Check size={18} /> 答對</button>
+                  <button className="danger-button" onClick={onWrong}><X size={18} /> 答錯</button>
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function CorrectFireworks() {
+  return (
+    <div className="answer-inline-celebration" aria-label="答對了">
+      <span aria-hidden="true">🎉</span>
+      <strong>答對！</strong>
+    </div>
+  );
+}
+
+function DiffResult({ result }) {
+  if (result.isCorrect) return null;
+
+  return (
+    <div className="diff-box wrong-shake" role="status">
+      <div className="wrong-feedback"><span aria-hidden="true">✕</span><strong>答錯了</strong></div>
       <div className="diff-line">
         {result.parts.map((part, index) => {
           if (part.type === 'missing') return <span className="missing" key={index}>□</span>;
           if (part.type === 'missing-space') return <span className="missing-space" key={index}>_</span>;
           if (part.type === 'extra-space') return <span className="bad space" key={index}>␠</span>;
           if (part.type === 'extra') return <span className="bad" key={index}>{part.text}</span>;
+          if (part.type === 'replace') return <span className="bad replace" key={index} title={`應改成 ${part.expected}`}>{part.text === ' ' ? '␠' : part.text}</span>;
           return <span key={index}>{part.text}</span>;
         })}
       </div>
