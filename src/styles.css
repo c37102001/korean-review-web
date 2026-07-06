@@ -1199,6 +1199,17 @@ textarea:focus {
   border-color: #2fb9a3;
 }
 
+.text-link {
+  background: none;
+  box-shadow: none;
+  color: #2fb9a3;
+  font-weight: 700;
+  font-size: 0.9em;
+  padding: 6px 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .form-error,
 .sync-error,
 .form-success {

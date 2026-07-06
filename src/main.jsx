@@ -24,7 +24,7 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { collection, deleteDoc, doc, getDoc, getDocs, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import notes from '../korean_study_notes_simple_minimal_2026-07-05.json';
 import { auth, db } from './firebase.js';
@@ -584,18 +584,26 @@ function LoadingScreen({ text }) {
 }
 
 function LoginPage() {
+  const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const login = async (event) => {
+
+  const switchMode = (next) => { setMode(next); setError(''); };
+
+  const submit = async (event) => {
     event.preventDefault();
     setLoading(true);
     setError('');
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (loginError) {
-      setError(loginError.message);
+      if (mode === 'login') {
+        await signInWithEmailAndPassword(auth, email, password);
+      } else {
+        await createUserWithEmailAndPassword(auth, email, password);
+      }
+    } catch (err) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -603,21 +611,24 @@ function LoginPage() {
 
   return (
     <section className="login-page">
-      <form className="panel login-card" onSubmit={login}>
+      <form className="panel login-card" onSubmit={submit}>
         <div className="brand"><Sparkles size={24} /> 韓文筆記</div>
-        <span className="eyebrow">Firebase Login</span>
-        <h1>登入後開始複習</h1>
-        <p>使用原本 Firebase 專案中的 Email/Password 帳號。登入後會把新版 JSON 內容同步到你的使用者資料底下。</p>
+        <h1>{mode === 'login' ? '登入後開始複習' : '建立新帳號'}</h1>
         <label>
           Email
-          <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required />
+          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required />
         </label>
         <label>
-          Password
-          <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required />
+          密碼
+          <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required minLength={6} />
         </label>
         {error && <div className="form-error">{error}</div>}
-        <button className="primary wide" disabled={loading}>{loading ? '登入中' : '登入'}</button>
+        <button className="primary wide" disabled={loading}>
+          {loading ? (mode === 'login' ? '登入中…' : '建立中…') : (mode === 'login' ? '登入' : '建立帳號')}
+        </button>
+        <button type="button" className="text-link" onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}>
+          {mode === 'login' ? '還沒有帳號？建立新帳號' : '已有帳號？返回登入'}
+        </button>
       </form>
     </section>
   );
