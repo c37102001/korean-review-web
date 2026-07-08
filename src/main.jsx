@@ -630,6 +630,17 @@ function shuffleItems(items, seed) {
   return result;
 }
 
+function shuffleReviewQuestionsByKind(questions, seed = Date.now()) {
+  const terms = questions.filter((question) => question.kind === 'term');
+  const examples = questions.filter((question) => question.kind === 'example');
+  const others = questions.filter((question) => question.kind !== 'term' && question.kind !== 'example');
+  return [
+    ...shuffleItems(terms, seed),
+    ...shuffleItems(examples, seed + 17),
+    ...shuffleItems(others, seed + 31),
+  ];
+}
+
 function App() {
   const builtInRecords = useMemo(() => baseRecords(), []);
   const builtInData = useMemo(() => normalizeRecords(builtInRecords), [builtInRecords]);
@@ -1002,6 +1013,7 @@ function NotesPage({ items, questions, date, allItems, onPractice, onStudy, onUp
         <ItemDetailModal
           item={viewingItem}
           allItems={allItems}
+          onOpenItem={setViewingItem}
           onEdit={(item) => {
             setViewingItem(null);
             setEditingItem(item);
@@ -1355,18 +1367,18 @@ function DeleteIconButton({ item, onDelete }) {
   );
 }
 
-function ItemDetailModal({ item, allItems = [], onEdit, onDelete, onClose }) {
+function ItemDetailModal({ item, allItems = [], onEdit, onDelete, onOpenItem, onClose }) {
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <div className="modal-panel detail-panel">
         <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
-        <NoteCard item={item} allItems={allItems} onEdit={onEdit} onDelete={onDelete} />
+        <NoteCard item={item} allItems={allItems} onEdit={onEdit} onDelete={onDelete} onOpenItem={onOpenItem} />
       </div>
     </div>
   );
 }
 
-function NoteCard({ item, allItems = [], onEdit, onDelete, compact = false, onOpen }) {
+function NoteCard({ item, allItems = [], onEdit, onDelete, compact = false, onOpen, onOpenItem }) {
   const examplesCount = itemExamples(item).length;
   const relatedItems = displayRelated(item, allItems);
   return (
@@ -1388,14 +1400,7 @@ function NoteCard({ item, allItems = [], onEdit, onDelete, compact = false, onOp
         </div>
       )}
       {!compact && <>
-      {!!item.meanings?.length && <div className="subblock"><b>意思</b>{item.meanings.map((meaning) => (
-        <div key={meaning.id} className="meaning-block">
-          <p>{meaning.zh}{meaning.pattern ? ` · ${meaning.pattern}` : ''}</p>
-          {!!meaning.examples?.length && meaning.examples.map((ex) => <p key={ex.id || ex.ko}>{ex.ko}<br /><span>{ex.zh}</span></p>)}
-        </div>
-      ))}</div>}
-      {!!item.notes?.length && <div className="subblock tips">{item.notes.map((note) => <p key={note}>{note}</p>)}</div>}
-      {!!relatedItems.length && <div className="tags">{relatedItems.map((entry) => <span key={entry.id}>{entry.ko}{entry.zh ? ` · ${entry.zh}` : ''}</span>)}</div>}
+      <CardRichDetails item={item} relatedItems={relatedItems} onOpenItem={onOpenItem} />
       {!!item.components?.length && <div className="tags">{item.components.map((entry) => <span key={entry.ko}>{entry.ko} · {entry.zh}</span>)}</div>}
       {!!item.items?.length && <div className="subblock">{item.items.map((entry) => <p key={entry.ko}>{entry.ko}<br /><span>{entry.zh}</span></p>)}</div>}
       </>}
@@ -1403,11 +1408,109 @@ function NoteCard({ item, allItems = [], onEdit, onDelete, compact = false, onOp
   );
 }
 
+function CardRichDetails({ item, relatedItems = [], onOpenItem }) {
+  return (
+    <div className="rich-details">
+      {!!item.meanings?.length && (
+        <section className="detail-section meanings-section">
+          <div className="detail-section-title"><span>意思</span><small>{item.meanings.length} 個</small></div>
+          <div className="meaning-list">
+            {item.meanings.map((meaning, index) => (
+              <article key={meaning.id} className="meaning-block">
+                <div className="meaning-head">
+                  <span>{index + 1}</span>
+                  <strong>{meaning.zh}</strong>
+                </div>
+                {meaning.pattern && <div className="meaning-pattern">{meaning.pattern}</div>}
+                {!!meaning.examples?.length && (
+                  <div className="example-list">
+                    {meaning.examples.map((ex) => (
+                      <div key={ex.id || ex.ko} className="example-row">
+                        <p className="example-ko">{ex.ko}</p>
+                        <p className="example-zh">{ex.zh}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+      {!!item.notes?.length && (
+        <section className="detail-section note-section">
+          <div className="detail-section-title"><span>筆記</span></div>
+          <div className="note-list">
+            {item.notes.map((note) => <p key={note}>{note}</p>)}
+          </div>
+        </section>
+      )}
+      {!!relatedItems.length && (
+        <section className="detail-section related-section">
+          <div className="detail-section-title"><span>相關詞</span></div>
+          <div className="tags rich-tags">
+            {relatedItems.map((entry) => <RelatedWordTag key={entry.id} item={entry} onOpenItem={onOpenItem} />)}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function RelatedWordTag({ item, onOpenItem }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const label = `${item.ko}${item.zh ? ` · ${item.zh}` : ''}`;
+  const Tag = onOpenItem ? 'button' : 'span';
+
+  return (
+    <span
+      className="related-tag-wrap"
+      onMouseEnter={() => setPreviewOpen(true)}
+      onMouseLeave={() => setPreviewOpen(false)}
+      onTouchStart={() => setPreviewOpen(true)}
+      onTouchEnd={() => setPreviewOpen(false)}
+      onTouchCancel={() => setPreviewOpen(false)}
+    >
+      <Tag
+        type={onOpenItem ? 'button' : undefined}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onOpenItem?.(item);
+        }}
+      >
+        {label}
+      </Tag>
+      {previewOpen && <RelatedPreviewCard item={item} />}
+    </span>
+  );
+}
+
+function RelatedPreviewCard({ item }) {
+  const firstExamples = itemExamples(item).slice(0, 2);
+  return (
+    <div className="related-preview-card" role="tooltip">
+      <div className="preview-head">
+        <strong>{item.ko}</strong>
+        {item.pos && <span>{item.pos}</span>}
+      </div>
+      <p className="preview-zh">{item.zh}</p>
+      {!!item.notes?.length && <p className="preview-note">{item.notes[0]}</p>}
+      {!!firstExamples.length && (
+        <div className="preview-examples">
+          {firstExamples.map((example) => (
+            <p key={example.id || example.ko}>{example.ko}<br /><span>{example.zh}</span></p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StudyPage({ store, updateStore, set }) {
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [filter, setFilter] = useState('全部');
-  const [relatedItems, setRelatedItems] = useState(null);
   const [frontSide, setFrontSide] = useState('ko');
   const [random, setRandom] = useState(false);
   const [shuffleSeed, setShuffleSeed] = useState(Date.now());
@@ -1430,6 +1533,15 @@ function StudyPage({ store, updateStore, set }) {
   const goNext = () => {
     setIndex((index + 1) % ordered.length);
     setFlipped(false);
+  };
+  const jumpToItem = (targetItem) => {
+    const targetIndex = set.items.findIndex((entry) => entry.id === targetItem.id);
+    if (targetIndex < 0) return;
+    setAutoPlay(false);
+    setRandom(false);
+    setFilter('全部');
+    setIndex(targetIndex);
+    setFlipped(true);
   };
 
   useLayoutEffect(() => {
@@ -1497,8 +1609,7 @@ function StudyPage({ store, updateStore, set }) {
         </div>
         <button className="card-arrow right" onClick={goNext} aria-label="下一張"><ChevronRight size={26} /></button>
       </div>
-      {flipped && <div className="card-details"><StudyDetails item={item} allItems={set.items} onOpenRelated={setRelatedItems} /></div>}
-      {relatedItems && <RelatedCardsModal items={relatedItems} onClose={() => setRelatedItems(null)} />}
+      {flipped && <div className="card-details"><StudyDetails item={item} allItems={set.items} onOpenItem={jumpToItem} /></div>}
       <div className="study-controls">
         <button onClick={() => mark('想再看一次')} className={learning?.status === '想再看一次' ? 'selected-soft' : ''}>想再看一次</button>
         <button onClick={() => mark('不熟悉')} className={learning?.status === '不熟悉' ? 'selected-soft' : ''}>不熟悉</button>
@@ -1508,74 +1619,13 @@ function StudyPage({ store, updateStore, set }) {
   );
 }
 
-function relatedIdList(item) {
-  return (item.related || []).filter(Boolean);
-}
-
-function collectRelatedItems(currentItem, clickedId, allItems) {
-  const byId = new Map(allItems.map((entry) => [entry.id, entry]));
-  const selected = new Set([currentItem.id, clickedId]);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    allItems.forEach((entry) => {
-      const related = relatedIdList(entry);
-      const shouldInclude = selected.has(entry.id) || related.some((id) => selected.has(id));
-      if (shouldInclude) {
-        if (!selected.has(entry.id)) {
-          selected.add(entry.id);
-          changed = true;
-        }
-        related.forEach((id) => {
-          if (byId.has(id) && !selected.has(id)) {
-            selected.add(id);
-            changed = true;
-          }
-        });
-      }
-    });
-  }
-  return [...selected].map((id) => byId.get(id)).filter(Boolean);
-}
-
-function RelatedCardsModal({ items, onClose }) {
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <div className="modal-panel related-panel">
-        <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
-        <div className="panel-title related-title">
-          <div><h2>相關單字比較</h2><span>{items.length} 張關聯卡片</span></div>
-        </div>
-        <div className="related-grid">
-          {items.map((relatedItem) => <NoteCard key={relatedItem.id} item={relatedItem} allItems={items} />)}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function StudyDetails({ item, allItems, onOpenRelated }) {
+function StudyDetails({ item, allItems, onOpenItem }) {
   const relatedItems = displayRelated(item, allItems);
   const hasDetails = item.meanings?.length || item.notes?.length || relatedItems.length || item.components?.length || item.items?.length;
   if (!hasDetails) return <div className="empty">這張卡片沒有額外例句或補充說明。</div>;
   return (
     <div className="study-details">
-      {!!item.meanings?.length && <div className="subblock"><b>意思</b>{item.meanings.map((meaning) => (
-        <div key={meaning.id} className="meaning-block">
-          <p>{meaning.zh}{meaning.pattern ? ` · ${meaning.pattern}` : ''}</p>
-          {!!meaning.examples?.length && meaning.examples.map((ex) => <p key={ex.id || ex.ko}>{ex.ko}<br /><span>{ex.zh}</span></p>)}
-        </div>
-      ))}</div>}
-      {!!item.notes?.length && <div className="subblock tips">{item.notes.map((note) => <p key={note}>{note}</p>)}</div>}
-      {!!relatedItems.length && (
-        <div className="tags">
-          {relatedItems.map((entry) => (
-            <button key={entry.id} type="button" onClick={() => onOpenRelated(collectRelatedItems(item, entry.id, allItems))}>
-              {entry.ko}{entry.zh ? ` · ${entry.zh}` : ''}
-            </button>
-          ))}
-        </div>
-      )}
+      <CardRichDetails item={item} relatedItems={relatedItems} onOpenItem={onOpenItem} />
       {!!item.components?.length && <div className="tags">{item.components.map((entry) => <span key={entry.ko}>{entry.ko} · {entry.zh}</span>)}</div>}
       {!!item.items?.length && <div className="subblock">{item.items.map((entry) => <p key={entry.ko}>{entry.ko}<br /><span>{entry.zh}</span></p>)}</div>}
     </div>
@@ -1595,6 +1645,7 @@ function PracticePage({ store, updateStore, set }) {
   const [revealed, setRevealed] = useState(false);
   const [graded, setGraded] = useState(false);
   const [lastCorrect, setLastCorrect] = useState(null);
+  const [typedAttempts, setTypedAttempts] = useState(0);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [sessionResults, setSessionResults] = useState([]);
   const sourceQuestions = useMemo(() => {
@@ -1604,7 +1655,7 @@ function PracticePage({ store, updateStore, set }) {
     const filtered = set.questions.filter((q) => activeSource === 'all' || q.kind === activeSource);
     return activeSource === 'all' ? orderReviewQuestions(filtered) : filtered;
   }, [set.questions, source, direction, set.termOnly, set.dueOnly, store]);
-  const queue = set.dueOnly ? sourceQuestions : (started ? questionQueue : sourceQuestions);
+  const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
   const resetSession = () => {
     setStarted(false);
@@ -1615,11 +1666,12 @@ function PracticePage({ store, updateStore, set }) {
     setRevealed(false);
     setGraded(false);
     setLastCorrect(null);
+    setTypedAttempts(0);
     setSummaryOpen(false);
     setSessionResults([]);
   };
   const startSession = () => {
-    const nextQuestions = set.dueOnly ? sourceQuestions : shuffleItems(sourceQuestions, Date.now());
+    const nextQuestions = set.dueOnly ? shuffleReviewQuestionsByKind(sourceQuestions) : shuffleItems(sourceQuestions, Date.now());
     if (!nextQuestions.length) {
       resetSession();
       return;
@@ -1632,11 +1684,14 @@ function PracticePage({ store, updateStore, set }) {
     setRevealed(false);
     setGraded(false);
     setLastCorrect(null);
+    setTypedAttempts(0);
     setSessionResults([]);
   };
 
   useEffect(() => {
     if (!set.dueOnly) return;
+    const nextQuestions = shuffleReviewQuestionsByKind(sourceQuestions);
+    setQuestionQueue(nextQuestions);
     setStarted(true);
     setIndex(0);
     setInput('');
@@ -1644,6 +1699,8 @@ function PracticePage({ store, updateStore, set }) {
     setRevealed(false);
     setGraded(false);
     setLastCorrect(null);
+    setTypedAttempts(0);
+    setSessionResults([]);
   }, [set.dueOnly, sourceQuestions]);
 
   useEffect(() => {
@@ -1656,6 +1713,7 @@ function PracticePage({ store, updateStore, set }) {
     setRevealed(false);
     setGraded(false);
     setLastCorrect(null);
+    setTypedAttempts(0);
     if (index + 1 < queue.length) setIndex(index + 1);
     else resetSession();
   };
@@ -1681,8 +1739,12 @@ function PracticePage({ store, updateStore, set }) {
     if (graded || !input.trim()) return;
     const checkResult = compareAnswer(input, question.ko);
     setResult(checkResult);
+    const nextAttempt = typedAttempts + 1;
+    setTypedAttempts(nextAttempt);
     if (checkResult.isCorrect) {
       gradeAndRecord(true);
+    } else if (question.kind === 'example' && nextAttempt < 2) {
+      setRevealed(false);
     } else {
       setRevealed(true);
       gradeAndRecord(false);
@@ -1692,6 +1754,7 @@ function PracticePage({ store, updateStore, set }) {
     if (graded) return;
     setRevealed(true);
     setResult(null);
+    setTypedAttempts(2);
     gradeAndRecord(false);
   };
   const summary = {
@@ -2033,6 +2096,7 @@ function NotebookPage({ store, items, questions, onPractice, onStudy, onAddRecor
         <ItemDetailModal
           item={viewingItem}
           allItems={items}
+          onOpenItem={setViewingItem}
           onEdit={(item) => {
             setViewingItem(null);
             setEditingItem(item);
