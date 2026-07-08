@@ -1254,6 +1254,19 @@ main {
   font-size: 16px;
 }
 
+.answer-inline-wrong {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  color: #9f2936;
+  background: #ffd7dc;
+  font-weight: 950;
+  animation: wrong-shake 360ms ease-out both;
+}
+
 .answer-review-actions {
   display: flex;
   gap: 10px;
@@ -2083,12 +2096,22 @@ textarea:focus {
     margin-top: 0 !important;
   }
 
+  main {
+    display: flex;
+    flex-direction: column;
+  }
+
   .back-button {
-    margin: 12px 0 0 18px;
+    order: 20;
+    width: calc(100% - 28px);
+    margin: 0 14px 14px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    justify-content: center;
   }
 
   .page {
-    padding: 18px;
+    padding: 18px 14px;
   }
 
   .hero,
@@ -2163,10 +2186,34 @@ textarea:focus {
   }
 
   .segmented,
-  .actions,
   .answer-review-actions,
   .pagination {
     flex-direction: column;
+  }
+
+  .actions:not(.answer-actions) {
+    flex-direction: column;
+  }
+
+  .answer-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .answer-actions button {
+    flex: 1 1 120px;
+    min-height: 40px;
+    padding: 9px 10px;
+    border-radius: 12px;
+  }
+
+  .answer-inline-celebration,
+  .answer-inline-wrong {
+    flex: 1 1 auto;
+    min-height: 40px;
+    padding: 8px 10px;
+    justify-content: center;
   }
 
   .card-arrow.left {
@@ -2186,12 +2233,102 @@ textarea:focus {
   }
 
   .practice-shell {
-    padding: 18px;
+    padding: 14px;
+    border-radius: 18px;
+  }
+
+  .practice-page {
+    min-height: auto;
+    place-items: start;
+  }
+
+  .practice-layout {
+    gap: 12px;
+  }
+
+  .quiz-meta {
+    margin: 8px 0 12px;
+    font-size: 14px;
+  }
+
+  .quiz-meta-row button {
+    padding: 7px 9px;
+    border-radius: 10px;
+    font-size: 13px;
+  }
+
+  .progress-line {
+    height: 7px;
+  }
+
+  .prompt {
+    padding: 14px;
+    margin-bottom: 10px;
+    border-radius: 16px;
+  }
+
+  .prompt h1 {
+    margin-top: 6px;
+    font-size: 28px;
+    line-height: 1.12;
+  }
+
+  .prompt span {
+    font-size: 13px;
+  }
+
+  .answer-length-hint {
+    margin-top: 9px;
+    padding: 5px 8px;
+    font-size: 12px;
+  }
+
+  .typed-answer-area {
+    gap: 8px;
+  }
+
+  textarea {
+    min-height: 78px;
+    padding: 12px;
+    border-radius: 14px;
+    font-size: 18px;
+  }
+
+  .diff-box,
+  .answer-panel {
+    margin-top: 10px;
+    padding: 12px;
+    border-radius: 14px;
+  }
+
+  .diff-line {
+    margin-top: 8px;
+    padding: 10px;
+    font-size: 20px;
+    line-height: 1.55;
   }
 
   .practice-answer-panel {
     position: static;
     max-height: none;
+    border-radius: 18px;
+  }
+
+  .answer-panel-inner {
+    min-height: 0;
+    padding: 14px;
+  }
+
+  .answer-review-head {
+    margin-bottom: 10px;
+  }
+
+  .practice-answer-panel .note-card h3 {
+    font-size: 22px;
+  }
+
+  .practice-answer-panel .note-card {
+    font-size: 14px;
   }
 
   .related-preview-card {

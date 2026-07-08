@@ -2293,9 +2293,10 @@ function PracticePage({ store, updateStore, set }) {
 
   useEffect(() => {
     if (!set.dueOnly) return;
+    if (questionQueue.length) return;
     const nextQuestions = shuffleReviewQuestionsByKind(sourceQuestions);
     setQuestionQueue(nextQuestions);
-    setStarted(true);
+    setStarted(!!nextQuestions.length);
     setIndex(0);
     setInput('');
     setResult(null);
@@ -2304,7 +2305,7 @@ function PracticePage({ store, updateStore, set }) {
     setLastCorrect(null);
     setTypedAttempts(0);
     setSessionResults([]);
-  }, [set.dueOnly, sourceQuestions]);
+  }, [set.dueOnly, sourceQuestions, questionQueue.length]);
 
   useEffect(() => {
     if (direction === 'ko-zh') setSource('term');
@@ -2455,7 +2456,10 @@ function PracticePage({ store, updateStore, set }) {
                       <button onClick={revealTypedAnswerAsWrong}><RotateCcw size={18} /> 公佈答案</button>
                     </>
                   ) : (
-                    graded && lastCorrect && <CorrectFireworks />
+                    graded && <>
+                      {lastCorrect ? <CorrectFireworks /> : <span className="answer-inline-wrong"><X size={16} /> 答錯</span>}
+                      <button className="primary" onClick={goNext}><ChevronRight size={18} /> 下一題</button>
+                    </>
                   )}
                 </div>
               </div>
@@ -2524,16 +2528,14 @@ function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, on
             <div className="answer-card-stage">
               <NoteCard item={question.source} />
             </div>
-            <div className="answer-review-actions">
-              {graded ? (
-                <button className="primary wide" onClick={onNext}><ChevronRight size={18} /> 下一題</button>
-              ) : (
+            {!graded && (
+              <div className="answer-review-actions">
                 <>
                   <button className="success" onClick={onCorrect}><Check size={18} /> 答對</button>
                   <button className="danger-button" onClick={onWrong}><X size={18} /> 答錯</button>
                 </>
-              )}
-            </div>
+              </div>
+            )}
           </>
         )}
       </div>
