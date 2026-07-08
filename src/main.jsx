@@ -2486,7 +2486,10 @@ function PracticePage({ store, updateStore, set }) {
             <>
               <div className="prompt">
                 <span>請輸入韓文</span>
-                <h1>{question.zh}</h1>
+                <div className="prompt-title">
+                  <h1>{question.zh}</h1>
+                  <QuestionKindBadge kind={question.kind} />
+                </div>
                 <small className="answer-length-hint">答案 {countKoreanLetters(question.ko)} 個韓文字</small>
               </div>
               <div className="typed-answer-area">
@@ -2505,6 +2508,7 @@ function PracticePage({ store, updateStore, set }) {
                   autoFocus
                   disabled={graded}
                 />
+                <span className="input-korean-count">{countKoreanLetters(input)}</span>
                 <div className="actions answer-actions">
                   {!graded && !revealed ? (
                     <>
@@ -2523,7 +2527,13 @@ function PracticePage({ store, updateStore, set }) {
             </>
           ) : (
             <>
-              <div className="prompt ko"><span>請在心中想中文意思</span><h1>{question.ko}</h1></div>
+              <div className="prompt ko">
+                <span>請在心中想中文意思</span>
+                <div className="prompt-title">
+                  <h1>{question.ko}</h1>
+                  <QuestionKindBadge kind={question.kind} />
+                </div>
+              </div>
               {!revealed ? <button className="primary wide" onClick={revealAnswerForSelfGrade}>公佈答案</button> : (
                 <div className="answer-panel grade-banner">
                   <strong><Check size={18} /> 請看右側單字卡後自評</strong>
@@ -2544,6 +2554,10 @@ function PracticePage({ store, updateStore, set }) {
       </div>
     </section>
   );
+}
+
+function QuestionKindBadge({ kind }) {
+  return <small className={`question-kind-badge ${kind === 'example' ? 'example' : 'term'}`}>{kind === 'example' ? '例句' : '單字'}</small>;
 }
 
 function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, onWrong, onNext }) {

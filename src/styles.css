@@ -1225,8 +1225,28 @@ main {
 }
 
 .typed-answer-area {
+  position: relative;
   display: grid;
   gap: 12px;
+}
+
+.input-korean-count {
+  position: absolute;
+  right: 12px;
+  top: 86px;
+  min-width: 28px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #516068;
+  background: rgba(244, 247, 247, 0.94);
+  font-size: 12px;
+  font-weight: 950;
+  text-align: center;
+  pointer-events: none;
+}
+
+.typed-answer-area > textarea {
+  padding-right: 54px;
 }
 
 .answer-actions {
@@ -1337,10 +1357,39 @@ main {
   font-weight: 950;
 }
 
+.prompt-title {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
 .prompt h1 {
-  margin: 10px 0 0;
+  margin: 0;
   font-size: clamp(30px, 6vw, 56px);
   line-height: 1.18;
+}
+
+.question-kind-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.question-kind-badge.term {
+  color: #1d7467;
+  background: #dff7ef;
+}
+
+.question-kind-badge.example {
+  color: #9a5521;
+  background: #ffe5bd;
 }
 
 .answer-length-hint {
@@ -2265,9 +2314,19 @@ textarea:focus {
   }
 
   .prompt h1 {
-    margin-top: 6px;
     font-size: 28px;
     line-height: 1.12;
+  }
+
+  .prompt-title {
+    gap: 7px;
+    margin-top: 6px;
+  }
+
+  .question-kind-badge {
+    min-height: 24px;
+    padding: 4px 8px;
+    font-size: 12px;
   }
 
   .prompt span {
@@ -2287,8 +2346,14 @@ textarea:focus {
   textarea {
     min-height: 78px;
     padding: 12px;
+    padding-right: 46px;
     border-radius: 14px;
     font-size: 18px;
+  }
+
+  .input-korean-count {
+    right: 9px;
+    top: 56px;
   }
 
   .diff-box,
