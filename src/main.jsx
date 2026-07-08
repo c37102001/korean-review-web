@@ -861,6 +861,60 @@ function speakText(text, lang) {
   window.speechSynthesis.speak(utterance);
 }
 
+function speakAnswer(question) {
+  if (!('speechSynthesis' in window) || !question) return;
+  const entries = [
+    { text: question.ko, lang: 'ko-KR', rate: 0.9 },
+    { text: question.zh, lang: 'zh-TW', rate: 1 },
+  ].filter((entry) => entry.text);
+  if (!entries.length) return;
+  window.speechSynthesis.cancel();
+  let index = 0;
+  const playNext = () => {
+    const entry = entries[index];
+    if (!entry) return;
+    const utterance = new SpeechSynthesisUtterance(entry.text);
+    utterance.lang = entry.lang;
+    utterance.rate = entry.rate;
+    utterance.onend = () => {
+      index += 1;
+      playNext();
+    };
+    window.speechSynthesis.speak(utterance);
+  };
+  playNext();
+}
+
+function playResultSound(correct) {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return;
+  const context = new AudioContext();
+  const now = context.currentTime;
+  const notes = correct
+    ? [
+        { frequency: 660, start: 0, duration: 0.12 },
+        { frequency: 880, start: 0.13, duration: 0.16 },
+      ]
+    : [
+        { frequency: 220, start: 0, duration: 0.16 },
+        { frequency: 165, start: 0.14, duration: 0.18 },
+      ];
+  notes.forEach(({ frequency, start, duration }) => {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = correct ? 'sine' : 'sawtooth';
+    oscillator.frequency.setValueAtTime(frequency, now + start);
+    gain.gain.setValueAtTime(0.0001, now + start);
+    gain.gain.exponentialRampToValueAtTime(correct ? 0.12 : 0.08, now + start + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + start + duration);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(now + start);
+    oscillator.stop(now + start + duration + 0.02);
+  });
+  window.setTimeout(() => context.close(), 520);
+}
+
 function shuffleItems(items, seed) {
   const result = [...items];
   let value = seed || 1;
@@ -974,7 +1028,7 @@ function App() {
 
   if (authLoading) return <LoadingScreen text="正在確認登入狀態" />;
   if (!user) return <LoginPage />;
-  if (storeLoading) return <LoadingScreen text="正在同步 Firebase 資料" />;
+  if (storeLoading) return <LoadingScreen text="載入資料中" />;
 
   const views = {
     home: <HomePage store={store} items={items} questions={dailyQuestions} onPractice={startPractice} onStudy={startStudy} />,
@@ -2249,8 +2303,8 @@ function PracticePage({ store, updateStore, set }) {
   const [graded, setGraded] = useState(false);
   const [lastCorrect, setLastCorrect] = useState(null);
   const [typedAttempts, setTypedAttempts] = useState(0);
-  const [summaryOpen, setSummaryOpen] = useState(false);
-  const [sessionResults, setSessionResults] = useState([]);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [autoPronounce, setAutoPronounce] = useState(true);
   const sourceQuestions = useMemo(() => {
     if (set.dueOnly) return orderReviewQuestions(dueQuestions(store, reviewQuestions(set.questions)));
     if (direction === 'ko-zh') return set.questions.filter((q) => q.kind === 'term');
@@ -2270,8 +2324,6 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
-    setSummaryOpen(false);
-    setSessionResults([]);
   };
   const startSession = () => {
     const nextQuestions = set.dueOnly ? shuffleReviewQuestionsByKind(sourceQuestions) : shuffleItems(sourceQuestions, Date.now());
@@ -2288,7 +2340,6 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
-    setSessionResults([]);
   };
 
   useEffect(() => {
@@ -2304,7 +2355,6 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
-    setSessionResults([]);
   }, [set.dueOnly, sourceQuestions, questionQueue.length]);
 
   useEffect(() => {
@@ -2321,13 +2371,13 @@ function PracticePage({ store, updateStore, set }) {
     if (index + 1 < queue.length) setIndex(index + 1);
     else resetSession();
   };
-  // Korean-to-Chinese correct answers are intentionally lightweight: they count
-  // for the current session summary but do not improve long-term accuracy.
+  // Korean-to-Chinese correct answers are intentionally lightweight: they do
+  // not improve long-term accuracy, while wrong answers still mark the card.
   const submit = (correct) => {
     if (!correct || activeDirection !== 'ko-zh') {
       updateStore((current) => recordAnswer(current, question, correct));
     }
-    setSessionResults((results) => [...results, { questionId: question.id, correct }]);
+    if (soundEnabled) playResultSound(correct);
     goNext();
   };
   // Used when 確認/Enter auto-grades a typed answer: records the result right
@@ -2335,9 +2385,10 @@ function PracticePage({ store, updateStore, set }) {
   // outcome is visible until the user presses Enter for the next one.
   const gradeAndRecord = (correct) => {
     updateStore((current) => recordAnswer(current, question, correct));
-    setSessionResults((results) => [...results, { questionId: question.id, correct }]);
     setGraded(true);
     setLastCorrect(correct);
+    if (soundEnabled) playResultSound(correct);
+    if (autoPronounce) window.setTimeout(() => speakAnswer(question), soundEnabled ? 320 : 0);
   };
   const handleConfirm = () => {
     if (graded || !input.trim()) return;
@@ -2349,6 +2400,7 @@ function PracticePage({ store, updateStore, set }) {
       gradeAndRecord(true);
     } else if (question.kind === 'example' && nextAttempt < 2) {
       setRevealed(false);
+      if (soundEnabled) playResultSound(false);
     } else {
       setRevealed(true);
       gradeAndRecord(false);
@@ -2361,11 +2413,9 @@ function PracticePage({ store, updateStore, set }) {
     setTypedAttempts(2);
     gradeAndRecord(false);
   };
-  const summary = {
-    total: sessionResults.length,
-    correct: sessionResults.filter((entry) => entry.correct).length,
-    wrong: sessionResults.filter((entry) => !entry.correct).length,
-    remaining: Math.max(0, queue.length - index - (graded ? 1 : 0)),
+  const revealAnswerForSelfGrade = () => {
+    setRevealed(true);
+    if (autoPronounce) speakAnswer(question);
   };
 
   useEffect(() => {
@@ -2425,7 +2475,13 @@ function PracticePage({ store, updateStore, set }) {
       <div className="practice-layout">
         <div className="practice-shell">
           <div className="progress-line"><span style={{ width: `${((index + 1) / queue.length) * 100}%` }} /></div>
-          <div className="quiz-meta quiz-meta-row"><span>{index + 1} / {queue.length} · {activeDirection === 'zh-ko' ? '中翻韓' : '韓翻中'}</span><button onClick={() => setSummaryOpen(true)}>結束測驗</button></div>
+          <div className="quiz-meta quiz-meta-row">
+            <span>{index + 1} / {queue.length} · {activeDirection === 'zh-ko' ? '中翻韓' : '韓翻中'}</span>
+            <div className="quiz-options">
+              <button className={soundEnabled ? 'selected-soft' : ''} onClick={() => setSoundEnabled((enabled) => !enabled)}>{soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />} 音效</button>
+              <button className={autoPronounce ? 'selected-soft' : ''} onClick={() => setAutoPronounce((enabled) => !enabled)}>{autoPronounce ? <Volume2 size={16} /> : <VolumeX size={16} />} 自動發音</button>
+            </div>
+          </div>
           {activeDirection === 'zh-ko' ? (
             <>
               <div className="prompt">
@@ -2468,7 +2524,7 @@ function PracticePage({ store, updateStore, set }) {
           ) : (
             <>
               <div className="prompt ko"><span>請在心中想中文意思</span><h1>{question.ko}</h1></div>
-              {!revealed ? <button className="primary wide" onClick={() => setRevealed(true)}>公佈答案</button> : (
+              {!revealed ? <button className="primary wide" onClick={revealAnswerForSelfGrade}>公佈答案</button> : (
                 <div className="answer-panel grade-banner">
                   <strong><Check size={18} /> 請看右側單字卡後自評</strong>
                 </div>
@@ -2486,25 +2542,6 @@ function PracticePage({ store, updateStore, set }) {
           onNext={goNext}
         />
       </div>
-      {summaryOpen && (
-        <div className="modal-backdrop">
-          <div className="modal-panel test-summary-panel">
-            <button className="modal-close" onClick={() => setSummaryOpen(false)}><X /></button>
-            <span className="eyebrow">Test Summary</span>
-            <h2>測驗摘要</h2>
-            <div className="summary-grid">
-              <div><span>已作答</span><strong>{summary.total}</strong></div>
-              <div><span>答對</span><strong>{summary.correct}</strong></div>
-              <div><span>答錯</span><strong>{summary.wrong}</strong></div>
-              <div><span>剩餘</span><strong>{summary.remaining}</strong></div>
-            </div>
-            <div className="actions">
-              <button onClick={() => setSummaryOpen(false)}>繼續測驗</button>
-              <button className="primary" onClick={resetSession}>結束</button>
-            </div>
-          </div>
-        </div>
-      )}
     </section>
   );
 }

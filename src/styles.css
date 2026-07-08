@@ -1303,10 +1303,22 @@ main {
   gap: 12px;
 }
 
-.quiz-meta-row button {
+.quiz-options {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.quiz-options button {
   padding: 8px 11px;
   box-shadow: none;
   background: #f0f4f4;
+}
+
+.quiz-options button.selected-soft {
+  color: #1d5d59;
+  background: #dff7ef;
 }
 
 .prompt {
@@ -1539,10 +1551,6 @@ textarea:focus {
   background: transparent;
 }
 
-.test-summary-panel {
-  width: min(520px, 100%);
-}
-
 .export-panel {
   width: min(920px, 100%);
 }
@@ -1572,31 +1580,6 @@ textarea:focus {
   font-size: 13px;
   line-height: 1.55;
   white-space: pre;
-}
-
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  margin: 18px 0;
-}
-
-.summary-grid div {
-  padding: 12px;
-  border-radius: 14px;
-  background: #f4f7f6;
-}
-
-.summary-grid span {
-  display: block;
-  margin-bottom: 4px;
-  color: #6d7b84;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.summary-grid strong {
-  font-size: 24px;
 }
 
 .modal-close {
@@ -2255,6 +2238,20 @@ textarea:focus {
     padding: 7px 9px;
     border-radius: 10px;
     font-size: 13px;
+  }
+
+  .quiz-meta-row {
+    align-items: flex-start;
+  }
+
+  .quiz-options {
+    justify-content: flex-start;
+    gap: 6px;
+  }
+
+  .quiz-options button {
+    padding: 7px 8px;
+    font-size: 12px;
   }
 
   .progress-line {
