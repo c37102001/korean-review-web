@@ -358,8 +358,21 @@ function dueQuestions(store, questions, date = todayString()) {
   return questions.filter((question) => getProgress(store, question).nextDue <= date);
 }
 
-function termQuestions(questions) {
-  return questions.filter((question) => question.kind === 'term');
+function orderReviewQuestions(questions) {
+  const kindRank = { term: 0, example: 1 };
+  return [...questions].sort((a, b) => {
+    const kindDiff = (kindRank[a.kind] ?? 99) - (kindRank[b.kind] ?? 99);
+    if (kindDiff) return kindDiff;
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    const aIndex = a.source?.index ?? 0;
+    const bIndex = b.source?.index ?? 0;
+    if (aIndex !== bIndex) return aIndex - bIndex;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+function reviewQuestions(questions) {
+  return orderReviewQuestions(questions.filter((question) => question.kind === 'term' || question.kind === 'example'));
 }
 
 function groupTasks(store, questions, date = todayString()) {
@@ -541,7 +554,7 @@ function App() {
     return [...byId.values()];
   }, [builtInRecords, store.customRecords, store.deletedRecordIds]);
   const { items, questions } = useMemo(() => normalizeRecords(allRecords), [allRecords]);
-  const dailyQuestions = useMemo(() => termQuestions(questions), [questions]);
+  const dailyQuestions = useMemo(() => reviewQuestions(questions), [questions]);
   const completedAttemptDates = useMemo(
     () => [...new Set((store.attempts || []).map((attempt) => attempt.time?.slice(0, 10)).filter(Boolean))],
     [store.attempts],
@@ -1470,8 +1483,9 @@ function StudyDetails({ item, allItems, onOpenRelated }) {
 function PracticePage({ store, updateStore, set }) {
   const [direction, setDirection] = useState('zh-ko');
   const [source, setSource] = useState('term');
-  const fixedTermOnly = set.termOnly || set.dueOnly;
-  const [started, setStarted] = useState(false);
+  const fixedSource = set.termOnly || set.dueOnly;
+  const activeDirection = set.dueOnly ? 'zh-ko' : direction;
+  const [started, setStarted] = useState(!!set.dueOnly);
   const [questionQueue, setQuestionQueue] = useState([]);
   const [index, setIndex] = useState(0);
   const [input, setInput] = useState('');
@@ -1480,11 +1494,12 @@ function PracticePage({ store, updateStore, set }) {
   const [graded, setGraded] = useState(false);
   const [lastCorrect, setLastCorrect] = useState(null);
   const sourceQuestions = useMemo(() => {
-    const activeSource = fixedTermOnly ? 'term' : source;
+    if (set.dueOnly) return orderReviewQuestions(dueQuestions(store, reviewQuestions(set.questions)));
+    const activeSource = set.termOnly ? 'term' : source;
     const filtered = set.questions.filter((q) => activeSource === 'all' || q.kind === activeSource);
-    return set.dueOnly ? dueQuestions(store, filtered) : filtered;
-  }, [set.questions, source, fixedTermOnly, set.dueOnly, store]);
-  const queue = started ? questionQueue : sourceQuestions;
+    return activeSource === 'all' ? orderReviewQuestions(filtered) : filtered;
+  }, [set.questions, source, set.termOnly, set.dueOnly, store]);
+  const queue = set.dueOnly ? sourceQuestions : (started ? questionQueue : sourceQuestions);
   const question = queue[index];
   const resetSession = () => {
     setStarted(false);
@@ -1497,7 +1512,7 @@ function PracticePage({ store, updateStore, set }) {
     setLastCorrect(null);
   };
   const startSession = () => {
-    const nextQuestions = shuffleItems(sourceQuestions, Date.now());
+    const nextQuestions = set.dueOnly ? sourceQuestions : shuffleItems(sourceQuestions, Date.now());
     if (!nextQuestions.length) {
       resetSession();
       return;
@@ -1511,6 +1526,17 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
   };
+
+  useEffect(() => {
+    if (!set.dueOnly) return;
+    setStarted(true);
+    setIndex(0);
+    setInput('');
+    setResult(null);
+    setRevealed(false);
+    setGraded(false);
+    setLastCorrect(null);
+  }, [set.dueOnly, sourceQuestions]);
   const goNext = () => {
     setInput('');
     setResult(null);
@@ -1564,18 +1590,22 @@ function PracticePage({ store, updateStore, set }) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [started, graded, index, queue.length]);
 
-  if (!started) {
+  if (!started && !set.dueOnly) {
     return (
       <section className="page practice-start">
         <div className="panel start-panel">
           <span className="eyebrow">Practice · {set.label}</span>
-          <h1>選擇練習方向</h1>
-          <div className="segmented">
-            <button className={direction === 'zh-ko' ? 'active' : ''} onClick={() => setDirection('zh-ko')}>中翻韓</button>
-            <button className={direction === 'ko-zh' ? 'active' : ''} onClick={() => setDirection('ko-zh')}>韓翻中</button>
-          </div>
-          {fixedTermOnly ? (
-            <div className="fixed-source-note">每日複習只包含單字 / 片語。</div>
+          <h1>{set.dueOnly ? '今日複習' : '選擇練習方向'}</h1>
+          {set.dueOnly ? (
+            <div className="fixed-source-note">複習任務固定使用中文翻韓文。</div>
+          ) : (
+            <div className="segmented">
+              <button className={direction === 'zh-ko' ? 'active' : ''} onClick={() => setDirection('zh-ko')}>中翻韓</button>
+              <button className={direction === 'ko-zh' ? 'active' : ''} onClick={() => setDirection('ko-zh')}>韓翻中</button>
+            </div>
+          )}
+          {fixedSource ? (
+            <div className="fixed-source-note">每日複習會先完成單字，再接著複習例句。</div>
           ) : (
             <div className="segmented">
               <button className={source === 'term' ? 'active' : ''} onClick={() => setSource('term')}>單字 / 片語</button>
@@ -1583,8 +1613,20 @@ function PracticePage({ store, updateStore, set }) {
               <button className={source === 'all' ? 'active' : ''} onClick={() => setSource('all')}>全部</button>
             </div>
           )}
-          <p>{sourceQuestions.length} 題可練習。中翻韓只會出打字題，韓翻中會先思考再公佈答案。</p>
+          <p>{sourceQuestions.length} 題可練習。{set.dueOnly ? '請看中文提示輸入韓文答案。' : '中翻韓只會出打字題，韓翻中會先思考再公佈答案。'}</p>
           <button className="primary wide" disabled={!sourceQuestions.length} onClick={startSession}>開始</button>
+        </div>
+      </section>
+    );
+  }
+
+  if (!question) {
+    return (
+      <section className="page practice-start">
+        <div className="panel start-panel">
+          <span className="eyebrow">Practice · {set.label}</span>
+          <h1>目前沒有待複習題目</h1>
+          <p>單字和例句都已經清完，今天的複習任務已完成。</p>
         </div>
       </section>
     );
@@ -1595,8 +1637,8 @@ function PracticePage({ store, updateStore, set }) {
       <div className="practice-layout">
         <div className="practice-shell">
           <div className="progress-line"><span style={{ width: `${((index + 1) / queue.length) * 100}%` }} /></div>
-          <div className="quiz-meta quiz-meta-row"><span>{index + 1} / {queue.length} · {direction === 'zh-ko' ? '中翻韓' : '韓翻中'}</span><button onClick={() => setSummary(true)}>結束練習</button></div>
-          {direction === 'zh-ko' ? (
+          <div className="quiz-meta quiz-meta-row"><span>{index + 1} / {queue.length} · {activeDirection === 'zh-ko' ? '中翻韓' : '韓翻中'}</span><button onClick={() => setSummary(true)}>結束練習</button></div>
+          {activeDirection === 'zh-ko' ? (
             <>
               <div className="prompt">
                 <span>請輸入韓文</span>
