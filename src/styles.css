@@ -974,6 +974,16 @@ main {
 .related-tag-wrap {
   position: relative;
   display: inline-flex;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.related-tag-wrap > button,
+.related-tag-wrap > span {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .related-preview-card {
@@ -1063,13 +1073,6 @@ main {
 .preview-examples span {
   color: #71808b;
   font-weight: 750;
-}
-
-.study-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 18px;
 }
 
 .selected-soft {
@@ -1878,13 +1881,39 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 
-  .stats-grid,
   .notes-grid,
   .word-grid,
   .filters,
   .form-grid,
   .practice-layout {
     grid-template-columns: 1fr;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin: 14px 0;
+  }
+
+  .stat {
+    min-height: 82px;
+    padding: 12px;
+    gap: 4px;
+    border-radius: 16px;
+    box-shadow: 0 8px 22px rgba(58, 73, 84, 0.08);
+  }
+
+  .stat svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .stat span {
+    font-size: 12px;
+  }
+
+  .stat strong {
+    font-size: 19px;
   }
 
   .topbar,
@@ -1904,7 +1933,6 @@ textarea:focus {
   }
 
   .segmented,
-  .study-controls,
   .actions,
   .answer-review-actions,
   .pagination {
@@ -1934,6 +1962,23 @@ textarea:focus {
   .practice-answer-panel {
     position: static;
     max-height: none;
+  }
+
+  .related-preview-card {
+    position: fixed;
+    left: 50%;
+    right: auto;
+    bottom: max(18px, env(safe-area-inset-bottom));
+    z-index: 1000;
+    width: min(360px, calc(100vw - 28px));
+    max-height: min(72vh, 520px);
+    overflow: auto;
+    transform: translateX(-50%);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .related-preview-card::after {
+    display: none;
   }
 
   .answer-panel-inner {

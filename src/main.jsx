@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   BookOpen,
@@ -808,7 +808,7 @@ function App() {
     home: <HomePage store={store} items={items} questions={dailyQuestions} onPractice={startPractice} onStudy={startStudy} />,
     calendar: <CalendarPage store={store} items={items} questions={questions} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} />,
     notes: <NotesPage items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
-    study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} />,
+    study: <StudyPage set={studySet || { items, label: '全部內容' }} />,
     practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: dailyQuestions, label: '今日測驗', dueOnly: true }} />,
     notebook: <NotebookPage store={store} items={items} questions={questions} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
   };
@@ -1529,6 +1529,7 @@ function CardRichDetails({ item, relatedItems = [], onOpenItem }) {
 
 function RelatedWordTag({ item, onOpenItem }) {
   const [previewOpen, setPreviewOpen] = useState(false);
+  const touchPreviewRef = useRef(false);
   const label = `${item.ko}${item.zh ? ` · ${item.zh}` : ''}`;
   const Tag = onOpenItem ? 'button' : 'span';
 
@@ -1537,15 +1538,28 @@ function RelatedWordTag({ item, onOpenItem }) {
       className="related-tag-wrap"
       onMouseEnter={() => setPreviewOpen(true)}
       onMouseLeave={() => setPreviewOpen(false)}
-      onTouchStart={() => setPreviewOpen(true)}
-      onTouchEnd={() => setPreviewOpen(false)}
-      onTouchCancel={() => setPreviewOpen(false)}
+      onTouchStart={(event) => {
+        event.preventDefault();
+        touchPreviewRef.current = true;
+        setPreviewOpen(true);
+      }}
+      onTouchEnd={() => {
+        setPreviewOpen(false);
+        setTimeout(() => {
+          touchPreviewRef.current = false;
+        }, 250);
+      }}
+      onTouchCancel={() => {
+        setPreviewOpen(false);
+        touchPreviewRef.current = false;
+      }}
     >
       <Tag
         type={onOpenItem ? 'button' : undefined}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
+          if (touchPreviewRef.current) return;
           onOpenItem?.(item);
         }}
       >
@@ -1577,7 +1591,7 @@ function RelatedPreviewCard({ item }) {
   );
 }
 
-function StudyPage({ store, updateStore, set }) {
+function StudyPage({ set }) {
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [filter, setFilter] = useState('全部');
@@ -1590,8 +1604,6 @@ function StudyPage({ store, updateStore, set }) {
   const filtered = useMemo(() => set.items.filter((item) => filter === '全部' || item.pos === filter), [set.items, filter]);
   const ordered = useMemo(() => (random ? shuffleItems(filtered, shuffleSeed) : filtered), [filtered, random, shuffleSeed]);
   const item = ordered[index % Math.max(ordered.length, 1)];
-  const learning = item ? store.learning[item.id] : null;
-  const mark = (status) => updateStore((current) => ({ ...current, learning: { ...current.learning, [item.id]: { status, at: new Date().toISOString() } } }));
   const frontText = frontSide === 'ko' ? item?.ko : item?.zh;
   const backText = frontSide === 'ko' ? item?.zh : item?.ko;
   const frontLang = frontSide === 'ko' ? 'ko-KR' : 'zh-TW';
@@ -1680,11 +1692,6 @@ function StudyPage({ store, updateStore, set }) {
         <button className="card-arrow right" onClick={goNext} aria-label="下一張"><ChevronRight size={26} /></button>
       </div>
       {flipped && <div className="card-details"><StudyDetails item={item} allItems={set.items} onOpenItem={jumpToItem} /></div>}
-      <div className="study-controls">
-        <button onClick={() => mark('想再看一次')} className={learning?.status === '想再看一次' ? 'selected-soft' : ''}>想再看一次</button>
-        <button onClick={() => mark('不熟悉')} className={learning?.status === '不熟悉' ? 'selected-soft' : ''}>不熟悉</button>
-        <button onClick={() => mark('已熟悉')} className={learning?.status === '已熟悉' ? 'selected-soft' : ''}>已熟悉</button>
-      </div>
     </section>
   );
 }
