@@ -327,14 +327,84 @@ function normalizeRecords(records) {
 }
 
 function parseJsonItems(text) {
-  const parsed = JSON.parse(text);
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('JSON 格式錯誤，請確認括號、逗號和引號是否正確');
+  }
+  if (!Array.isArray(parsed) && parsed?.schemaVersion !== undefined && parsed.schemaVersion !== CONTENT_SCHEMA_VERSION) {
+    throw new Error(`JSON schemaVersion 需要是 ${CONTENT_SCHEMA_VERSION}`);
+  }
   const data = Array.isArray(parsed) ? parsed : parsed.data;
   if (!Array.isArray(data)) throw new Error('JSON 需要是 { "data": [...] } 或陣列格式');
-  data.forEach((item) => {
-    if (!item?.ko) throw new Error('每筆資料都需要 ko');
-    if (!item?.meanings?.length) throw new Error('每筆資料都需要 meanings');
-  });
+  data.forEach(validateImportItem);
   return data;
+}
+
+function assertPlainObject(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} 需要是物件`);
+}
+
+function assertString(value, label, { required = false } = {}) {
+  if (value === undefined) {
+    if (required) throw new Error(`${label} 是必填`);
+    return;
+  }
+  if (typeof value !== 'string') throw new Error(`${label} 需要是文字`);
+  if (required && !value.trim()) throw new Error(`${label} 不可以空白`);
+}
+
+function assertNoUnsupportedKeys(value, allowedKeys, label) {
+  const unsupported = Object.keys(value).filter((key) => !allowedKeys.includes(key));
+  if (unsupported.length) throw new Error(`${label} 有不支援的欄位：${unsupported.join('、')}`);
+}
+
+function assertUniqueIds(values, label) {
+  const ids = values.map((value) => value.id).filter(Boolean);
+  const duplicated = ids.filter((id, index) => ids.indexOf(id) !== index);
+  if (duplicated.length) throw new Error(`${label} 有重複 id：${[...new Set(duplicated)].join('、')}`);
+}
+
+function validateImportItem(item, itemIndex) {
+  const label = `第 ${itemIndex + 1} 筆資料`;
+  assertPlainObject(item, label);
+  assertNoUnsupportedKeys(item, ['id', 'date', 'ko', 'pos', 'meanings', 'notes', 'related'], label);
+  assertString(item.id, `${label} 的 id`);
+  assertString(item.date, `${label} 的 date`);
+  assertString(item.ko, `${label} 的 ko`, { required: true });
+  assertString(item.pos, `${label} 的 pos`);
+
+  if (!Array.isArray(item.meanings) || !item.meanings.length) throw new Error(`${label} 需要 meanings，而且至少要有 1 個 meaning`);
+  assertUniqueIds(item.meanings, `${label} 的 meanings`);
+  item.meanings.forEach((meaning, meaningIndex) => {
+    const meaningLabel = `${label} 的第 ${meaningIndex + 1} 個 meaning`;
+    assertPlainObject(meaning, meaningLabel);
+    assertNoUnsupportedKeys(meaning, ['id', 'zh', 'pattern', 'examples'], meaningLabel);
+    assertString(meaning.id, `${meaningLabel} 的 id`);
+    assertString(meaning.zh, `${meaningLabel} 的 zh`, { required: true });
+    assertString(meaning.pattern, `${meaningLabel} 的 pattern`);
+    if (meaning.examples === undefined) return;
+    if (!Array.isArray(meaning.examples)) throw new Error(`${meaningLabel} 的 examples 需要是陣列`);
+    assertUniqueIds(meaning.examples, `${meaningLabel} 的 examples`);
+    meaning.examples.forEach((example, exampleIndex) => {
+      const exampleLabel = `${meaningLabel} 的第 ${exampleIndex + 1} 個 example`;
+      assertPlainObject(example, exampleLabel);
+      assertNoUnsupportedKeys(example, ['id', 'ko', 'zh'], exampleLabel);
+      assertString(example.id, `${exampleLabel} 的 id`);
+      assertString(example.ko, `${exampleLabel} 的 ko`, { required: true });
+      assertString(example.zh, `${exampleLabel} 的 zh`, { required: true });
+    });
+  });
+
+  if (item.notes !== undefined) {
+    if (!Array.isArray(item.notes)) throw new Error(`${label} 的 notes 需要是文字陣列`);
+    item.notes.forEach((note, noteIndex) => assertString(note, `${label} 的第 ${noteIndex + 1} 則 note`, { required: true }));
+  }
+  if (item.related !== undefined) {
+    if (!Array.isArray(item.related)) throw new Error(`${label} 的 related 需要是文字陣列`);
+    item.related.forEach((related, relatedIndex) => assertString(related, `${label} 的第 ${relatedIndex + 1} 個 related`, { required: true }));
+  }
 }
 
 function linesToArray(text) {
