@@ -503,6 +503,41 @@ main {
   opacity: 0.45;
 }
 
+.calendar-streaks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.calendar-streaks div {
+  padding: 12px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #fff7e9, #fff0d6);
+  border: 1px solid #ffe0ae;
+}
+
+.calendar-streaks span {
+  display: block;
+  margin-bottom: 5px;
+  color: #986332;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.calendar-streaks strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #3f3328;
+  font-size: 20px;
+}
+
+.calendar-streaks svg {
+  color: #ff8a2a;
+  fill: #ff9b2f;
+}
+
 .notes-grid,
 .word-grid {
   display: grid;

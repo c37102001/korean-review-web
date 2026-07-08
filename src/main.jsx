@@ -35,6 +35,8 @@ const STUDY_DATE = '2026-07-05';
 const APP_STATE_ID = 'reviewState';
 const REPLACE_MARKER_ID = 'replaceCurrentAppData';
 const PUNCTUATION_RE = /[^\p{L}\p{N}\s]/gu;
+const REVIEW_COMPLETION_BACKFILL_START = '2026-07-06';
+const REVIEW_COMPLETION_BACKFILL_END = '2026-07-07';
 
 const toDateKey = (date) => {
   const year = date.getFullYear();
@@ -52,7 +54,7 @@ const dateLabel = (date) => new Intl.DateTimeFormat('zh-TW', { month: 'long', da
 const monthTitle = (date) => new Intl.DateTimeFormat('zh-TW', { year: 'numeric', month: 'long' }).format(date);
 
 function emptyStore() {
-  return { stats: {}, progress: {}, learning: {}, attempts: [], customRecords: [], deletedRecordIds: [] };
+  return { stats: {}, progress: {}, learning: {}, attempts: [], customRecords: [], deletedRecordIds: [], completedReviewDates: [] };
 }
 
 function useAuthUser() {
@@ -148,6 +150,7 @@ function useFirestoreStore(user, items, questions) {
               learning: data.learning || {},
               attempts: data.attempts || [],
               deletedRecordIds: data.deletedRecordIds || [],
+              completedReviewDates: data.completedReviewDates || [],
               customRecords,
             },
           });
@@ -378,6 +381,40 @@ function groupTasks(store, questions, date = todayString()) {
   return [...groups.values()].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 }
 
+function markReviewDateComplete(store, date = todayString()) {
+  const completedReviewDates = store.completedReviewDates || [];
+  if (completedReviewDates.includes(date)) return store;
+  return {
+    ...store,
+    completedReviewDates: [...completedReviewDates, date].sort(),
+  };
+}
+
+function calculateReviewStreaks(completedReviewDates, today = todayString()) {
+  const completed = new Set(completedReviewDates || []);
+  const countBackFrom = (startDate) => {
+    let count = 0;
+    let cursor = startDate;
+    while (completed.has(cursor)) {
+      count += 1;
+      cursor = addDays(cursor, -1);
+    }
+    return count;
+  };
+
+  const current = completed.has(today) ? countBackFrom(today) : countBackFrom(addDays(today, -1));
+  const sortedDates = [...completed].sort();
+  let best = 0;
+  let run = 0;
+  let previous = '';
+  sortedDates.forEach((date) => {
+    run = previous && addDays(previous, 1) === date ? run + 1 : 1;
+    best = Math.max(best, run);
+    previous = date;
+  });
+  return { current, best };
+}
+
 function recordAnswer(store, question, correct) {
   const now = new Date().toISOString();
   const previous = getProgress(store, question);
@@ -504,6 +541,26 @@ function App() {
     return [...byId.values()];
   }, [builtInRecords, store.customRecords, store.deletedRecordIds]);
   const { items, questions } = useMemo(() => normalizeRecords(allRecords), [allRecords]);
+  const dailyQuestions = useMemo(() => termQuestions(questions), [questions]);
+  const completedAttemptDates = useMemo(
+    () => [...new Set((store.attempts || []).map((attempt) => attempt.time?.slice(0, 10)).filter(Boolean))],
+    [store.attempts],
+  );
+
+  useEffect(() => {
+    if (!user || storeLoading) return;
+    const today = todayString();
+    const backfillDates = completedAttemptDates.filter(
+      (date) => date >= REVIEW_COMPLETION_BACKFILL_START && date <= REVIEW_COMPLETION_BACKFILL_END && dueQuestions(store, dailyQuestions, date).length === 0,
+    );
+    const datesToMark = [...backfillDates];
+    if (dueQuestions(store, dailyQuestions, today).length === 0) datesToMark.push(today);
+
+    const missingDates = [...new Set(datesToMark)].filter((date) => !(store.completedReviewDates || []).includes(date));
+    if (!missingDates.length) return;
+    updateStore((current) => missingDates.reduce((nextStore, date) => markReviewDateComplete(nextStore, date), current));
+  }, [user, storeLoading, store.completedReviewDates, store.progress, completedAttemptDates, dailyQuestions, updateStore]);
+
   const navTop = (next) => {
     setPageStack([]);
     setPage(next);
@@ -558,7 +615,6 @@ function App() {
   if (authLoading) return <LoadingScreen text="正在確認登入狀態" />;
   if (!user) return <LoginPage />;
   if (storeLoading) return <LoadingScreen text="正在同步 Firebase 資料" />;
-  const dailyQuestions = termQuestions(questions);
 
   const views = {
     home: <HomePage store={store} items={items} questions={dailyQuestions} onPractice={startPractice} onStudy={startStudy} />,
@@ -718,7 +774,8 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
   const [cursor, setCursor] = useState(new Date(`${selectedDate}T00:00:00`));
   const [addOpen, setAddOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
-  const dailyQuestions = termQuestions(questions);
+  const completedDates = new Set(store.completedReviewDates || []);
+  const streaks = calculateReviewStreaks(store.completedReviewDates || []);
   const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
   const days = [];
   const start = new Date(first);
@@ -734,7 +791,7 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
       current: date.getMonth() === cursor.getMonth(),
       hasStudy: items.some((item) => item.date === key),
       isToday: key === today,
-      hasCompletedToday: key === today && dueQuestions(store, dailyQuestions, today).length === 0 && store.attempts.some((attempt) => attempt.time.startsWith(today)),
+      hasCompletedReview: completedDates.has(key),
     });
   }
   const selectedItems = items.filter((item) => item.date === selectedDate);
@@ -760,11 +817,21 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
           {days.map((day) => (
             <button key={day.key} className={`day ${day.current ? '' : 'muted'} ${day.hasStudy ? 'has-study' : ''} ${day.isToday ? 'today' : ''} ${day.key === selectedDate ? 'selected' : ''}`} onClick={() => setSelectedDate(day.key)}>
               <span>{day.day}</span>
-              {day.hasCompletedToday && <span className="day-flame"><Flame /></span>}
+              {day.hasCompletedReview && <span className="day-flame"><Flame /></span>}
             </button>
           ))}
         </div>
         <div className="panel">
+          <div className="calendar-streaks">
+            <div>
+              <span>目前連勝</span>
+              <strong><Flame size={18} /> {streaks.current} 天</strong>
+            </div>
+            <div>
+              <span>歷史最長</span>
+              <strong><Trophy size={18} /> {streaks.best} 天</strong>
+            </div>
+          </div>
           <div className="panel-title"><h2>{selectedDate}</h2><span>{selectedItems.length} 筆內容</span></div>
           {selectedItems.slice(0, 5).map((item) => <NotePreview key={item.id} item={item} />)}
           <button className="primary wide" disabled={!selectedItems.length} onClick={onOpenNotes}>查看日期筆記</button>
