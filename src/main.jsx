@@ -6,6 +6,8 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Copy,
+  Download,
   Dumbbell,
   Flame,
   LibraryBig,
@@ -13,6 +15,7 @@ import {
   Pencil,
   Pause,
   Play,
+  Plus,
   RotateCcw,
   Search,
   Shuffle,
@@ -32,8 +35,8 @@ import './styles.css';
 
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
 const STUDY_DATE = '2026-07-05';
+const CONTENT_SCHEMA_VERSION = 2;
 const APP_STATE_ID = 'reviewState';
-const REPLACE_MARKER_ID = 'replaceCurrentAppData';
 const PUNCTUATION_RE = /[^\p{L}\p{N}\s]/gu;
 const REVIEW_COMPLETION_BACKFILL_START = '2026-07-06';
 const REVIEW_COMPLETION_BACKFILL_END = '2026-07-07';
@@ -64,7 +67,6 @@ function useAuthUser() {
 }
 
 async function seedFirebaseContent(uid, items, questions) {
-  await replaceOldFirebaseData(uid);
   const stateRef = doc(db, 'users', uid, 'appState', APP_STATE_ID);
   const stateSnap = await getDoc(stateRef);
   const batch = writeBatch(db);
@@ -82,11 +84,11 @@ async function seedFirebaseContent(uid, items, questions) {
     { merge: true },
   );
   items.forEach((item) => {
-    batch.set(doc(db, 'users', uid, 'items', item.id), { ...item, updatedAt: serverTimestamp() }, { merge: true });
+    batch.set(doc(db, 'users', uid, 'items', item.id), { ...item, updatedAt: serverTimestamp() });
   });
   questions.forEach((question) => {
     const { source, ...questionDoc } = question;
-    batch.set(doc(db, 'users', uid, 'questions', question.id), { ...questionDoc, updatedAt: serverTimestamp() }, { merge: true });
+    batch.set(doc(db, 'users', uid, 'questions', question.id), { ...questionDoc, updatedAt: serverTimestamp() });
   });
   if (!stateSnap.exists()) {
     batch.set(stateRef, { ...emptyStore(), createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
@@ -107,24 +109,31 @@ async function deleteCollectionDocs(uid, collectionName) {
   await Promise.all(snap.docs.map((documentSnap) => deleteDoc(documentSnap.ref)));
 }
 
-async function replaceOldFirebaseData(uid) {
-  const markerRef = doc(db, 'users', uid, 'meta', REPLACE_MARKER_ID);
-  const markerSnap = await getDoc(markerRef);
-  if (markerSnap.exists()) return;
-
+async function cleanupObsoleteFirebaseData(uid) {
   await Promise.all([
     deleteCollectionDocs(uid, 'cards'),
-    deleteCollectionDocs(uid, 'days'),
-    deleteCollectionDocs(uid, 'items'),
-    deleteCollectionDocs(uid, 'questions'),
-    deleteCollectionDocs(uid, 'records'),
-    deleteCollectionDocs(uid, 'appState'),
+    deleteDoc(doc(db, 'users', uid, 'meta', 'replaceCurrentAppData')),
+    deleteDoc(doc(db, 'users', uid, 'meta', 'contentSchemaV2')),
   ]);
+}
 
-  await setDoc(markerRef, {
-    replacedAt: serverTimestamp(),
-    note: 'Old Korean review data was deleted and replaced by the current app structure.',
-  });
+function recordHasObsoleteContent(record) {
+  const item = record.item || {};
+  return Boolean(
+    item.schemaVersion ||
+    item.zh ||
+    item.examples ||
+    item.senses ||
+    (item.related || []).some((entry) => typeof entry !== 'string'),
+  );
+}
+
+async function cleanupStoredContent(uid) {
+  const records = await fetchCustomRecords(uid);
+  const staleRecords = records.filter(recordHasObsoleteContent);
+  if (!staleRecords.length) return;
+  await Promise.all(staleRecords.map((record) => deleteQuestionsForRecord(uid, record.id)));
+  await writeLearningRecords(uid, normalizeRecordSet(records));
 }
 
 function useFirestoreStore(user, items, questions) {
@@ -137,6 +146,8 @@ function useFirestoreStore(user, items, questions) {
       setState((current) => ({ ...current, loading: true, error: '' }));
       try {
         await seedFirebaseContent(user.uid, items, questions);
+        await cleanupObsoleteFirebaseData(user.uid);
+        await cleanupStoredContent(user.uid);
         const snap = await getDoc(doc(db, 'users', user.uid, 'appState', APP_STATE_ID));
         const customRecords = await fetchCustomRecords(user.uid);
         const data = snap.exists() ? snap.data() : emptyStore();
@@ -179,29 +190,100 @@ function useFirestoreStore(user, items, questions) {
   return [state.store, update, state.loading, state.error];
 }
 
-function normalizeRelated(value) {
-  if (!value) return [];
-  return value.map((entry) => (typeof entry === 'string' ? { ko: entry } : entry));
-}
-
 function baseRecords() {
-  return notes.data.map((item, index) => ({
-    id: `${STUDY_DATE}-item-${index}`,
-    date: STUDY_DATE,
+  const records = notes.data.map((item, index) => ({
+    id: item.id || `${item.date || STUDY_DATE}-item-${index}`,
+    date: item.date || STUDY_DATE,
     item,
     createdAt: `${STUDY_DATE}T00:00:00.000Z`,
   }));
+  return normalizeRecordSet(records);
+}
+
+function buildRecordLookup(records) {
+  const byId = new Map();
+  const byKo = new Map();
+  records.forEach((record) => {
+    byId.set(record.id, record.id);
+    if (record.item?.ko) byKo.set(record.item.ko.trim(), record.id);
+  });
+  return { byId, byKo };
+}
+
+function resolveRelatedIds(related, lookup) {
+  if (!Array.isArray(related)) return [];
+  return [...new Set(related.map((entry) => {
+    if (typeof entry === 'string') return lookup.byId.get(entry) || lookup.byKo.get(entry.trim()) || entry.trim();
+    if (entry?.id) return lookup.byId.get(entry.id) || entry.id;
+    if (entry?.ko) return lookup.byKo.get(entry.ko.trim()) || entry.ko.trim();
+    return '';
+  }).filter(Boolean))];
+}
+
+function normalizeExample(example, fallbackId) {
+  return {
+    id: example.id || fallbackId,
+    ko: example.ko || '',
+    zh: example.zh || '',
+  };
+}
+
+function normalizeItemToV2(item, recordId, lookup = buildRecordLookup([])) {
+  if (!Array.isArray(item.meanings) || !item.meanings.length) {
+    throw new Error(`單字「${item.ko || recordId}」缺少 meanings`);
+  }
+
+  const meanings = item.meanings.map((meaning, meaningIndex) => {
+    const meaningId = meaning.id || `${recordId}-${meaningIndex}`;
+    const examples = (meaning.examples || []).map((example, exampleIndex) => normalizeExample(example, `${meaningId}-ex-${exampleIndex}`));
+    return {
+      id: meaningId,
+      zh: meaning.zh || '',
+      ...(meaning.pattern ? { pattern: meaning.pattern } : {}),
+      examples,
+    };
+  });
+
+  return {
+    ko: item.ko,
+    ...(item.pos ? { pos: item.pos } : {}),
+    meanings,
+    ...(item.notes?.length ? { notes: item.notes } : {}),
+    related: resolveRelatedIds(item.related, lookup),
+  };
+}
+
+function normalizeRecordSet(records) {
+  const lookup = buildRecordLookup(records);
+  return records.map((record) => ({
+    ...record,
+    item: normalizeItemToV2(record.item, record.id, lookup),
+  }));
+}
+
+function itemZh(item) {
+  return (item.meanings || []).map((meaning) => meaning.zh).filter(Boolean).join('；');
+}
+
+function itemExamples(item) {
+  return (item.meanings || []).flatMap((meaning) => meaning.examples || []);
+}
+
+function displayRelated(item, allItems = []) {
+  const byId = new Map(allItems.map((entry) => [entry.id, entry]));
+  return (item.related || []).map((id) => byId.get(id)).filter(Boolean);
 }
 
 function normalizeRecords(records) {
-  const items = records.map((record, index) => ({
+  const normalizedRecords = normalizeRecordSet(records);
+  const items = normalizedRecords.map((record, index) => ({
     ...record.item,
     id: record.id,
     date: record.date,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     index,
-    related: normalizeRelated(record.item.related),
+    zh: itemZh(record.item),
   }));
 
   const questions = [];
@@ -222,7 +304,7 @@ function normalizeRecords(records) {
     });
   };
   items.forEach((item) => {
-    const isComparisonCard = !!item.items?.length && !item.examples?.length && !item.senses?.length;
+    const isComparisonCard = !!item.items?.length && !item.meanings?.length;
     if (!isComparisonCard) {
       questions.push({
         id: item.id,
@@ -235,12 +317,9 @@ function normalizeRecords(records) {
         source: item,
       });
     }
-    (item.examples || []).forEach((example, exampleIndex) => {
-      addExampleQuestion(item, example, `${item.id}-ex-${exampleIndex}`);
-    });
-    (item.senses || []).forEach((sense, senseIndex) => {
-      (sense.examples || []).forEach((example, exampleIndex) => {
-        addExampleQuestion(item, example, `${item.id}-sense-${senseIndex}-ex-${exampleIndex}`);
+    (item.meanings || []).forEach((meaning) => {
+      (meaning.examples || []).forEach((example) => {
+        addExampleQuestion(item, example, example.id);
       });
     });
   });
@@ -252,7 +331,8 @@ function parseJsonItems(text) {
   const data = Array.isArray(parsed) ? parsed : parsed.data;
   if (!Array.isArray(data)) throw new Error('JSON 需要是 { "data": [...] } 或陣列格式');
   data.forEach((item) => {
-    if (!item?.ko || !item?.zh) throw new Error('每筆資料都需要 ko 和 zh');
+    if (!item?.ko) throw new Error('每筆資料都需要 ko');
+    if (!item?.meanings?.length) throw new Error('每筆資料都需要 meanings');
   });
   return data;
 }
@@ -269,20 +349,34 @@ function parsePairLines(text) {
   }).filter((entry) => entry.ko && entry.zh);
 }
 
-function createRecordsForDate(date, rawItems) {
+function createRecordsForDate(date, rawItems, existingItems = []) {
   const now = new Date().toISOString();
-  return rawItems.map((item) => ({
-    id: `${date}-custom-${crypto.randomUUID()}`,
-    date,
+  const records = rawItems.map((item) => ({
+    id: item.id || `${date}-custom-${crypto.randomUUID()}`,
+    date: item.date || date,
     item,
-    createdAt: now,
+    createdAt: item.createdAt || now,
   }));
+  const lookupRecords = [
+    ...existingItems.map((item) => ({ id: item.id, item })),
+    ...records,
+  ];
+  const lookup = buildRecordLookup(lookupRecords);
+  const knownIds = new Set(lookupRecords.map((record) => record.id));
+  const normalized = records.map((record) => ({
+    ...record,
+    item: normalizeItemToV2(record.item, record.id, lookup),
+  }));
+  const missingRelated = normalized.flatMap((record) => (record.item.related || []).filter((id) => !knownIds.has(id)));
+  if (missingRelated.length) throw new Error(`找不到相關單字：${[...new Set(missingRelated)].join('、')}`);
+  return normalized;
 }
 
 async function writeLearningRecords(uid, records) {
-  const { items, questions } = normalizeRecords(records);
+  const normalizedRecords = normalizeRecordSet(records);
+  const { items, questions } = normalizeRecords(normalizedRecords);
   const batch = writeBatch(db);
-  const byDate = records.reduce((acc, record) => {
+  const byDate = normalizedRecords.reduce((acc, record) => {
     acc[record.date] = acc[record.date] || [];
     acc[record.date].push(record.item);
     return acc;
@@ -300,15 +394,15 @@ async function writeLearningRecords(uid, records) {
       { merge: true },
     );
   });
-  records.forEach((record) => {
-    batch.set(doc(db, 'users', uid, 'records', record.id), { ...record, updatedAt: serverTimestamp() }, { merge: true });
+  normalizedRecords.forEach((record) => {
+    batch.set(doc(db, 'users', uid, 'records', record.id), { ...record, updatedAt: serverTimestamp() });
   });
   items.forEach((item) => {
-    batch.set(doc(db, 'users', uid, 'items', item.id), { ...item, updatedAt: serverTimestamp() }, { merge: true });
+    batch.set(doc(db, 'users', uid, 'items', item.id), { ...item, updatedAt: serverTimestamp() });
   });
   questions.forEach((question) => {
     const { source, ...questionDoc } = question;
-    batch.set(doc(db, 'users', uid, 'questions', question.id), { ...questionDoc, updatedAt: serverTimestamp() }, { merge: true });
+    batch.set(doc(db, 'users', uid, 'questions', question.id), { ...questionDoc, updatedAt: serverTimestamp() });
   });
   await batch.commit();
 }
@@ -634,7 +728,7 @@ function App() {
     calendar: <CalendarPage store={store} items={items} questions={questions} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} />,
     notes: <NotesPage items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} />,
-    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: dailyQuestions, label: '今日複習', dueOnly: true }} />,
+    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: dailyQuestions, label: '今日測驗', dueOnly: true }} />,
     notebook: <NotebookPage store={store} items={items} questions={questions} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
   };
 
@@ -696,7 +790,7 @@ function LoginPage() {
     <section className="login-page">
       <form className="panel login-card" onSubmit={submit}>
         <div className="brand"><Sparkles size={24} /> 韓文筆記</div>
-        <h1>{mode === 'login' ? '登入後開始複習' : '建立新帳號'}</h1>
+        <h1>{mode === 'login' ? '登入後開始測驗' : '建立新帳號'}</h1>
         <label>
           Email
           <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required />
@@ -735,7 +829,7 @@ function HomePage({ store, items, questions, onPractice, onStudy }) {
           <h1>今天也來練一點韓文</h1>
           <p>目前有 {due.length} 題等待主動回想，答錯會自動回到第一階段重新安排。</p>
           <div className="actions">
-            <button className="primary" disabled={!due.length} onClick={() => onPractice(due, '今日複習', { dueOnly: true })}><Dumbbell size={18} /> 開始今日複習</button>
+            <button className="primary" disabled={!due.length} onClick={() => onPractice(due, '今日測驗', { dueOnly: true })}><Dumbbell size={18} /> 開始今日測驗</button>
             <button onClick={() => onStudy(items, '全部內容')}><BookOpen size={18} /> 先用單字卡學習</button>
           </div>
         </div>
@@ -746,7 +840,7 @@ function HomePage({ store, items, questions, onPractice, onStudy }) {
       </div>
 
       <div className="stats-grid">
-        <Stat icon={<Target />} label="待複習" value={`${due.length} 題`} />
+        <Stat icon={<Target />} label="待測驗" value={`${due.length} 題`} />
         <Stat icon={<Check />} label="今日答對" value={`${correctToday}/${answeredToday.length || 0}`} />
         <Stat icon={<Trophy />} label="已熟練" value={`${mastered} 題`} />
         <Stat icon={<Flame />} label="不熟悉" value={`${weak.length} 題`} />
@@ -754,7 +848,7 @@ function HomePage({ store, items, questions, onPractice, onStudy }) {
 
       <div className="split">
         <div className="panel">
-          <div className="panel-title"><h2>複習任務</h2><span>{tasks.length ? '未完成任務會保留' : '目前沒有到期任務'}</span></div>
+          <div className="panel-title"><h2>測驗任務</h2><span>{tasks.length ? '未完成任務會保留' : '目前沒有到期任務'}</span></div>
           <div className="task-list">
             {tasks.map((task) => (
               <div className="task-card" key={task.id}>
@@ -763,16 +857,16 @@ function HomePage({ store, items, questions, onPractice, onStudy }) {
                   <h3>{dateLabel(task.studyDate)} 的內容</h3>
                   <p>到期日 {task.dueDate} · {task.questions.length} 題 · 未完成</p>
                 </div>
-                <button className="primary small" onClick={() => onPractice(task.questions, `${task.studyDate} 複習`, { dueOnly: true })}>開始</button>
+                <button className="primary small" onClick={() => onPractice(task.questions, `${task.studyDate} 測驗`, { dueOnly: true })}>開始</button>
               </div>
             ))}
-            {!tasks.length && <div className="empty">今天沒有排程到期。你可以從日曆或單字本主動練習。</div>}
+            {!tasks.length && <div className="empty">今天沒有排程到期。你可以從日曆或單字本主動測驗。</div>}
           </div>
         </div>
         <div className="panel">
           <div className="panel-title"><h2>不熟悉清單</h2><span>依答題紀錄更新</span></div>
           {weak.length ? weak.map((question) => <MiniQuestion key={question.id} question={question} store={store} />) : <div className="empty">還沒有被標記為不熟悉的內容。</div>}
-          <button className="wide" disabled={!weak.length} onClick={() => onPractice(weak, '不熟悉加強')}>練習不熟悉內容</button>
+          <button className="wide" disabled={!weak.length} onClick={() => onPractice(weak, '不熟悉加強')}>測驗不熟悉內容</button>
         </div>
       </div>
     </section>
@@ -907,6 +1001,7 @@ function NotesPage({ items, questions, date, allItems, onPractice, onStudy, onUp
       {viewingItem && (
         <ItemDetailModal
           item={viewingItem}
+          allItems={allItems}
           onEdit={(item) => {
             setViewingItem(null);
             setEditingItem(item);
@@ -915,7 +1010,7 @@ function NotesPage({ items, questions, date, allItems, onPractice, onStudy, onUp
           onClose={() => setViewingItem(null)}
         />
       )}
-      <div className="notes-grid">{items.map((item) => <NoteCard key={item.id} item={item} compact onOpen={setViewingItem} onEdit={setEditingItem} onDelete={onDeleteRecord} />)}</div>
+      <div className="notes-grid">{items.map((item) => <NoteCard key={item.id} item={item} allItems={allItems} compact onOpen={setViewingItem} onEdit={setEditingItem} onDelete={onDeleteRecord} />)}</div>
     </section>
   );
 }
@@ -1000,7 +1095,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
           setError('不能新增重複韓文單字。請直接編輯既有單字卡。');
           return;
         }
-        const records = createRecordsForDate(targetDate, rawItems);
+        const records = createRecordsForDate(targetDate, rawItems, allItems);
         await onAddRecords(records);
         setMessage(`已新增 ${records.length} 筆到 ${targetDate}`);
         setJsonText('');
@@ -1063,7 +1158,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
         ) : (
           <label className="wide-field">
             JSON 內容
-            <textarea className="json-input" value={jsonText} onChange={(event) => setJsonText(event.target.value)} placeholder='{ "data": [{ "ko": "뉴스", "zh": "新聞", "pos": "名詞" }] }' required />
+            <textarea className="json-input" value={jsonText} onChange={(event) => setJsonText(event.target.value)} placeholder='{ "data": [{ "ko": "뉴스", "pos": "名詞", "meanings": [{ "zh": "新聞", "examples": [] }] }] }' required />
           </label>
         )}
       </div>
@@ -1092,7 +1187,7 @@ function RelatedSelector({ manual, setManual, allItems, editItem }) {
   const selectedSet = new Set(selected);
   const results = allItems
     .filter((item) => item.id !== editItem?.id)
-    .filter((item) => !selectedSet.has(item.ko))
+    .filter((item) => !selectedSet.has(item.id))
     .filter((item) => !query.trim() || `${item.ko} ${item.zh}`.toLowerCase().includes(query.toLowerCase()))
     .slice(0, 8);
   return (
@@ -1103,11 +1198,11 @@ function RelatedSelector({ manual, setManual, allItems, editItem }) {
       </label>
       {!!selected.length && (
         <div className="selected-related">
-          {selected.map((ko) => {
-            const item = allItems.find((candidate) => candidate.ko === ko);
+          {selected.map((id) => {
+            const item = allItems.find((candidate) => candidate.id === id);
             return (
-              <button type="button" key={ko} onClick={() => setManual({ ...manual, relatedSelected: selected.filter((entry) => entry !== ko) })}>
-                {ko}{item?.zh ? ` · ${item.zh}` : ''} ×
+              <button type="button" key={id} onClick={() => setManual({ ...manual, relatedSelected: selected.filter((entry) => entry !== id) })}>
+                {item?.ko || id}{item?.zh ? ` · ${item.zh}` : ''} ×
               </button>
             );
           })}
@@ -1115,7 +1210,7 @@ function RelatedSelector({ manual, setManual, allItems, editItem }) {
       )}
       <div className="related-results">
         {results.map((item) => (
-          <button type="button" key={item.id} onClick={() => setManual({ ...manual, relatedSelected: [...selected, item.ko], relatedQuery: '' })}>
+          <button type="button" key={item.id} onClick={() => setManual({ ...manual, relatedSelected: [...selected, item.id], relatedQuery: '' })}>
             <strong>{item.ko}</strong><span>{item.zh}</span>
           </button>
         ))}
@@ -1129,35 +1224,36 @@ function manualToItem(manual, allItems = []) {
   if (!manual.ko.trim() || !manual.zh.trim()) throw new Error('韓文和中文是必填');
   const item = {
     ko: manual.ko.trim(),
-    zh: manual.zh.trim(),
+    meanings: [{
+      ...(manual.meaningId ? { id: manual.meaningId } : {}),
+      zh: manual.zh.trim(),
+      ...(manual.pattern.trim() ? { pattern: manual.pattern.trim() } : {}),
+      examples: parsePairLines(manual.examples),
+    }],
   };
   if (manual.pos) item.pos = manual.pos;
-  if (manual.pattern.trim()) item.pattern = manual.pattern.trim();
-  const examples = parsePairLines(manual.examples);
-  if (examples.length) item.examples = examples;
   const notesList = linesToArray(manual.notes);
   if (notesList.length) item.notes = notesList;
-  const related = (manual.relatedSelected || []).map((ko) => {
-    const item = allItems.find((candidate) => candidate.ko === ko);
-    return item ? { ko: item.ko, zh: item.zh } : { ko };
-  });
+  const related = (manual.relatedSelected || []).filter((id) => allItems.some((candidate) => candidate.id === id));
   if (related.length) item.related = related;
   return item;
 }
 
 function itemToManual(item) {
   if (!item) {
-    return { ko: '', zh: '', pos: '', pattern: '', examples: '', notes: '', relatedSelected: [], relatedQuery: '' };
+    return { ko: '', zh: '', pos: '', pattern: '', examples: '', notes: '', relatedSelected: [], relatedQuery: '', meaningId: '' };
   }
+  const primaryMeaning = item.meanings?.[0] || { zh: '', pattern: '', examples: [] };
   return {
     ko: item.ko || '',
-    zh: item.zh || '',
+    zh: primaryMeaning.zh || '',
     pos: item.pos || '',
-    pattern: item.pattern || '',
-    examples: (item.examples || []).map((example) => `${example.ko || ''} | ${example.zh || ''}`).join('\n'),
+    pattern: primaryMeaning.pattern || '',
+    examples: (primaryMeaning.examples || []).map((example) => `${example.ko || ''} | ${example.zh || ''}`).join('\n'),
     notes: (item.notes || []).join('\n'),
-    relatedSelected: (item.related || []).map((entry) => (typeof entry === 'string' ? entry : entry.ko)).filter(Boolean),
+    relatedSelected: (item.related || []).filter(Boolean),
     relatedQuery: '',
+    meaningId: primaryMeaning.id || '',
   };
 }
 
@@ -1175,16 +1271,15 @@ function mergeEditedItem(original, manual, allItems = []) {
     ...content
   } = original;
   const next = { ...content, ...edited };
-  ['pos', 'pattern', 'examples', 'notes', 'related'].forEach((key) => {
+  ['pos', 'meanings', 'notes', 'related'].forEach((key) => {
     if (edited[key] === undefined) delete next[key];
   });
   return next;
 }
 
-function exportNotebookItems(items) {
+function buildNotebookExport(items) {
   const cleanItems = items.map((item) => {
     const {
-      id,
       date,
       index,
       createdAt,
@@ -1192,11 +1287,16 @@ function exportNotebookItems(items) {
       total,
       rate,
       level,
+      zh,
       ...content
     } = item;
     return { date, ...content };
   });
-  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), data: cleanItems }, null, 2)], { type: 'application/json' });
+  return JSON.stringify({ schemaVersion: CONTENT_SCHEMA_VERSION, exportedAt: new Date().toISOString(), data: cleanItems }, null, 2);
+}
+
+function downloadNotebookJson(jsonText) {
+  const blob = new Blob([jsonText], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -1213,11 +1313,9 @@ function itemSearchText(item) {
     item.zh,
     item.pos,
     item.date,
-    item.pattern,
     ...(item.notes || []),
-    ...(item.examples || []).flatMap((example) => [example.ko, example.zh]),
-    ...(item.senses || []).flatMap((sense) => [sense.zh, sense.pattern, ...(sense.examples || []).flatMap((example) => [example.ko, example.zh])]),
-    ...(item.related || []).flatMap((entry) => (typeof entry === 'string' ? [entry] : [entry.ko, entry.zh, entry.relation])),
+    ...(item.meanings || []).flatMap((meaning) => [meaning.zh, meaning.pattern, ...(meaning.examples || []).flatMap((example) => [example.ko, example.zh])]),
+    ...(item.related || []),
     ...(item.components || []).flatMap((entry) => [entry.ko, entry.zh]),
     ...(item.items || []).flatMap((entry) => [entry.ko, entry.zh]),
   ].filter(Boolean).join(' ').toLowerCase();
@@ -1257,19 +1355,20 @@ function DeleteIconButton({ item, onDelete }) {
   );
 }
 
-function ItemDetailModal({ item, onEdit, onDelete, onClose }) {
+function ItemDetailModal({ item, allItems = [], onEdit, onDelete, onClose }) {
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <div className="modal-panel detail-panel">
         <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
-        <NoteCard item={item} onEdit={onEdit} onDelete={onDelete} />
+        <NoteCard item={item} allItems={allItems} onEdit={onEdit} onDelete={onDelete} />
       </div>
     </div>
   );
 }
 
-function NoteCard({ item, onEdit, onDelete, compact = false, onOpen }) {
-  const examplesCount = (item.examples?.length || 0) + (item.senses || []).reduce((sum, sense) => sum + (sense.examples?.length || 0), 0);
+function NoteCard({ item, allItems = [], onEdit, onDelete, compact = false, onOpen }) {
+  const examplesCount = itemExamples(item).length;
+  const relatedItems = displayRelated(item, allItems);
   return (
     <article className={`note-card ${compact ? 'compact-card clickable-card' : ''}`} onClick={compact ? () => onOpen(item) : undefined}>
       <div className="card-head">
@@ -1289,11 +1388,14 @@ function NoteCard({ item, onEdit, onDelete, compact = false, onOpen }) {
         </div>
       )}
       {!compact && <>
-      {item.pattern && <p className="pattern">{item.pattern}</p>}
-      {!!item.examples?.length && <div className="subblock"><b>例句</b>{item.examples.map((ex) => <p key={ex.ko}>{ex.ko}<br /><span>{ex.zh}</span></p>)}</div>}
-      {!!item.senses?.length && <div className="subblock"><b>意思</b>{item.senses.map((sense) => <p key={sense.zh}>{sense.zh}{sense.pattern ? ` · ${sense.pattern}` : ''}</p>)}</div>}
+      {!!item.meanings?.length && <div className="subblock"><b>意思</b>{item.meanings.map((meaning) => (
+        <div key={meaning.id} className="meaning-block">
+          <p>{meaning.zh}{meaning.pattern ? ` · ${meaning.pattern}` : ''}</p>
+          {!!meaning.examples?.length && meaning.examples.map((ex) => <p key={ex.id || ex.ko}>{ex.ko}<br /><span>{ex.zh}</span></p>)}
+        </div>
+      ))}</div>}
       {!!item.notes?.length && <div className="subblock tips">{item.notes.map((note) => <p key={note}>{note}</p>)}</div>}
-      {!!item.related?.length && <div className="tags">{item.related.map((entry) => <span key={entry.ko}>{entry.ko}{entry.zh ? ` · ${entry.zh}` : ''}</span>)}</div>}
+      {!!relatedItems.length && <div className="tags">{relatedItems.map((entry) => <span key={entry.id}>{entry.ko}{entry.zh ? ` · ${entry.zh}` : ''}</span>)}</div>}
       {!!item.components?.length && <div className="tags">{item.components.map((entry) => <span key={entry.ko}>{entry.ko} · {entry.zh}</span>)}</div>}
       {!!item.items?.length && <div className="subblock">{item.items.map((entry) => <p key={entry.ko}>{entry.ko}<br /><span>{entry.zh}</span></p>)}</div>}
       </>}
@@ -1406,34 +1508,34 @@ function StudyPage({ store, updateStore, set }) {
   );
 }
 
-function relatedKoList(item) {
-  return (item.related || []).map((entry) => (typeof entry === 'string' ? entry : entry.ko)).filter(Boolean);
+function relatedIdList(item) {
+  return (item.related || []).filter(Boolean);
 }
 
-function collectRelatedItems(currentItem, clickedKo, allItems) {
-  const byKo = new Map(allItems.map((entry) => [entry.ko, entry]));
-  const selected = new Set([currentItem.ko, clickedKo]);
+function collectRelatedItems(currentItem, clickedId, allItems) {
+  const byId = new Map(allItems.map((entry) => [entry.id, entry]));
+  const selected = new Set([currentItem.id, clickedId]);
   let changed = true;
   while (changed) {
     changed = false;
     allItems.forEach((entry) => {
-      const related = relatedKoList(entry);
-      const shouldInclude = selected.has(entry.ko) || related.some((ko) => selected.has(ko));
+      const related = relatedIdList(entry);
+      const shouldInclude = selected.has(entry.id) || related.some((id) => selected.has(id));
       if (shouldInclude) {
-        if (!selected.has(entry.ko)) {
-          selected.add(entry.ko);
+        if (!selected.has(entry.id)) {
+          selected.add(entry.id);
           changed = true;
         }
-        related.forEach((ko) => {
-          if (byKo.has(ko) && !selected.has(ko)) {
-            selected.add(ko);
+        related.forEach((id) => {
+          if (byId.has(id) && !selected.has(id)) {
+            selected.add(id);
             changed = true;
           }
         });
       }
     });
   }
-  return [...selected].map((ko) => byKo.get(ko)).filter(Boolean);
+  return [...selected].map((id) => byId.get(id)).filter(Boolean);
 }
 
 function RelatedCardsModal({ items, onClose }) {
@@ -1445,7 +1547,7 @@ function RelatedCardsModal({ items, onClose }) {
           <div><h2>相關單字比較</h2><span>{items.length} 張關聯卡片</span></div>
         </div>
         <div className="related-grid">
-          {items.map((relatedItem) => <NoteCard key={relatedItem.id} item={relatedItem} />)}
+          {items.map((relatedItem) => <NoteCard key={relatedItem.id} item={relatedItem} allItems={items} />)}
         </div>
       </div>
     </div>
@@ -1453,25 +1555,25 @@ function RelatedCardsModal({ items, onClose }) {
 }
 
 function StudyDetails({ item, allItems, onOpenRelated }) {
-  const hasDetails = item.pattern || item.examples?.length || item.senses?.length || item.notes?.length || item.related?.length || item.components?.length || item.items?.length;
+  const relatedItems = displayRelated(item, allItems);
+  const hasDetails = item.meanings?.length || item.notes?.length || relatedItems.length || item.components?.length || item.items?.length;
   if (!hasDetails) return <div className="empty">這張卡片沒有額外例句或補充說明。</div>;
   return (
     <div className="study-details">
-      {item.pattern && <p className="pattern">{item.pattern}</p>}
-      {!!item.examples?.length && <div className="subblock"><b>例句</b>{item.examples.map((ex) => <p key={ex.ko}>{ex.ko}<br /><span>{ex.zh}</span></p>)}</div>}
-      {!!item.senses?.length && <div className="subblock"><b>意思</b>{item.senses.map((sense) => <p key={sense.zh}>{sense.zh}{sense.pattern ? ` · ${sense.pattern}` : ''}</p>)}</div>}
+      {!!item.meanings?.length && <div className="subblock"><b>意思</b>{item.meanings.map((meaning) => (
+        <div key={meaning.id} className="meaning-block">
+          <p>{meaning.zh}{meaning.pattern ? ` · ${meaning.pattern}` : ''}</p>
+          {!!meaning.examples?.length && meaning.examples.map((ex) => <p key={ex.id || ex.ko}>{ex.ko}<br /><span>{ex.zh}</span></p>)}
+        </div>
+      ))}</div>}
       {!!item.notes?.length && <div className="subblock tips">{item.notes.map((note) => <p key={note}>{note}</p>)}</div>}
-      {!!item.related?.length && (
+      {!!relatedItems.length && (
         <div className="tags">
-          {item.related.map((entry) => {
-            const ko = typeof entry === 'string' ? entry : entry.ko;
-            const zh = typeof entry === 'string' ? '' : entry.zh;
-            return (
-              <button key={ko} type="button" onClick={() => onOpenRelated(collectRelatedItems(item, ko, allItems))}>
-                {ko}{zh ? ` · ${zh}` : ''}
-              </button>
-            );
-          })}
+          {relatedItems.map((entry) => (
+            <button key={entry.id} type="button" onClick={() => onOpenRelated(collectRelatedItems(item, entry.id, allItems))}>
+              {entry.ko}{entry.zh ? ` · ${entry.zh}` : ''}
+            </button>
+          ))}
         </div>
       )}
       {!!item.components?.length && <div className="tags">{item.components.map((entry) => <span key={entry.ko}>{entry.ko} · {entry.zh}</span>)}</div>}
@@ -1493,12 +1595,15 @@ function PracticePage({ store, updateStore, set }) {
   const [revealed, setRevealed] = useState(false);
   const [graded, setGraded] = useState(false);
   const [lastCorrect, setLastCorrect] = useState(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [sessionResults, setSessionResults] = useState([]);
   const sourceQuestions = useMemo(() => {
     if (set.dueOnly) return orderReviewQuestions(dueQuestions(store, reviewQuestions(set.questions)));
+    if (direction === 'ko-zh') return set.questions.filter((q) => q.kind === 'term');
     const activeSource = set.termOnly ? 'term' : source;
     const filtered = set.questions.filter((q) => activeSource === 'all' || q.kind === activeSource);
     return activeSource === 'all' ? orderReviewQuestions(filtered) : filtered;
-  }, [set.questions, source, set.termOnly, set.dueOnly, store]);
+  }, [set.questions, source, direction, set.termOnly, set.dueOnly, store]);
   const queue = set.dueOnly ? sourceQuestions : (started ? questionQueue : sourceQuestions);
   const question = queue[index];
   const resetSession = () => {
@@ -1510,6 +1615,8 @@ function PracticePage({ store, updateStore, set }) {
     setRevealed(false);
     setGraded(false);
     setLastCorrect(null);
+    setSummaryOpen(false);
+    setSessionResults([]);
   };
   const startSession = () => {
     const nextQuestions = set.dueOnly ? sourceQuestions : shuffleItems(sourceQuestions, Date.now());
@@ -1525,6 +1632,7 @@ function PracticePage({ store, updateStore, set }) {
     setRevealed(false);
     setGraded(false);
     setLastCorrect(null);
+    setSessionResults([]);
   };
 
   useEffect(() => {
@@ -1537,6 +1645,11 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
   }, [set.dueOnly, sourceQuestions]);
+
+  useEffect(() => {
+    if (direction === 'ko-zh') setSource('term');
+  }, [direction]);
+
   const goNext = () => {
     setInput('');
     setResult(null);
@@ -1546,10 +1659,13 @@ function PracticePage({ store, updateStore, set }) {
     if (index + 1 < queue.length) setIndex(index + 1);
     else resetSession();
   };
-  // Used by the 公佈答案 give-up path and 韓翻中's self-grade buttons: records
-  // the answer and immediately moves on, same as before.
+  // Korean-to-Chinese correct answers are intentionally lightweight: they count
+  // for the current session summary but do not improve long-term accuracy.
   const submit = (correct) => {
-    updateStore((current) => recordAnswer(current, question, correct));
+    if (!correct || activeDirection !== 'ko-zh') {
+      updateStore((current) => recordAnswer(current, question, correct));
+    }
+    setSessionResults((results) => [...results, { questionId: question.id, correct }]);
     goNext();
   };
   // Used when 確認/Enter auto-grades a typed answer: records the result right
@@ -1557,6 +1673,7 @@ function PracticePage({ store, updateStore, set }) {
   // outcome is visible until the user presses Enter for the next one.
   const gradeAndRecord = (correct) => {
     updateStore((current) => recordAnswer(current, question, correct));
+    setSessionResults((results) => [...results, { questionId: question.id, correct }]);
     setGraded(true);
     setLastCorrect(correct);
   };
@@ -1577,6 +1694,12 @@ function PracticePage({ store, updateStore, set }) {
     setResult(null);
     gradeAndRecord(false);
   };
+  const summary = {
+    total: sessionResults.length,
+    correct: sessionResults.filter((entry) => entry.correct).length,
+    wrong: sessionResults.filter((entry) => !entry.correct).length,
+    remaining: Math.max(0, queue.length - index - (graded ? 1 : 0)),
+  };
 
   useEffect(() => {
     if (!started) return undefined;
@@ -1594,18 +1717,16 @@ function PracticePage({ store, updateStore, set }) {
     return (
       <section className="page practice-start">
         <div className="panel start-panel">
-          <span className="eyebrow">Practice · {set.label}</span>
-          <h1>{set.dueOnly ? '今日複習' : '選擇練習方向'}</h1>
-          {set.dueOnly ? (
-            <div className="fixed-source-note">複習任務固定使用中文翻韓文。</div>
-          ) : (
-            <div className="segmented">
-              <button className={direction === 'zh-ko' ? 'active' : ''} onClick={() => setDirection('zh-ko')}>中翻韓</button>
-              <button className={direction === 'ko-zh' ? 'active' : ''} onClick={() => setDirection('ko-zh')}>韓翻中</button>
-            </div>
-          )}
+          <span className="eyebrow">Test · {set.label}</span>
+          <h1>{set.dueOnly ? '今日測驗' : '選擇測驗方向'}</h1>
+          <div className="segmented">
+            <button className={direction === 'zh-ko' ? 'active' : ''} onClick={() => setDirection('zh-ko')}>中翻韓</button>
+            <button className={direction === 'ko-zh' ? 'active' : ''} onClick={() => setDirection('ko-zh')}>韓翻中</button>
+          </div>
           {fixedSource ? (
-            <div className="fixed-source-note">每日複習會先完成單字，再接著複習例句。</div>
+            <div className="fixed-source-note">每日測驗會先完成單字，再接著測驗例句。</div>
+          ) : direction === 'ko-zh' ? (
+            <div className="fixed-source-note">韓翻中只測驗單字。答對不會寫入長期正確率，答錯仍會記錄為不熟悉。</div>
           ) : (
             <div className="segmented">
               <button className={source === 'term' ? 'active' : ''} onClick={() => setSource('term')}>單字 / 片語</button>
@@ -1613,7 +1734,7 @@ function PracticePage({ store, updateStore, set }) {
               <button className={source === 'all' ? 'active' : ''} onClick={() => setSource('all')}>全部</button>
             </div>
           )}
-          <p>{sourceQuestions.length} 題可練習。{set.dueOnly ? '請看中文提示輸入韓文答案。' : '中翻韓只會出打字題，韓翻中會先思考再公佈答案。'}</p>
+          <p>{sourceQuestions.length} 題可測驗。{set.dueOnly ? '請看中文提示輸入韓文答案。' : '中翻韓只會出打字題，韓翻中會先思考再公佈答案。'}</p>
           <button className="primary wide" disabled={!sourceQuestions.length} onClick={startSession}>開始</button>
         </div>
       </section>
@@ -1624,9 +1745,9 @@ function PracticePage({ store, updateStore, set }) {
     return (
       <section className="page practice-start">
         <div className="panel start-panel">
-          <span className="eyebrow">Practice · {set.label}</span>
-          <h1>目前沒有待複習題目</h1>
-          <p>單字和例句都已經清完，今天的複習任務已完成。</p>
+          <span className="eyebrow">Test · {set.label}</span>
+          <h1>目前沒有待測驗題目</h1>
+          <p>單字和例句都已經清完，今天的測驗任務已完成。</p>
         </div>
       </section>
     );
@@ -1637,7 +1758,7 @@ function PracticePage({ store, updateStore, set }) {
       <div className="practice-layout">
         <div className="practice-shell">
           <div className="progress-line"><span style={{ width: `${((index + 1) / queue.length) * 100}%` }} /></div>
-          <div className="quiz-meta quiz-meta-row"><span>{index + 1} / {queue.length} · {activeDirection === 'zh-ko' ? '中翻韓' : '韓翻中'}</span><button onClick={() => setSummary(true)}>結束練習</button></div>
+          <div className="quiz-meta quiz-meta-row"><span>{index + 1} / {queue.length} · {activeDirection === 'zh-ko' ? '中翻韓' : '韓翻中'}</span><button onClick={() => setSummaryOpen(true)}>結束測驗</button></div>
           {activeDirection === 'zh-ko' ? (
             <>
               <div className="prompt">
@@ -1695,6 +1816,25 @@ function PracticePage({ store, updateStore, set }) {
           onNext={goNext}
         />
       </div>
+      {summaryOpen && (
+        <div className="modal-backdrop">
+          <div className="modal-panel test-summary-panel">
+            <button className="modal-close" onClick={() => setSummaryOpen(false)}><X /></button>
+            <span className="eyebrow">Test Summary</span>
+            <h2>測驗摘要</h2>
+            <div className="summary-grid">
+              <div><span>已作答</span><strong>{summary.total}</strong></div>
+              <div><span>答對</span><strong>{summary.correct}</strong></div>
+              <div><span>答錯</span><strong>{summary.wrong}</strong></div>
+              <div><span>剩餘</span><strong>{summary.remaining}</strong></div>
+            </div>
+            <div className="actions">
+              <button onClick={() => setSummaryOpen(false)}>繼續測驗</button>
+              <button className="primary" onClick={resetSession}>結束</button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -1776,6 +1916,35 @@ function AnswerPanel({ question, revealed, onCorrect, onWrong }) {
   );
 }
 
+function ExportJsonModal({ items, onClose }) {
+  const [copied, setCopied] = useState(false);
+  const jsonText = useMemo(() => buildNotebookExport(items), [items]);
+  const copyJson = async () => {
+    await navigator.clipboard.writeText(jsonText);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  };
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <div className="modal-panel export-panel">
+        <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
+        <div className="export-head">
+          <div>
+            <span className="eyebrow">Backup</span>
+            <h2>匯出 JSON</h2>
+          </div>
+          <div className="actions">
+            <button onClick={copyJson}><Copy size={17} /> {copied ? '已複製' : '複製'}</button>
+            <button className="primary" onClick={() => downloadNotebookJson(jsonText)}><Download size={17} /> 下載</button>
+          </div>
+        </div>
+        <pre className="json-code"><code>{jsonText}</code></pre>
+      </div>
+    </div>
+  );
+}
+
 function NotebookPage({ store, items, questions, onPractice, onStudy, onAddRecords, onUpdateRecord, onDeleteRecord }) {
   const [query, setQuery] = useState('');
   const [type, setType] = useState('全部');
@@ -1783,6 +1952,7 @@ function NotebookPage({ store, items, questions, onPractice, onStudy, onAddRecor
   const [sort, setSort] = useState('default');
   const [pageNumber, setPageNumber] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [viewingItem, setViewingItem] = useState(null);
   const types = ['全部', ...new Set(items.map((item) => item.pos || '比較'))];
@@ -1821,13 +1991,14 @@ function NotebookPage({ store, items, questions, onPractice, onStudy, onAddRecor
     <section className="page">
       <div className="topbar">
         <div><span className="eyebrow">Notebook</span><h1>單字本</h1></div>
-        <div className="actions">
-          <button onClick={() => exportNotebookItems(items)}>匯出 JSON</button>
-          <button className="add-date-button" onClick={() => setAddOpen(true)}>新增單字</button>
+        <div className="actions notebook-actions">
+          <button onClick={() => setExportOpen(true)}><Download size={18} /> 匯出 JSON</button>
+          <button className="add-date-button" onClick={() => setAddOpen(true)}><Plus size={18} /> 新增單字</button>
           <button onClick={() => onStudy(enriched, '篩選結果')}><BookOpen size={18} /> 學習篩選結果</button>
-          <button className="primary" onClick={() => onPractice(practiceQuestions, '篩選結果測驗')}><Dumbbell size={18} /> 練習篩選結果</button>
+          <button className="primary" onClick={() => onPractice(practiceQuestions, '篩選結果測驗')}><Dumbbell size={18} /> 測驗篩選結果</button>
         </div>
       </div>
+      {exportOpen && <ExportJsonModal items={items} onClose={() => setExportOpen(false)} />}
       <div className="filters">
         <label className="search"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜尋單字、例句、筆記或相關詞" /></label>
         <select value={type} onChange={(e) => setType(e.target.value)}>{types.map((option) => <option key={option}>{option}</option>)}</select>
@@ -1861,6 +2032,7 @@ function NotebookPage({ store, items, questions, onPractice, onStudy, onAddRecor
       {viewingItem && (
         <ItemDetailModal
           item={viewingItem}
+          allItems={items}
           onEdit={(item) => {
             setViewingItem(null);
             setEditingItem(item);

@@ -1,6 +1,6 @@
 # 韓文筆記
 
-韓語學習與間隔複習網頁。前端使用 Vite + React，資料使用既有 Firebase 專案 `korean-review-web` 的 Auth + Firestore。
+韓語學習與間隔測驗網頁。前端使用 Vite + React，資料使用既有 Firebase 專案 `korean-review-web` 的 Auth + Firestore。
 
 ## 本機開發
 
@@ -24,18 +24,15 @@ npm run dev
 - `users/{uid}/questions/{questionId}`：解析後的測驗題
 - `users/{uid}/records/{recordId}`：從日曆或單字本新增的原始單字資料
 - `users/{uid}/appState/reviewState`：答題紀錄、熟練度、SRS 進度、學習標記
-- `users/{uid}/meta/replaceCurrentAppData`：記錄舊資料已被新版資料取代
 
-第一次登入新版網站時，會先刪除同一個使用者底下舊版資料集合：
+內容 schema v2：
 
-- `users/{uid}/cards`
-- `users/{uid}/days`
-- `users/{uid}/items`
-- `users/{uid}/questions`
-- `users/{uid}/records`
-- `users/{uid}/appState`
-
-刪除後會重新寫入目前 JSON 對應的新資料。
+- 每張卡片保留穩定 `id`。
+- 中文意思放在 `meanings[].zh`。
+- 例句只放在 `meanings[].examples[]`。
+- 備註只放在頂層 `notes`。
+- 相關詞 `related` 使用卡片 id 陣列。
+- 不再使用頂層 `zh`、頂層 `examples` 或 `senses`。
 
 ## Firebase
 

@@ -172,6 +172,28 @@ main {
   gap: 12px;
 }
 
+.notebook-actions {
+  gap: 8px;
+}
+
+.notebook-actions button {
+  min-height: 40px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  font-size: 15px;
+}
+
+.notebook-actions svg {
+  width: 17px;
+  height: 17px;
+}
+
+.notebook-actions .add-date-button {
+  margin-top: 0;
+  color: #263238;
+  background: #ffffff;
+}
+
 .primary {
   color: #ffffff;
   background: linear-gradient(135deg, #ff7b54, #ffb547);
@@ -627,6 +649,12 @@ main {
 
 .subblock p {
   margin-bottom: 10px;
+}
+
+.meaning-block + .meaning-block {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #dfe6e8;
 }
 
 .subblock span {
@@ -1234,6 +1262,66 @@ textarea:focus {
   box-shadow: none;
   border: 0;
   background: transparent;
+}
+
+.test-summary-panel {
+  width: min(520px, 100%);
+}
+
+.export-panel {
+  width: min(920px, 100%);
+}
+
+.export-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding-right: 48px;
+  margin-bottom: 16px;
+}
+
+.export-head h2 {
+  margin-bottom: 0;
+}
+
+.json-code {
+  max-height: min(560px, 58vh);
+  overflow: auto;
+  margin: 0;
+  padding: 16px;
+  border-radius: 16px;
+  background: #1f2933;
+  color: #e9f2f0;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.summary-grid div {
+  padding: 12px;
+  border-radius: 14px;
+  background: #f4f7f6;
+}
+
+.summary-grid span {
+  display: block;
+  margin-bottom: 4px;
+  color: #6d7b84;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.summary-grid strong {
+  font-size: 24px;
 }
 
 .modal-close {
