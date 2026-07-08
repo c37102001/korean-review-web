@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import {
   BookOpen,
@@ -342,6 +343,42 @@ function parseJsonItems(text) {
   return data;
 }
 
+function readJsonImportDocument(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('JSON 格式錯誤，請確認括號、逗號和引號是否正確');
+  }
+  if (!Array.isArray(parsed) && parsed?.schemaVersion !== undefined && parsed.schemaVersion !== CONTENT_SCHEMA_VERSION) {
+    throw new Error(`JSON schemaVersion 需要是 ${CONTENT_SCHEMA_VERSION}`);
+  }
+  const data = Array.isArray(parsed) ? parsed : parsed.data;
+  if (!Array.isArray(data)) throw new Error('JSON 需要是 { "data": [...] } 或陣列格式');
+  return data;
+}
+
+function buildJsonImportDraft(text, targetDate) {
+  const data = readJsonImportDocument(text);
+  const entries = data.map((item, index) => {
+    try {
+      validateImportItem(item, index);
+      return { index, action: 'add', item };
+    } catch (validationError) {
+      return null;
+    }
+  });
+  const invalid = data.map((item, index) => {
+    try {
+      validateImportItem(item, index);
+      return null;
+    } catch (validationError) {
+      return { index, text: JSON.stringify(item, null, 2), error: validationError.message };
+    }
+  }).filter(Boolean);
+  return { targetDate, entries, invalid, conflict: null, message: '' };
+}
+
 function assertPlainObject(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} 需要是物件`);
 }
@@ -440,6 +477,141 @@ function createRecordsForDate(date, rawItems, existingItems = []) {
   const missingRelated = normalized.flatMap((record) => (record.item.related || []).filter((id) => !knownIds.has(id)));
   if (missingRelated.length) throw new Error(`找不到相關單字：${[...new Set(missingRelated)].join('、')}`);
   return normalized;
+}
+
+function createRecordsFromImportEntries(entries, date, existingItems = []) {
+  const now = new Date().toISOString();
+  const addRecords = entries.filter((entry) => entry.action === 'add').map((entry) => ({
+    id: entry.item.id || `${date}-custom-${crypto.randomUUID()}`,
+    date: entry.item.date || date,
+    item: entry.item,
+    createdAt: entry.item.createdAt || now,
+  }));
+  const updateRecords = entries.filter((entry) => entry.action === 'update').map((entry) => ({
+    id: entry.existing.id,
+    date: entry.existing.date,
+    item: entry.item,
+    createdAt: entry.existing.createdAt || now,
+    updatedAt: now,
+  }));
+  const lookupRecords = [
+    ...existingItems.map((item) => ({ id: item.id, item })),
+    ...addRecords,
+    ...updateRecords,
+  ];
+  const lookup = buildRecordLookup(lookupRecords);
+  const knownIds = new Set(lookupRecords.map((record) => record.id));
+  const normalize = (record) => ({
+    ...record,
+    item: normalizeItemToV2(record.item, record.id, lookup),
+  });
+  const normalizedAdds = addRecords.map(normalize);
+  const normalizedUpdates = updateRecords.map(normalize);
+  const missingRelated = [...normalizedAdds, ...normalizedUpdates].flatMap((record) => (record.item.related || []).filter((id) => !knownIds.has(id)));
+  if (missingRelated.length) throw new Error(`找不到相關單字：${[...new Set(missingRelated)].join('、')}`);
+  return { addRecords: normalizedAdds, updateRecords: normalizedUpdates };
+}
+
+function findMissingImportRelated(entries, existingItems = []) {
+  const activeEntries = entries.filter(Boolean);
+  const knownIds = new Set(existingItems.map((item) => item.id).filter(Boolean));
+  const knownKo = new Set(existingItems.map((item) => item.ko?.trim()).filter(Boolean));
+  activeEntries.forEach((entry) => {
+    const entryId = entry.action === 'update' ? entry.existing?.id : entry.item.id;
+    if (entryId) knownIds.add(entryId);
+    if (entry.item.ko) knownKo.add(entry.item.ko.trim());
+  });
+  return activeEntries.map((entry, position) => {
+    const missing = (entry.item.related || [])
+      .map((related) => related.trim())
+      .filter((related) => related && !knownIds.has(related) && !knownKo.has(related));
+    if (!missing.length) return null;
+    return { position, ko: entry.item.ko, missing: [...new Set(missing)] };
+  }).filter(Boolean);
+}
+
+function clearMissingImportRelated(entries, missingRelated) {
+  const missingByPosition = new Map(missingRelated.map((issue) => [issue.position, new Set(issue.missing)]));
+  return entries.filter(Boolean).map((entry, position) => {
+    const missingSet = missingByPosition.get(position);
+    if (!missingSet) return entry;
+    const nextRelated = (entry.item.related || []).filter((related) => !missingSet.has(related.trim()));
+    const nextItem = { ...entry.item };
+    if (nextRelated.length) nextItem.related = nextRelated;
+    else delete nextItem.related;
+    return { ...entry, item: nextItem };
+  });
+}
+
+function findImportConflict(entries, existingItems = []) {
+  const activeEntries = entries.map((entry, position) => (entry ? { ...entry, position } : null)).filter(Boolean);
+  for (let index = 0; index < activeEntries.length; index += 1) {
+    const current = activeEntries[index];
+    const duplicateIndex = activeEntries.findIndex((entry, candidateIndex) => candidateIndex < index && entry.item.ko.trim() === current.item.ko.trim());
+    if (duplicateIndex >= 0) {
+      const other = activeEntries[duplicateIndex];
+      return {
+        type: 'input',
+        leftEntryIndex: other.position,
+        rightEntryIndex: current.position,
+        left: other.item,
+        right: current.item,
+        editText: JSON.stringify(mergeImportItems(other.item, current.item), null, 2),
+        error: '',
+      };
+    }
+    if (current.action === 'add') {
+      const existing = existingItems.find((item) => item.ko.trim() === current.item.ko.trim());
+      if (existing) {
+        return {
+          type: 'existing',
+          entryIndex: current.position,
+          existing,
+          incoming: current.item,
+          editText: JSON.stringify(mergeImportItems(existing, current.item), null, 2),
+          error: '',
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function stripGeneratedIdsFromMeaning(meaning) {
+  const { id, examples = [], ...content } = meaning;
+  return {
+    ...content,
+    examples: examples.map((example) => {
+      const { id: exampleId, ...exampleContent } = example;
+      return exampleContent;
+    }),
+  };
+}
+
+function mergeImportItems(left, right) {
+  const notes = [...new Set([...(left.notes || []), ...(right.notes || [])].filter(Boolean))];
+  const related = [...new Set([...(left.related || []), ...(right.related || [])].filter(Boolean))];
+  return {
+    ko: right.ko || left.ko,
+    ...(right.pos || left.pos ? { pos: right.pos || left.pos } : {}),
+    meanings: [
+      ...(left.meanings || []).map(stripGeneratedIdsFromMeaning),
+      ...(right.meanings || []).map(stripGeneratedIdsFromMeaning),
+    ],
+    ...(notes.length ? { notes } : {}),
+    ...(related.length ? { related } : {}),
+  };
+}
+
+function parseEditedImportItem(text, label = '編輯後的單字') {
+  let item;
+  try {
+    item = JSON.parse(text);
+  } catch {
+    throw new Error(`${label} JSON 格式錯誤`);
+  }
+  validateImportItem(item, 0);
+  return item;
 }
 
 async function writeLearningRecords(uid, records) {
@@ -806,7 +978,7 @@ function App() {
 
   const views = {
     home: <HomePage store={store} items={items} questions={dailyQuestions} onPractice={startPractice} onStudy={startStudy} />,
-    calendar: <CalendarPage store={store} items={items} questions={questions} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} />,
+    calendar: <CalendarPage store={store} items={items} questions={questions} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
     notes: <NotesPage items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
     study: <StudyPage set={studySet || { items, label: '全部內容' }} />,
     practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: dailyQuestions, label: '今日測驗', dueOnly: true }} />,
@@ -958,9 +1130,10 @@ function Stat({ icon, label, value }) {
   return <div className="stat">{icon}<span>{label}</span><strong>{value}</strong></div>;
 }
 
-function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, onOpenNotes, onAddRecords, onUpdateRecord }) {
+function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, onOpenNotes, onAddRecords, onUpdateRecord, onDeleteRecord }) {
   const [cursor, setCursor] = useState(new Date(`${selectedDate}T00:00:00`));
   const [addOpen, setAddOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const completedDates = new Set(store.completedReviewDates || []);
   const streaks = calculateReviewStreaks(store.completedReviewDates || []);
@@ -983,6 +1156,12 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
     });
   }
   const selectedItems = items.filter((item) => item.date === selectedDate);
+  const deleteSelectedDateItems = async () => {
+    if (!selectedItems.length) return;
+    const confirmed = window.confirm(`確定要刪除 ${selectedDate} 的 ${selectedItems.length} 筆單字嗎？這不會刪除其他日期的單字。`);
+    if (!confirmed) return;
+    await Promise.all(selectedItems.map((item) => onDeleteRecord(item.id)));
+  };
 
   return (
     <section className="page">
@@ -1022,10 +1201,15 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
           </div>
           <div className="panel-title"><h2>{selectedDate}</h2><span>{selectedItems.length} 筆內容</span></div>
           {selectedItems.slice(0, 5).map((item) => <NotePreview key={item.id} item={item} />)}
-          <button className="primary wide" disabled={!selectedItems.length} onClick={onOpenNotes}>查看日期筆記</button>
-          <button className="wide add-date-button" onClick={() => setAddOpen(true)}>新增單字</button>
+          <div className="calendar-day-actions">
+            <button className="primary wide" disabled={!selectedItems.length} onClick={onOpenNotes}>查看單字</button>
+            <button className="wide add-date-button" onClick={() => setAddOpen(true)}>新增單字</button>
+            <button className="wide export-date-button" disabled={!selectedItems.length} onClick={() => setExportOpen(true)}><Download size={18} /> 匯出這天單字</button>
+            <button className="wide danger-soft" disabled={!selectedItems.length} onClick={deleteSelectedDateItems}>刪除這天所有單字</button>
+          </div>
         </div>
       </div>
+      {exportOpen && <ExportJsonModal items={selectedItems} title={`匯出 ${selectedDate} JSON`} onClose={() => setExportOpen(false)} />}
       {addOpen && (
         <AddItemsModal
           title="新增這一天的單字"
@@ -1033,6 +1217,7 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
           lockedDate
           allItems={items}
           onAddRecords={onAddRecords}
+          onUpdateRecord={onUpdateRecord}
           onEditExisting={(item) => {
             setAddOpen(false);
             setEditingItem(item);
@@ -1132,6 +1317,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
   const [mode, setMode] = useState('manual');
   const [formDate, setFormDate] = useState(date);
   const [jsonText, setJsonText] = useState('');
+  const [importDraft, setImportDraft] = useState(null);
   const [manual, setManual] = useState(() => itemToManual(editItem));
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -1142,7 +1328,143 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
     setFormDate(date);
     setManual(itemToManual(editItem));
     setMode('manual');
+    setImportDraft(null);
   }, [date, editItem]);
+
+  const commitImportEntries = async (entries, targetDate) => {
+    const activeEntries = entries.filter(Boolean);
+    if (!activeEntries.length) {
+      setMessage('沒有需要匯入或更新的資料');
+      return;
+    }
+    if (activeEntries.some((entry) => entry.action === 'update') && !onUpdateRecord) {
+      throw new Error('這裡無法更新既有單字，請從單字本重新匯入');
+    }
+    const { addRecords, updateRecords } = createRecordsFromImportEntries(activeEntries, targetDate, allItems);
+    if (addRecords.length) await onAddRecords(addRecords);
+    await Promise.all(updateRecords.map((record) => onUpdateRecord(record)));
+    setMessage(`已匯入 ${addRecords.length} 筆，更新 ${updateRecords.length} 筆`);
+    setJsonText('');
+    setImportDraft(null);
+  };
+
+  const continueImportDraft = async (draft) => {
+    const activeEntries = draft.entries.filter(Boolean);
+    const conflict = findImportConflict(activeEntries, allItems);
+    if (conflict) {
+      setImportDraft({ ...draft, entries: activeEntries, conflict, missingRelated: null, message: '' });
+      setError('');
+      return;
+    }
+    const missingRelated = findMissingImportRelated(activeEntries, allItems);
+    if (missingRelated.length) {
+      setImportDraft({ ...draft, entries: activeEntries, conflict: null, missingRelated, message: '' });
+      setError('');
+      return;
+    }
+    await commitImportEntries(activeEntries, draft.targetDate);
+    if (onSaved) setTimeout(onSaved, 450);
+  };
+
+  const handleContinueImportDraft = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await continueImportDraft(importDraft);
+    } catch (continueError) {
+      setError(continueError.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateInvalidText = (issueIndex, text) => {
+    setImportDraft((draft) => ({
+      ...draft,
+      invalid: draft.invalid.map((issue) => (issue.index === issueIndex ? { ...issue, text } : issue)),
+    }));
+  };
+
+  const applyInvalidFix = (issueIndex) => {
+    setImportDraft((draft) => {
+      const issue = draft.invalid.find((entry) => entry.index === issueIndex);
+      try {
+        const item = parseEditedImportItem(issue.text);
+        const nextEntries = [...draft.entries];
+        nextEntries[issueIndex] = { index: issueIndex, action: 'add', item };
+        const nextInvalid = draft.invalid.filter((entry) => entry.index !== issueIndex);
+        const nextConflict = nextInvalid.length ? null : findImportConflict(nextEntries.filter(Boolean), allItems);
+        const nextMissingRelated = !nextInvalid.length && !nextConflict ? findMissingImportRelated(nextEntries.filter(Boolean), allItems) : [];
+        return {
+          ...draft,
+          entries: nextEntries,
+          invalid: nextInvalid,
+          conflict: nextConflict,
+          missingRelated: nextMissingRelated.length ? nextMissingRelated : null,
+          message: nextConflict ? '格式問題已修正，請繼續處理重複單字' : nextMissingRelated.length ? '格式問題已修正，請處理找不到的關聯詞' : '已套用修正',
+        };
+      } catch (validationError) {
+        return {
+          ...draft,
+          invalid: draft.invalid.map((entry) => (entry.index === issueIndex ? { ...entry, error: validationError.message } : entry)),
+        };
+      }
+    });
+  };
+
+  const updateConflictText = (text) => {
+    setImportDraft((draft) => ({ ...draft, conflict: { ...draft.conflict, editText: text, error: '' } }));
+  };
+
+  const resolveConflict = (choice) => {
+    setImportDraft((draft) => {
+      try {
+        const conflict = draft.conflict;
+        const nextEntries = [...draft.entries];
+        const editedItem = choice === 'edit' ? parseEditedImportItem(conflict.editText, '最終結果') : null;
+        if (conflict.type === 'existing') {
+          if (choice === 'existing') {
+            nextEntries[conflict.entryIndex] = null;
+          } else {
+            const item = choice === 'incoming' ? conflict.incoming : choice === 'merge' ? mergeImportItems(conflict.existing, conflict.incoming) : editedItem;
+            nextEntries[conflict.entryIndex] = { index: conflict.entryIndex, action: 'update', existing: conflict.existing, item };
+          }
+        } else {
+          if (choice === 'left') {
+            nextEntries[conflict.rightEntryIndex] = null;
+          } else if (choice === 'right') {
+            nextEntries[conflict.leftEntryIndex] = { ...nextEntries[conflict.rightEntryIndex], index: conflict.leftEntryIndex };
+            nextEntries[conflict.rightEntryIndex] = null;
+          } else {
+            const item = choice === 'merge' ? mergeImportItems(conflict.left, conflict.right) : editedItem;
+            nextEntries[conflict.leftEntryIndex] = { ...nextEntries[conflict.leftEntryIndex], item };
+            nextEntries[conflict.rightEntryIndex] = null;
+          }
+        }
+        const activeEntries = nextEntries.filter(Boolean);
+        const nextConflict = findImportConflict(activeEntries, allItems);
+        const nextMissingRelated = nextConflict ? [] : findMissingImportRelated(activeEntries, allItems);
+        return {
+          ...draft,
+          entries: activeEntries,
+          conflict: nextConflict,
+          missingRelated: nextMissingRelated.length ? nextMissingRelated : null,
+          message: nextConflict ? '已處理一組重複單字，請繼續處理下一組' : nextMissingRelated.length ? '重複單字已處理，請處理找不到的關聯詞' : '所有問題都已處理，可以匯入',
+        };
+      } catch (validationError) {
+        return { ...draft, conflict: { ...draft.conflict, error: validationError.message } };
+      }
+    });
+  };
+
+  const clearMissingRelatedAndContinue = () => {
+    setImportDraft((draft) => ({
+      ...draft,
+      entries: clearMissingImportRelated(draft.entries, draft.missingRelated || []),
+      missingRelated: null,
+      message: '已清空找不到的關聯詞，可以繼續匯入',
+    }));
+  };
 
   const submit = async (event) => {
     event.preventDefault();
@@ -1163,7 +1485,23 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
         await onUpdateRecord(record);
         setMessage('已更新單字');
       } else {
-        const rawItems = mode === 'json' ? parseJsonItems(jsonText) : [manualToItem(manual, allItems)];
+        if (mode === 'json') {
+          const draft = buildJsonImportDraft(jsonText, targetDate);
+          if (draft.invalid.length) {
+            setImportDraft(draft);
+            setError('有資料不符合匯入格式，請先修正。修正完成前不會匯入任何資料。');
+            return;
+          }
+          const conflict = findImportConflict(draft.entries, allItems);
+          if (conflict) {
+            setImportDraft({ ...draft, conflict });
+            setError('發現重複韓文單字，請先選擇處理方式。處理完成前不會匯入任何資料。');
+            return;
+          }
+          await continueImportDraft(draft);
+          return;
+        }
+        const rawItems = [manualToItem(manual, allItems)];
         const repeatedInInput = rawItems.map((item) => item.ko.trim()).filter((ko, index, list) => list.indexOf(ko) !== index);
         if (repeatedInInput.length) {
           setError(`這次新增內容中有重複韓文：${[...new Set(repeatedInInput)].join('、')}`);
@@ -1180,7 +1518,6 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
         const records = createRecordsForDate(targetDate, rawItems, allItems);
         await onAddRecords(records);
         setMessage(`已新增 ${records.length} 筆到 ${targetDate}`);
-        setJsonText('');
         setManual(itemToManual());
       }
       if (onSaved) setTimeout(onSaved, 450);
@@ -1201,7 +1538,22 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
         </div>}
       </div>
 
-      <div className="form-grid">
+      {importDraft ? (
+        <ImportReviewPanel
+          draft={importDraft}
+          onUpdateInvalidText={updateInvalidText}
+          onApplyInvalidFix={applyInvalidFix}
+          onContinue={handleContinueImportDraft}
+          onUpdateConflictText={updateConflictText}
+          onResolveConflict={resolveConflict}
+          onClearMissingRelated={clearMissingRelatedAndContinue}
+          onCancel={() => {
+            setImportDraft(null);
+            setError('');
+            setMessage('已放棄這次匯入，沒有寫入任何資料');
+          }}
+        />
+      ) : <div className="form-grid">
         <label>
           日期
           <input type="date" value={isEditing ? editItem.date : lockedDate ? date : formDate} onChange={(event) => setFormDate(event.target.value)} disabled={lockedDate || isEditing} required />
@@ -1243,7 +1595,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
             <textarea className="json-input" value={jsonText} onChange={(event) => setJsonText(event.target.value)} placeholder='{ "data": [{ "ko": "뉴스", "pos": "名詞", "meanings": [{ "zh": "新聞", "examples": [] }] }] }' required />
           </label>
         )}
-      </div>
+      </div>}
 
       {message && <div className="form-success">{message}</div>}
       {error && <div className="form-error">{error}</div>}
@@ -1256,10 +1608,145 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
           ))}
         </div>
       )}
-      <div className="form-actions">
+      {!importDraft && <div className="form-actions">
         <button className="primary" disabled={saving}>{saving ? '儲存中' : isEditing ? '儲存修改' : '新增到單字庫'}</button>
-      </div>
+      </div>}
     </form>
+  );
+}
+
+function ImportReviewPanel({ draft, onUpdateInvalidText, onApplyInvalidFix, onContinue, onUpdateConflictText, onResolveConflict, onClearMissingRelated, onCancel }) {
+  const pendingCount = draft.entries.filter(Boolean).length;
+  return (
+    <div className="import-review">
+      <div className="import-review-head">
+        <div>
+          <strong>匯入預檢</strong>
+          <span>{pendingCount} 筆待匯入 / {draft.invalid.length} 筆需要修正</span>
+        </div>
+        <button type="button" className="danger-soft" onClick={onCancel}>放棄匯入</button>
+      </div>
+
+      {!!draft.invalid.length && (
+        <div className="import-section">
+          <h3>不符合規定的資料</h3>
+          <p>請逐筆修正後按「套用修正」。全部修正完成前，不會匯入任何資料。</p>
+          {draft.invalid.map((issue) => (
+            <div className="import-fix-card" key={issue.index}>
+              <div className="import-fix-title">
+                <strong>第 {issue.index + 1} 筆</strong>
+                <span>{issue.error}</span>
+              </div>
+              <textarea value={issue.text} onChange={(event) => onUpdateInvalidText(issue.index, event.target.value)} spellCheck="false" />
+              <button type="button" onClick={() => onApplyInvalidFix(issue.index)}>套用修正</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!draft.invalid.length && draft.conflict && (
+        <ImportConflictResolver conflict={draft.conflict} onUpdateText={onUpdateConflictText} onResolve={onResolveConflict} />
+      )}
+
+      {!draft.invalid.length && !draft.conflict && !!draft.missingRelated?.length && (
+        <ImportMissingRelatedPanel issues={draft.missingRelated} onClear={onClearMissingRelated} />
+      )}
+
+      {!draft.invalid.length && !draft.conflict && !draft.missingRelated?.length && (
+        <div className="import-ready">
+          <strong>所有問題都已處理</strong>
+          <p>確認後會一次匯入新增資料，並更新你選擇合併或覆蓋的既有單字。</p>
+          <button type="button" className="primary" onClick={onContinue}>全部匯入</button>
+        </div>
+      )}
+
+      {!!draft.invalid.length && (
+        <div className="form-actions">
+          <button type="button" className="primary" disabled={!!draft.invalid.length} onClick={onContinue}>繼續檢查重複單字</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ImportMissingRelatedPanel({ issues, onClear }) {
+  const missingCount = issues.reduce((sum, issue) => sum + issue.missing.length, 0);
+  return (
+    <div className="import-section missing-related-section">
+      <h3>找不到 {missingCount} 個關聯詞</h3>
+      <p>這些 related 沒有對應到既有單字，也沒有對應到這次匯入的單字。你可以清空這些無效關聯詞後繼續匯入，其他有效關聯詞會保留。</p>
+      <div className="missing-related-list">
+        {issues.map((issue) => (
+          <div key={`${issue.position}-${issue.ko}`}>
+            <strong>{issue.ko}</strong>
+            <span>{issue.missing.join('、')}</span>
+          </div>
+        ))}
+      </div>
+      <div className="conflict-actions">
+        <button type="button" className="primary" onClick={onClear}>清空這些關聯詞並繼續</button>
+      </div>
+    </div>
+  );
+}
+
+function ImportConflictResolver({ conflict, onUpdateText, onResolve }) {
+  const isExisting = conflict.type === 'existing';
+  const leftLabel = isExisting ? '既有單字' : '匯入資料 A';
+  const rightLabel = isExisting ? '匯入資料' : '匯入資料 B';
+  const leftItem = isExisting ? conflict.existing : conflict.left;
+  const rightItem = isExisting ? conflict.incoming : conflict.right;
+  return (
+    <div className="import-section">
+      <h3>重複韓文單字：{rightItem.ko}</h3>
+      <p>請選擇保留其中一邊、直接合併，或編輯最終結果。處理完成前不會匯入任何資料。</p>
+      <div className="import-compare-grid">
+        <ImportCompareCard label={leftLabel} item={leftItem} />
+        <ImportCompareCard label={rightLabel} item={rightItem} />
+      </div>
+      <div className="conflict-actions">
+        {isExisting ? (
+          <>
+            <button type="button" onClick={() => onResolve('existing')}>保留既有單字</button>
+            <button type="button" onClick={() => onResolve('incoming')}>使用匯入資料取代</button>
+          </>
+        ) : (
+          <>
+            <button type="button" onClick={() => onResolve('left')}>保留 A</button>
+            <button type="button" onClick={() => onResolve('right')}>保留 B</button>
+          </>
+        )}
+        <button type="button" onClick={() => onResolve('merge')}>直接合併</button>
+      </div>
+      <label className="import-final-editor">
+        編輯最終結果
+        <textarea value={conflict.editText} onChange={(event) => onUpdateText(event.target.value)} spellCheck="false" />
+      </label>
+      {conflict.error && <div className="form-error">{conflict.error}</div>}
+      <button type="button" className="primary" onClick={() => onResolve('edit')}>使用編輯後結果</button>
+    </div>
+  );
+}
+
+function ImportCompareCard({ label, item }) {
+  return (
+    <div className="import-compare-card">
+      <span>{label}</span>
+      <strong>{item.ko}</strong>
+      {item.pos && <small>{item.pos}</small>}
+      <p>{itemZh(item)}</p>
+      {!!item.meanings?.length && (
+        <div className="import-meaning-list">
+          {item.meanings.map((meaning, index) => (
+            <div key={meaning.id || `${meaning.zh}-${index}`}>
+              <b>{meaning.zh}</b>
+              {!!meaning.examples?.length && <em>{meaning.examples.length} 個例句</em>}
+            </div>
+          ))}
+        </div>
+      )}
+      {!!item.notes?.length && <p className="import-note">{item.notes.join(' / ')}</p>}
+    </div>
   );
 }
 
@@ -1529,19 +2016,57 @@ function CardRichDetails({ item, relatedItems = [], onOpenItem }) {
 
 function RelatedWordTag({ item, onOpenItem }) {
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewPosition, setPreviewPosition] = useState(null);
+  const wrapRef = useRef(null);
   const touchPreviewRef = useRef(false);
   const label = `${item.ko}${item.zh ? ` · ${item.zh}` : ''}`;
   const Tag = onOpenItem ? 'button' : 'span';
+  const updatePreviewPosition = () => {
+    if (!wrapRef.current || window.matchMedia('(max-width: 920px)').matches) {
+      setPreviewPosition(null);
+      return;
+    }
+    const rect = wrapRef.current.getBoundingClientRect();
+    const cardWidth = Math.min(360, window.innerWidth - 32);
+    const edgePadding = 18;
+    const left = Math.min(
+      Math.max(rect.left + rect.width / 2, cardWidth / 2 + edgePadding),
+      window.innerWidth - cardWidth / 2 - edgePadding,
+    );
+    const placeAbove = rect.top > 300;
+    setPreviewPosition({
+      left,
+      top: placeAbove ? rect.top - 12 : rect.bottom + 12,
+      transform: placeAbove ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
+      placement: placeAbove ? 'top' : 'bottom',
+    });
+  };
+  const openPreview = () => {
+    updatePreviewPosition();
+    setPreviewOpen(true);
+  };
+
+  useEffect(() => {
+    if (!previewOpen) return undefined;
+    const reposition = () => updatePreviewPosition();
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    return () => {
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+    };
+  }, [previewOpen]);
 
   return (
     <span
+      ref={wrapRef}
       className="related-tag-wrap"
-      onMouseEnter={() => setPreviewOpen(true)}
+      onMouseEnter={openPreview}
       onMouseLeave={() => setPreviewOpen(false)}
       onTouchStart={(event) => {
         event.preventDefault();
         touchPreviewRef.current = true;
-        setPreviewOpen(true);
+        openPreview();
       }}
       onTouchEnd={() => {
         setPreviewOpen(false);
@@ -1565,15 +2090,16 @@ function RelatedWordTag({ item, onOpenItem }) {
       >
         {label}
       </Tag>
-      {previewOpen && <RelatedPreviewCard item={item} />}
+      {previewOpen && createPortal(<RelatedPreviewCard item={item} position={previewPosition} />, document.body)}
     </span>
   );
 }
 
-function RelatedPreviewCard({ item }) {
+function RelatedPreviewCard({ item, position }) {
   const firstExamples = itemExamples(item).slice(0, 2);
+  const style = position ? { left: position.left, top: position.top, transform: position.transform } : undefined;
   return (
-    <div className="related-preview-card" role="tooltip">
+    <div className="related-preview-card" style={style} data-placement={position?.placement || 'mobile'} role="tooltip">
       <div className="preview-head">
         <strong>{item.ko}</strong>
         {item.pos && <span>{item.pos}</span>}
@@ -2056,7 +2582,7 @@ function AnswerPanel({ question, revealed, onCorrect, onWrong }) {
   );
 }
 
-function ExportJsonModal({ items, onClose }) {
+function ExportJsonModal({ items, title = '匯出 JSON', onClose }) {
   const [copied, setCopied] = useState(false);
   const jsonText = useMemo(() => buildNotebookExport(items), [items]);
   const copyJson = async () => {
@@ -2072,7 +2598,7 @@ function ExportJsonModal({ items, onClose }) {
         <div className="export-head">
           <div>
             <span className="eyebrow">Backup</span>
-            <h2>匯出 JSON</h2>
+            <h2>{title}</h2>
           </div>
           <div className="actions">
             <button onClick={copyJson}><Copy size={17} /> {copied ? '已複製' : '複製'}</button>
@@ -2151,6 +2677,7 @@ function NotebookPage({ store, items, questions, onPractice, onStudy, onAddRecor
           date={todayString()}
           allItems={items}
           onAddRecords={onAddRecords}
+          onUpdateRecord={onUpdateRecord}
           onEditExisting={(item) => {
             setAddOpen(false);
             setEditingItem(item);
