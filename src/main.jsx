@@ -472,6 +472,92 @@ function createRecordsFromImportEntries(entries, date, existingItems = []) {
   return { addRecords: normalizedAdds, updateRecords: normalizedUpdates };
 }
 
+function createUpdateRecordsFromEditedJson(text, date, selectedItems, allItems = []) {
+  const data = readJsonImportDocument(text);
+  data.forEach(validateImportItem);
+  const selectedById = new Map(selectedItems.map((item) => [item.id, item]));
+  const expectedIds = new Set(selectedItems.map((item) => item.id));
+  const editedIds = data.map((item) => item.id).filter(Boolean);
+  const duplicateIds = editedIds.filter((id, index) => editedIds.indexOf(id) !== index);
+  if (duplicateIds.length) throw new Error(`JSON 中有重複 id：${[...new Set(duplicateIds)].join('、')}`);
+  const missingIds = [...expectedIds].filter((id) => !editedIds.includes(id));
+  const extraIds = editedIds.filter((id) => !expectedIds.has(id));
+  if (missingIds.length) throw new Error(`缺少這一天原本的單字 id：${missingIds.join('、')}`);
+  if (extraIds.length) throw new Error(`不能在這裡新增或修改其他日期的單字 id：${extraIds.join('、')}`);
+
+  const koById = new Map();
+  data.forEach((item) => {
+    if (item.date && item.date !== date) throw new Error(`單字「${item.ko}」的 date 必須維持 ${date}`);
+    const normalizedKo = item.ko.trim();
+    const existingId = koById.get(normalizedKo);
+    if (existingId && existingId !== item.id) throw new Error(`JSON 中有重複韓文單字：${normalizedKo}`);
+    koById.set(normalizedKo, item.id);
+  });
+  const duplicateExisting = allItems.find((item) => !expectedIds.has(item.id) && koById.has(item.ko?.trim()));
+  if (duplicateExisting) throw new Error(`韓文單字「${duplicateExisting.ko}」已存在於其他單字卡，請不要改成重複單字。`);
+
+  const now = new Date().toISOString();
+  const records = data.map((item) => {
+    const original = selectedById.get(item.id);
+    return {
+      id: original.id,
+      date,
+      item: { ...item, date },
+      createdAt: original.createdAt || now,
+      updatedAt: now,
+    };
+  });
+  const editedIdSet = new Set(records.map((record) => record.id));
+  const lookupRecords = [
+    ...allItems.filter((item) => !editedIdSet.has(item.id)).map((item) => ({ id: item.id, item })),
+    ...records,
+  ];
+  const lookup = buildRecordLookup(lookupRecords);
+  const knownIds = new Set(lookupRecords.map((record) => record.id));
+  const normalized = records.map((record) => ({
+    ...record,
+    item: normalizeItemToV2(record.item, record.id, lookup),
+  }));
+  const missingRelated = normalized.flatMap((record) => (record.item.related || []).filter((id) => !knownIds.has(id)));
+  if (missingRelated.length) throw new Error(`找不到相關單字：${[...new Set(missingRelated)].join('、')}`);
+  return normalized;
+}
+
+function comparableItemSnapshot(item) {
+  return {
+    ko: item.ko || '',
+    pos: item.pos || '',
+    meanings: item.meanings || [],
+    notes: item.notes || [],
+    related: item.related || [],
+  };
+}
+
+function jsonEqual(left, right) {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+function summarizeEditedJsonChanges(originalItems, records) {
+  const originalById = new Map(originalItems.map((item) => [item.id, item]));
+  return records.map((record) => {
+    const original = originalById.get(record.id);
+    const next = { ...record.item, id: record.id, date: record.date };
+    const fields = [];
+    if (!jsonEqual(original?.ko, next.ko)) fields.push('韓文');
+    if (!jsonEqual(original?.pos || '', next.pos || '')) fields.push('詞性');
+    if (!jsonEqual(original?.meanings || [], next.meanings || [])) fields.push('意思/例句');
+    if (!jsonEqual(original?.notes || [], next.notes || [])) fields.push('筆記');
+    if (!jsonEqual(original?.related || [], next.related || [])) fields.push('相關詞');
+    if (!fields.length && jsonEqual(comparableItemSnapshot(original), comparableItemSnapshot(next))) return null;
+    return {
+      id: record.id,
+      beforeKo: original?.ko || record.id,
+      afterKo: next.ko || record.id,
+      fields,
+    };
+  }).filter(Boolean);
+}
+
 function findMissingImportRelated(entries, existingItems = []) {
   const activeEntries = entries.filter(Boolean);
   const knownIds = new Set(existingItems.map((item) => item.id).filter(Boolean));
@@ -956,7 +1042,7 @@ function App() {
     setPageStack(pageStack.slice(0, -1));
   };
   const startPractice = (sourceQuestions, label, options = {}) => {
-    setPracticeSet({ questions: sourceQuestions, label, dueOnly: !!options.dueOnly });
+    setPracticeSet({ questions: sourceQuestions, label, dueOnly: !!options.dueOnly, recordResults: options.recordResults ?? true });
     navChild('practice');
   };
   const startStudy = (sourceItems, label) => {
@@ -1156,6 +1242,7 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
   const [cursor, setCursor] = useState(new Date(`${selectedDate}T00:00:00`));
   const [addOpen, setAddOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [jsonEditOpen, setJsonEditOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const completedDates = new Set(store.completedReviewDates || []);
   const streaks = calculateReviewStreaks(store.completedReviewDates || []);
@@ -1227,11 +1314,24 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
             <button className="primary wide" disabled={!selectedItems.length} onClick={onOpenNotes}>查看單字</button>
             <button className="wide add-date-button" onClick={() => setAddOpen(true)}>新增單字</button>
             <button className="wide export-date-button" disabled={!selectedItems.length} onClick={() => setExportOpen(true)}><Download size={18} /> 匯出這天單字</button>
+            <button className="wide edit-json-button" disabled={!selectedItems.length} onClick={() => setJsonEditOpen(true)}><Pencil size={18} /> 修改 JSON 內容</button>
             <button className="wide danger-soft" disabled={!selectedItems.length} onClick={deleteSelectedDateItems}>刪除這天所有單字</button>
           </div>
         </div>
       </div>
       {exportOpen && <ExportJsonModal items={selectedItems} title={`匯出 ${selectedDate} JSON`} onClose={() => setExportOpen(false)} />}
+      {jsonEditOpen && (
+        <EditJsonModal
+          items={selectedItems}
+          allItems={items}
+          date={selectedDate}
+          onSave={async (records) => {
+            await Promise.all(records.map((record) => onUpdateRecord(record)));
+            setJsonEditOpen(false);
+          }}
+          onClose={() => setJsonEditOpen(false)}
+        />
+      )}
       {addOpen && (
         <AddItemsModal
           title="新增這一天的單字"
@@ -2307,8 +2407,10 @@ function PracticePage({ store, updateStore, set }) {
   const [direction, setDirection] = useState('zh-ko');
   const [source, setSource] = useState('term');
   const [starredOnly, setStarredOnly] = useState(false);
+  const [recordResults, setRecordResults] = useState(set.recordResults ?? true);
   const fixedSource = set.termOnly || set.dueOnly;
   const activeDirection = set.dueOnly ? 'zh-ko' : direction;
+  const shouldRecordResults = set.dueOnly || recordResults;
   const [started, setStarted] = useState(!!set.dueOnly);
   const [questionQueue, setQuestionQueue] = useState([]);
   const [index, setIndex] = useState(0);
@@ -2379,6 +2481,10 @@ function PracticePage({ store, updateStore, set }) {
     if (direction === 'ko-zh') setSource('term');
   }, [direction]);
 
+  useEffect(() => {
+    setRecordResults(set.recordResults ?? true);
+  }, [set.label, set.recordResults]);
+
   const goNext = () => {
     setInput('');
     setResult(null);
@@ -2392,7 +2498,7 @@ function PracticePage({ store, updateStore, set }) {
   // Korean-to-Chinese correct answers are intentionally lightweight: they do
   // not improve long-term accuracy, while wrong answers still mark the card.
   const submit = (correct) => {
-    if (!correct || activeDirection !== 'ko-zh') {
+    if (shouldRecordResults && (!correct || activeDirection !== 'ko-zh')) {
       updateStore((current) => recordAnswer(current, question, correct));
     }
     if (soundEnabled) playResultSound(correct);
@@ -2402,7 +2508,9 @@ function PracticePage({ store, updateStore, set }) {
   // away (no manual 答對/答錯 choice) but keeps the question on screen so the
   // outcome is visible until the user presses Enter for the next one.
   const gradeAndRecord = (correct) => {
-    updateStore((current) => recordAnswer(current, question, correct));
+    if (shouldRecordResults) {
+      updateStore((current) => recordAnswer(current, question, correct));
+    }
     setGraded(true);
     setLastCorrect(correct);
     if (soundEnabled) playResultSound(correct);
@@ -2410,7 +2518,9 @@ function PracticePage({ store, updateStore, set }) {
   };
   const handleConfirm = () => {
     if (graded || !input.trim()) return;
-    const checkResult = compareAnswer(input, question.ko);
+    const submittedInput = input.trim();
+    setInput(submittedInput);
+    const checkResult = compareAnswer(submittedInput, question.ko);
     setResult(checkResult);
     const nextAttempt = typedAttempts + 1;
     setTypedAttempts(nextAttempt);
@@ -2426,6 +2536,7 @@ function PracticePage({ store, updateStore, set }) {
   };
   const revealTypedAnswerAsWrong = () => {
     if (graded) return;
+    setInput((current) => current.trim());
     setRevealed(true);
     setResult(null);
     setTypedAttempts(2);
@@ -2473,6 +2584,11 @@ function PracticePage({ store, updateStore, set }) {
             <button className={!starredOnly ? 'active' : ''} onClick={() => setStarredOnly(false)}>全部卡片</button>
             <button className={starredOnly ? 'active' : ''} onClick={() => setStarredOnly(true)}><Star size={16} /> 有星號</button>
           </div>
+          <div className="segmented compact">
+            <button className={recordResults ? 'active' : ''} onClick={() => setRecordResults(true)}>紀錄結果</button>
+            <button className={!recordResults ? 'active' : ''} onClick={() => setRecordResults(false)}>不紀錄</button>
+          </div>
+          {!recordResults && <div className="fixed-source-note muted-note">這次測驗不會改變答對率、間隔排程或今日紀錄。</div>}
           <p>{sourceQuestions.length} 題可測驗。{set.dueOnly ? '請看中文提示輸入韓文答案。' : '中翻韓只會出打字題，韓翻中會先思考再公佈答案。'}</p>
           <button className="primary wide" disabled={!sourceQuestions.length} onClick={startSession}>開始</button>
         </div>
@@ -2683,6 +2799,99 @@ function ExportJsonModal({ items, title = '匯出 JSON', onClose }) {
           </div>
         </div>
         <pre className="json-code"><code>{jsonText}</code></pre>
+      </div>
+    </div>
+  );
+}
+
+function EditJsonModal({ items, allItems, date, onSave, onClose }) {
+  const initialJson = useMemo(() => buildNotebookExport(items), [items]);
+  const [jsonText, setJsonText] = useState(initialJson);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState('');
+  const [pendingReview, setPendingReview] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const copyJson = async () => {
+    await navigator.clipboard.writeText(jsonText);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  };
+  const reviewJson = () => {
+    setError('');
+    setPendingReview(null);
+    try {
+      const records = createUpdateRecordsFromEditedJson(jsonText, date, items, allItems);
+      const changes = summarizeEditedJsonChanges(items, records);
+      setPendingReview({ records, changes });
+    } catch (saveError) {
+      setError(saveError.message || 'JSON 內容無法儲存');
+    }
+  };
+  const confirmSave = async () => {
+    if (!pendingReview) return;
+    setError('');
+    setSaving(true);
+    try {
+      const records = createUpdateRecordsFromEditedJson(jsonText, date, items, allItems);
+      await onSave(records);
+    } catch (saveError) {
+      setError(saveError.message || 'JSON 內容無法儲存');
+      setSaving(false);
+      setPendingReview(null);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <div className="modal-panel export-panel">
+        <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
+        <div className="export-head">
+          <div>
+            <span className="eyebrow">Edit JSON · {date}</span>
+            <h2>修改 JSON 內容</h2>
+          </div>
+          <div className="actions">
+            <button onClick={copyJson}><Copy size={17} /> {copied ? '已複製' : '複製'}</button>
+            <button className="primary" disabled={saving} onClick={reviewJson}><Check size={17} /> 檢查變更</button>
+          </div>
+        </div>
+        <textarea
+          className="json-editor"
+          value={jsonText}
+          onChange={(event) => {
+            setJsonText(event.target.value);
+            setPendingReview(null);
+            setError('');
+          }}
+          spellCheck={false}
+        />
+        {error && <div className="json-edit-error">{error}</div>}
+        {pendingReview && (
+          <div className="json-change-review">
+            <div>
+              <strong>即將修改 {pendingReview.changes.length} 張單字卡</strong>
+              <span>{pendingReview.changes.length ? '請確認以下變更後再送出。' : 'JSON 內容和目前資料相同，沒有需要送出的變更。'}</span>
+            </div>
+            {!!pendingReview.changes.length && (
+              <div className="json-change-list">
+                {pendingReview.changes.map((change) => (
+                  <div className="json-change-row" key={change.id}>
+                    <strong>{change.beforeKo === change.afterKo ? change.afterKo : `${change.beforeKo} → ${change.afterKo}`}</strong>
+                    <span>{change.fields.join('、')}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="actions json-review-actions">
+              <button onClick={() => setPendingReview(null)}>返回編輯</button>
+              <button className="danger-button" onClick={onClose}>放棄</button>
+              <button className="primary" disabled={saving || !pendingReview.changes.length} onClick={confirmSave}>
+                <Check size={17} /> {saving ? '送出中' : '確認送出'}
+              </button>
+            </div>
+          </div>
+        )}
+        <p className="json-edit-note">請保留每張卡片的 id 和 date。這裡只修改 {date} 既有單字，不新增或刪除卡片。</p>
       </div>
     </div>
   );

@@ -25,7 +25,7 @@ import textwrap
 import unicodedata
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib import error, parse, request
 
@@ -35,6 +35,10 @@ PROJECT_ID = "korean-review-web"
 APP_STATE_ID = "reviewState"
 STUDY_DATE = "2026-07-05"
 REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90]
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 @dataclass
@@ -113,7 +117,7 @@ class FirebaseClient:
 
     def save_app_state(self, session: AuthSession, state: Dict[str, Any]) -> None:
         persisted = {key: value for key, value in state.items() if key != "customRecords"}
-        persisted["updatedAt"] = datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
+        persisted["updatedAt"] = utc_now_iso()
         payload = {"fields": {key: _to_firestore_value(value) for key, value in persisted.items()}}
         self._request_json("PATCH", self._document_url(["users", session.uid, "appState", APP_STATE_ID]), payload=payload, session=session)
 
@@ -323,7 +327,7 @@ def order_questions(questions: Iterable[Question]) -> List[Question]:
 
 
 def record_answer(state: Dict[str, Any], question: Question, correct: bool) -> None:
-    now = datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
+    now = utc_now_iso()
     previous = get_progress(state, question)
     stage = min(int(previous.get("stage", 0)) + 1, len(REVIEW_INTERVALS) - 1) if correct else 0
     stats = state.setdefault("stats", {})
@@ -358,6 +362,10 @@ def toggle_star(state: Dict[str, Any], card: Card) -> None:
 
 def normalize_text(text: str) -> str:
     return "".join(ch for ch in text if not unicodedata.category(ch).startswith("P")).lower()
+
+
+def count_korean_letters(text: str) -> int:
+    return sum(1 for ch in text if "\uac00" <= ch <= "\ud7af" or "\u1100" <= ch <= "\u11ff" or "\u3130" <= ch <= "\u318f")
 
 
 def _cell_width(ch: str) -> int:
@@ -453,12 +461,22 @@ def draw_wrapped(stdscr: curses.window, y: int, x: int, width: int, text: str, a
     return y
 
 
-def draw_answer_with_feedback(stdscr: curses.window, y: int, x: int, prefix: str, user_input: str, feedback: Optional[PartialCheckResult], ok_attr: int, wrong_attr: int) -> List[int]:
+def draw_answer_with_feedback(
+    stdscr: curses.window,
+    y: int,
+    x: int,
+    prefix: str,
+    user_input: str,
+    feedback: Optional[PartialCheckResult],
+    ok_attr: int,
+    wrong_attr: int,
+    input_attr: int = 0,
+) -> List[int]:
     draw_line(stdscr, y, x, prefix)
     cursor_x = x + _text_cell_width(prefix)
     positions = [cursor_x]
     if feedback is None:
-        draw_line(stdscr, y, cursor_x, user_input)
+        draw_line(stdscr, y, cursor_x, user_input, input_attr)
         for ch in user_input:
             cursor_x += _cell_width(ch)
             positions.append(cursor_x)
@@ -473,6 +491,64 @@ def draw_answer_with_feedback(stdscr: curses.window, y: int, x: int, prefix: str
         cursor_x += _cell_width(ch)
         positions.append(cursor_x)
     return positions
+
+
+def answer_diff_parts(user_input: str, answer: str) -> List[Tuple[str, str]]:
+    user_chars, _ = _filtered_chars_with_raw_map(user_input)
+    answer_chars, _ = _filtered_chars_with_raw_map(answer)
+    n, m = len(user_chars), len(answer_chars)
+    inf = 10**9
+    dp = [[inf] * (m + 1) for _ in range(n + 1)]
+    parent: List[List[Optional[Tuple[int, int, str]]]] = [[None] * (m + 1) for _ in range(n + 1)]
+    dp[0][0] = 0
+    for i in range(n + 1):
+        for j in range(m + 1):
+            if dp[i][j] >= inf:
+                continue
+            if i < n and j < m:
+                cost = 0 if user_chars[i] == answer_chars[j] else (2 if " " in (user_chars[i], answer_chars[j]) else 1)
+                op = "match" if cost == 0 else "replace"
+                if dp[i][j] + cost < dp[i + 1][j + 1]:
+                    dp[i + 1][j + 1] = dp[i][j] + cost
+                    parent[i + 1][j + 1] = (i, j, op)
+            if i < n and dp[i][j] + 1 < dp[i + 1][j]:
+                dp[i + 1][j] = dp[i][j] + 1
+                parent[i + 1][j] = (i, j, "extra")
+            if j < m and dp[i][j] + 1 < dp[i][j + 1]:
+                dp[i][j + 1] = dp[i][j] + 1
+                parent[i][j + 1] = (i, j, "missing")
+    parts: List[Tuple[str, str]] = []
+    i, j = n, m
+    while i > 0 or j > 0:
+        step = parent[i][j]
+        if step is None:
+            break
+        pi, pj, op = step
+        if op == "match":
+            parts.append(("ok", user_chars[i - 1]))
+        elif op == "replace":
+            parts.append(("bad", "␠" if user_chars[i - 1] == " " else user_chars[i - 1]))
+        elif op == "extra":
+            parts.append(("bad", "␠" if user_chars[i - 1] == " " else user_chars[i - 1]))
+        elif op == "missing":
+            parts.append(("bad", "_" if answer_chars[j - 1] == " " else "□"))
+        i, j = pi, pj
+    return list(reversed(parts))
+
+
+def draw_answer_diff(stdscr: curses.window, y: int, x: int, user_input: str, answer: str, wrong_attr: int) -> None:
+    prefix = "錯誤: "
+    draw_line(stdscr, y, x, prefix)
+    cursor_x = x + _text_cell_width(prefix)
+    for kind, text in answer_diff_parts(user_input, answer):
+        attr = wrong_attr if kind == "bad" else 0
+        draw_line(stdscr, y, cursor_x, text, attr)
+        cursor_x += _text_cell_width(text)
+
+
+def update_curses_screen(stdscr: curses.window) -> None:
+    stdscr.noutrefresh()
+    curses.doupdate()
 
 
 def wait_message(stdscr: curses.window, title: str, message: str) -> None:
@@ -495,7 +571,7 @@ def menu(stdscr: curses.window, title: str, options: List[Tuple[str, str]], subt
         draw_line(stdscr, 2, 2, subtitle, curses.A_DIM)
         for idx, (_, label) in enumerate(options):
             attr = curses.A_REVERSE if idx == selected else curses.A_NORMAL
-            draw_line(stdscr, 4 + idx, 2, ("» " if idx == selected else "  ") + label, attr)
+            draw_line(stdscr, 3 + idx, 2, ("» " if idx == selected else "  ") + label, attr)
         stdscr.refresh()
         key = stdscr.getch()
         if key == 27:
@@ -537,6 +613,7 @@ def setup_menu(stdscr: curses.window, title: str, allow_examples: bool = True) -
     source = "term"
     starred = False
     random_order = True
+    record_results = True
     row = 0
     curses.curs_set(0)
     while True:
@@ -546,13 +623,14 @@ def setup_menu(stdscr: curses.window, title: str, allow_examples: bool = True) -
             f"內容: {source_label if direction == 'zh-ko' else '單字'}",
             f"篩選: {'有星號' if starred else '全部卡片'}",
             f"順序: {'隨機' if random_order else '依序'}",
+            f"紀錄: {'寫入正確/錯誤' if record_results else '不紀錄'}",
             "開始",
         ]
         stdscr.clear()
         draw_line(stdscr, 1, 2, f"設定 | {title}", curses.A_BOLD)
         draw_line(stdscr, 2, 2, "↑↓=項目  ←→=切換  Enter=開始  Esc=返回", curses.A_DIM)
         for idx, label in enumerate(rows):
-            draw_line(stdscr, 4 + idx, 2, ("» " if idx == row else "  ") + label, curses.A_REVERSE if idx == row else 0)
+            draw_line(stdscr, 3 + idx, 2, ("» " if idx == row else "  ") + label, curses.A_REVERSE if idx == row else 0)
         stdscr.refresh()
         key = stdscr.getch()
         if key == 27:
@@ -572,8 +650,16 @@ def setup_menu(stdscr: curses.window, title: str, allow_examples: bool = True) -
                 starred = not starred
             elif row == 3:
                 random_order = not random_order
+            elif row == 4:
+                record_results = not record_results
         elif key in (curses.KEY_ENTER, 10, 13):
-            return {"direction": direction, "source": source if direction == "zh-ko" else "term", "starred": starred, "random": random_order}
+            return {
+                "direction": direction,
+                "source": source if direction == "zh-ko" else "term",
+                "starred": starred,
+                "random": random_order,
+                "record_results": record_results,
+            }
 
 
 def filtered_questions(questions: List[Question], config: Dict[str, Any]) -> List[Question]:
@@ -600,9 +686,8 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
         card = cards[idx]
         stdscr.clear()
         draw_line(stdscr, 1, 2, f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回  0=星號  8=詳情  4/6=上下張", curses.A_BOLD)
-        draw_line(stdscr, 3, 2, f"{'★' if card.is_starred else '☆'} {card.ko}", curses.A_BOLD)
-        draw_wrapped(stdscr, 4, 2, stdscr.getmaxyx()[1] - 4, card.zh)
-        y = 6
+        draw_line(stdscr, 2, 2, f"{'★' if card.is_starred else '☆'} {card.ko}", curses.A_BOLD)
+        y = draw_wrapped(stdscr, 3, 2, stdscr.getmaxyx()[1] - 4, card.zh)
         if show_details:
             for meaning in card.meanings:
                 y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, f"- {meaning.get('zh', '')}")
@@ -611,7 +696,7 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             for note in card.notes:
                 y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, f"筆記: {note}", curses.A_DIM)
         if message:
-            draw_line(stdscr, y + 1, 2, message, curses.A_BOLD)
+            draw_line(stdscr, y, 2, message, curses.A_BOLD)
         stdscr.refresh()
         key = stdscr.get_wch()
         if key == "\x1b":
@@ -637,10 +722,15 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
     show_hint = False
     message = ""
     partial: Optional[PartialCheckResult] = None
+    graded = False
+    last_correct: Optional[bool] = None
+    typed_attempts = 0
+    retry_diff = False
     ok_attr = curses.A_BOLD
     wrong_attr = curses.A_REVERSE
     curses.curs_set(1)
     stdscr.keypad(True)
+    should_record_results = config.get("record_results", True)
     if curses.has_colors():
         curses.start_color()
         try:
@@ -659,51 +749,88 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         question = questions[idx]
         prompt = question.zh if config["direction"] == "zh-ko" else question.ko
         answer = question.ko if config["direction"] == "zh-ko" else question.zh
-        stdscr.clear()
+        stdscr.erase()
         height, width = stdscr.getmaxyx()
-        draw_line(stdscr, 1, 2, f"測驗 | {title} | {idx + 1}/{len(questions)}  Esc=返回 0=星號 8=答案 4/6=上下題 +=檢查 Enter=送出", curses.A_BOLD)
-        draw_wrapped(stdscr, 3, 2, width - 4, f"{'★' if question.source.is_starred else '☆'} 題目: {prompt}")
-        draw_line(stdscr, 5, 2, f"答案: {answer}" if show_hint else "答案: hidden (press 8)")
-        positions = draw_answer_with_feedback(stdscr, 7, 2, "輸入: ", user_input, partial, ok_attr, wrong_attr)
+        record_label = "" if should_record_results else " 不紀錄"
+        draw_line(stdscr, 1, 2, f"測驗{record_label} | {title} | {idx + 1}/{len(questions)}  Esc=返回 0=星號 8=答案 4/6=上下題 +=檢查 Enter=送出", curses.A_BOLD)
+        length_hint = f"  ({count_korean_letters(answer)} 個韓文字)" if config["direction"] == "zh-ko" else ""
+        y = draw_wrapped(stdscr, 2, 2, width - 4, f"{'★' if question.source.is_starred else '☆'} 題目: {prompt}{length_hint}")
+        draw_line(stdscr, y, 2, f"答案: {answer}" if show_hint else "答案: hidden (press 8)")
+        input_y = y + 1
+        answered_attr = ok_attr if graded and last_correct is True else 0
+        positions = draw_answer_with_feedback(stdscr, input_y, 2, "輸入: ", user_input, partial, ok_attr, wrong_attr, answered_attr)
+        count_x = max(positions[-1] + 2, width - 18)
+        draw_line(stdscr, input_y, count_x, f"{count_korean_letters(user_input)} 個韓文字", curses.A_DIM)
+        message_y = input_y + 1
+        if retry_diff or (graded and last_correct is False):
+            draw_answer_diff(stdscr, message_y, 2, user_input, answer, wrong_attr)
+            message_y += 1
         if message:
-            draw_line(stdscr, 9, 2, message, curses.A_BOLD)
+            draw_line(stdscr, message_y, 2, message, curses.A_BOLD)
         cursor_x = positions[min(input_cursor, len(positions) - 1)]
-        stdscr.move(min(height - 1, 7), min(width - 1, cursor_x))
-        stdscr.refresh()
+        stdscr.move(min(height - 1, input_y), min(width - 1, cursor_x))
+        update_curses_screen(stdscr)
         key = stdscr.get_wch()
         if key == "\x1b":
             curses.curs_set(0)
             return
         if key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13):
-            correct = normalize_text(user_input) == normalize_text(answer)
-            record_answer(state, question, correct)
-            client.save_app_state(session, state)
-            if correct and idx < len(questions) - 1:
+            if graded:
+                if idx == len(questions) - 1:
+                    wait_message(stdscr, "完成", "這組題目已完成。")
+                    curses.curs_set(0)
+                    return
                 idx += 1
                 user_input = ""
                 input_cursor = 0
                 show_hint = False
                 partial = None
-                message = "答對，進入下一題。"
-            elif correct:
-                wait_message(stdscr, "完成", "這組題目已完成。")
-                curses.curs_set(0)
-                return
-            else:
-                show_hint = True
+                graded = False
+                last_correct = None
+                typed_attempts = 0
+                retry_diff = False
+                message = ""
+                continue
+            user_input = user_input.strip()
+            input_cursor = min(input_cursor, len(user_input))
+            correct = normalize_text(user_input) == normalize_text(answer)
+            if not correct and question.kind == "example" and config["direction"] == "zh-ko" and typed_attempts == 0:
+                typed_attempts = 1
+                retry_diff = True
                 partial = None
-                message = "答錯，已記錄並顯示答案。按 6 可跳下一題。"
+                show_hint = False
+                message = "例句第一次答錯：先看提示再試一次，第二次答錯才會記錄。"
+                continue
+            if should_record_results:
+                record_answer(state, question, correct)
+                client.save_app_state(session, state)
+            show_hint = True
+            partial = None
+            graded = True
+            last_correct = correct
+            retry_diff = False
+            if should_record_results:
+                message = "答對，按 Enter 或 6 進入下一題。" if correct else "答錯，已記錄。按 Enter 或 6 進入下一題。"
+            else:
+                message = "答對，未紀錄。按 Enter 或 6 進入下一題。" if correct else "答錯，未紀錄。按 Enter 或 6 進入下一題。"
             continue
         if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
+            if graded:
+                continue
             if input_cursor > 0:
                 user_input = user_input[: input_cursor - 1] + user_input[input_cursor:]
                 input_cursor -= 1
             partial = None
+            retry_diff = False
             continue
         if key == curses.KEY_LEFT:
+            if graded:
+                continue
             input_cursor = max(0, input_cursor - 1)
             continue
         if key == curses.KEY_RIGHT:
+            if graded:
+                continue
             input_cursor = min(len(user_input), input_cursor + 1)
             continue
         if isinstance(key, str):
@@ -714,6 +841,10 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             elif key == "8":
                 show_hint = not show_hint
             elif key == "+":
+                if graded:
+                    continue
+                user_input = user_input.strip()
+                input_cursor = min(input_cursor, len(user_input))
                 partial = partial_check_input(user_input, answer)
                 message = "目前都正確。" if partial.all_correct_prefix and user_input else "有錯誤或缺字。"
             elif key == "4":
@@ -722,16 +853,33 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 input_cursor = 0
                 show_hint = False
                 partial = None
+                graded = False
+                last_correct = None
+                typed_attempts = 0
+                retry_diff = False
+                message = ""
             elif key == "6":
+                if idx == len(questions) - 1 and graded:
+                    wait_message(stdscr, "完成", "這組題目已完成。")
+                    curses.curs_set(0)
+                    return
                 idx = min(len(questions) - 1, idx + 1)
                 user_input = ""
                 input_cursor = 0
                 show_hint = False
                 partial = None
+                graded = False
+                last_correct = None
+                typed_attempts = 0
+                retry_diff = False
+                message = ""
             elif key.isprintable():
+                if graded:
+                    continue
                 user_input = user_input[:input_cursor] + key + user_input[input_cursor:]
                 input_cursor += 1
                 partial = None
+                retry_diff = False
 
 
 def run_collection(stdscr: curses.window, title: str, cards: List[Card], questions: List[Question], state: Dict[str, Any], client: FirebaseClient, session: AuthSession) -> None:
@@ -772,7 +920,15 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
         if choice == "due":
             selected = due_task_menu(stdscr, state, questions)
             if selected:
-                run_practice(stdscr, "今日複習題", selected, {"direction": "zh-ko", "source": "all", "starred": False, "random": True}, state, client, session)
+                run_practice(
+                    stdscr,
+                    "今日複習題",
+                    selected,
+                    {"direction": "zh-ko", "source": "all", "starred": False, "random": True, "record_results": True},
+                    state,
+                    client,
+                    session,
+                )
         elif choice == "calendar":
             selected_date = date_menu(stdscr, cards)
             if selected_date:

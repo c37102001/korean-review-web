@@ -598,6 +598,11 @@ main {
   background: linear-gradient(135deg, #3fa7d6, #65d0c4);
 }
 
+.edit-json-button {
+  color: #ffffff;
+  background: linear-gradient(135deg, #7479d9, #37b9a5);
+}
+
 .notes-grid,
 .word-grid {
   display: grid;
@@ -1182,6 +1187,11 @@ main {
   font-weight: 900;
 }
 
+.fixed-source-note.muted-note {
+  color: #5f6670;
+  background: #eef1f3;
+}
+
 .practice-shell {
   width: 100%;
   padding: 28px;
@@ -1666,6 +1676,89 @@ textarea:focus {
   font-size: 13px;
   line-height: 1.55;
   white-space: pre;
+}
+
+.json-editor {
+  width: 100%;
+  min-height: min(560px, 58vh);
+  margin: 0;
+  padding: 16px;
+  border: 0;
+  border-radius: 16px;
+  outline: 2px solid transparent;
+  background: #1f2933;
+  color: #e9f2f0;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.json-editor:focus {
+  outline-color: #37b9a5;
+}
+
+.json-edit-error {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  color: #8d1f2d;
+  background: #ffe9ec;
+  font-weight: 850;
+}
+
+.json-change-review {
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: 16px;
+  background: #f3f6f6;
+}
+
+.json-change-review > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.json-change-review strong {
+  color: #24333a;
+}
+
+.json-change-review span {
+  color: #65727b;
+  font-weight: 750;
+}
+
+.json-change-list {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+  margin-top: 12px;
+}
+
+.json-change-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.json-change-row span {
+  text-align: right;
+}
+
+.json-review-actions {
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.json-edit-note {
+  margin: 12px 0 0;
+  color: #65727b;
+  font-size: 14px;
+  font-weight: 750;
 }
 
 .modal-close {
