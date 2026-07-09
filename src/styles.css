@@ -334,6 +334,29 @@ main {
   background: #e15d61;
 }
 
+.star-button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 999px;
+  color: #9aa7ad;
+  background: #f3f6f6;
+  box-shadow: none;
+}
+
+.star-button svg {
+  fill: transparent;
+}
+
+.star-button.active {
+  color: #f5a623;
+  background: #fff3d5;
+}
+
+.star-button.active svg {
+  fill: #f5a623;
+}
+
 .task-list {
   display: grid;
   gap: 14px;
@@ -742,6 +765,20 @@ main {
   background: transparent;
   box-shadow: none;
   cursor: pointer;
+}
+
+.flashcard-star {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 3;
+}
+
+.flashcard-star .star-button {
+  width: 40px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 8px 22px rgba(58, 73, 84, 0.12);
 }
 
 .card-speak-btn {

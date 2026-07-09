@@ -21,6 +21,7 @@ import {
   Search,
   Shuffle,
   Sparkles,
+  Star,
   Target,
   Trash2,
   Trophy,
@@ -58,7 +59,7 @@ const dateLabel = (date) => new Intl.DateTimeFormat('zh-TW', { month: 'long', da
 const monthTitle = (date) => new Intl.DateTimeFormat('zh-TW', { year: 'numeric', month: 'long' }).format(date);
 
 function emptyStore() {
-  return { stats: {}, progress: {}, learning: {}, attempts: [], customRecords: [], deletedRecordIds: [], completedReviewDates: [] };
+  return { stats: {}, progress: {}, learning: {}, attempts: [], customRecords: [], deletedRecordIds: [], completedReviewDates: [], starred: [] };
 }
 
 function useAuthUser() {
@@ -163,6 +164,7 @@ function useFirestoreStore(user, items, questions) {
               attempts: data.attempts || [],
               deletedRecordIds: data.deletedRecordIds || [],
               completedReviewDates: data.completedReviewDates || [],
+              starred: data.starred || [],
               customRecords,
             },
           });
@@ -739,6 +741,16 @@ function markReviewDateComplete(store, date = todayString()) {
   };
 }
 
+function toggleStarredItem(updateStore, itemId) {
+  updateStore((current) => {
+    const starred = current.starred || [];
+    const nextStarred = starred.includes(itemId)
+      ? starred.filter((id) => id !== itemId)
+      : [...starred, itemId];
+    return { ...current, starred: nextStarred };
+  });
+}
+
 function calculateReviewStreaks(completedReviewDates, today = todayString()) {
   const completed = new Set(completedReviewDates || []);
   const countBackFrom = (startDate) => {
@@ -1022,6 +1034,7 @@ function App() {
       progress: Object.fromEntries(Object.entries(current.progress || {}).filter(([id]) => id !== recordId && !id.startsWith(`${recordId}-`))),
       learning: Object.fromEntries(Object.entries(current.learning || {}).filter(([id]) => id !== recordId)),
       attempts: (current.attempts || []).filter((attempt) => attempt.questionId !== recordId && !attempt.questionId?.startsWith(`${recordId}-`)),
+      starred: (current.starred || []).filter((id) => id !== recordId),
     }));
     await deleteLearningRecord(user.uid, recordId);
   };
@@ -1033,10 +1046,10 @@ function App() {
   const views = {
     home: <HomePage store={store} items={items} questions={dailyQuestions} onPractice={startPractice} onStudy={startStudy} />,
     calendar: <CalendarPage store={store} items={items} questions={questions} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
-    notes: <NotesPage items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
-    study: <StudyPage set={studySet || { items, label: '全部內容' }} />,
+    notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
+    study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} />,
     practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: dailyQuestions, label: '今日測驗', dueOnly: true }} />,
-    notebook: <NotebookPage store={store} items={items} questions={questions} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
+    notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
   };
 
   return (
@@ -1294,9 +1307,10 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
   );
 }
 
-function NotesPage({ items, questions, date, allItems, onPractice, onStudy, onUpdateRecord, onDeleteRecord }) {
+function NotesPage({ store, updateStore, items, questions, date, allItems, onPractice, onStudy, onUpdateRecord, onDeleteRecord }) {
   const [editingItem, setEditingItem] = useState(null);
   const [viewingItem, setViewingItem] = useState(null);
+  const starredSet = new Set(store.starred || []);
   return (
     <section className="page">
       <div className="topbar">
@@ -1322,6 +1336,8 @@ function NotesPage({ items, questions, date, allItems, onPractice, onStudy, onUp
         <ItemDetailModal
           item={viewingItem}
           allItems={allItems}
+          isStarred={starredSet.has(viewingItem.id)}
+          onToggleStar={() => toggleStarredItem(updateStore, viewingItem.id)}
           onOpenItem={setViewingItem}
           onEdit={(item) => {
             setViewingItem(null);
@@ -1331,7 +1347,19 @@ function NotesPage({ items, questions, date, allItems, onPractice, onStudy, onUp
           onClose={() => setViewingItem(null)}
         />
       )}
-      <div className="notes-grid">{items.map((item) => <NoteCard key={item.id} item={item} allItems={allItems} compact onOpen={setViewingItem} onEdit={setEditingItem} onDelete={onDeleteRecord} />)}</div>
+      <div className="notes-grid">{items.map((item) => (
+        <NoteCard
+          key={item.id}
+          item={item}
+          allItems={allItems}
+          compact
+          onOpen={setViewingItem}
+          onEdit={setEditingItem}
+          onDelete={onDeleteRecord}
+          isStarred={starredSet.has(item.id)}
+          onToggleStar={() => toggleStarredItem(updateStore, item.id)}
+        />
+      ))}</div>
     </section>
   );
 }
@@ -1978,18 +2006,37 @@ function DeleteIconButton({ item, onDelete }) {
   );
 }
 
-function ItemDetailModal({ item, allItems = [], onEdit, onDelete, onOpenItem, onClose }) {
+function ItemDetailModal({ item, allItems = [], onEdit, onDelete, onOpenItem, onClose, isStarred = false, onToggleStar }) {
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <div className="modal-panel detail-panel">
         <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
-        <NoteCard item={item} allItems={allItems} onEdit={onEdit} onDelete={onDelete} onOpenItem={onOpenItem} />
+        <NoteCard item={item} allItems={allItems} onEdit={onEdit} onDelete={onDelete} onOpenItem={onOpenItem} isStarred={isStarred} onToggleStar={onToggleStar} />
       </div>
     </div>
   );
 }
 
-function NoteCard({ item, allItems = [], onEdit, onDelete, compact = false, onOpen, onOpenItem }) {
+function StarButton({ active, onClick }) {
+  if (!onClick) return null;
+  return (
+    <button
+      type="button"
+      className={`star-button ${active ? 'active' : ''}`}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+      }}
+      aria-label={active ? '取消星號' : '打星號'}
+      title={active ? '取消星號' : '打星號'}
+    >
+      <Star size={17} />
+    </button>
+  );
+}
+
+function NoteCard({ item, allItems = [], onEdit, onDelete, compact = false, onOpen, onOpenItem, isStarred = false, onToggleStar }) {
   const examplesCount = itemExamples(item).length;
   const relatedItems = displayRelated(item, allItems);
   return (
@@ -1997,6 +2044,7 @@ function NoteCard({ item, allItems = [], onEdit, onDelete, compact = false, onOp
       <div className="card-head">
         <h3>{item.ko}</h3>
         <div className="card-actions">
+          <StarButton active={isStarred} onClick={onToggleStar} />
           {onEdit && <EditIconButton onClick={() => onEdit(item)} />}
           <DeleteIconButton item={item} onDelete={onDelete} />
           {item.pos && <span className="badge">{item.pos}</span>}
@@ -2171,7 +2219,7 @@ function RelatedPreviewCard({ item, position }) {
   );
 }
 
-function StudyPage({ set }) {
+function StudyPage({ store, updateStore, set }) {
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [filter, setFilter] = useState('全部');
@@ -2180,10 +2228,17 @@ function StudyPage({ set }) {
   const [shuffleSeed, setShuffleSeed] = useState(Date.now());
   const [autoPlay, setAutoPlay] = useState(false);
   const [playVoice, setPlayVoice] = useState(true);
+  const [starredOnly, setStarredOnly] = useState(false);
   const types = ['全部', ...new Set(set.items.map((item) => item.pos || '比較'))];
-  const filtered = useMemo(() => set.items.filter((item) => filter === '全部' || item.pos === filter), [set.items, filter]);
+  const filtered = useMemo(() => {
+    const starredSet = new Set(store.starred || []);
+    return set.items
+      .filter((item) => filter === '全部' || item.pos === filter)
+      .filter((item) => !starredOnly || starredSet.has(item.id));
+  }, [set.items, filter, store.starred, starredOnly]);
   const ordered = useMemo(() => (random ? shuffleItems(filtered, shuffleSeed) : filtered), [filtered, random, shuffleSeed]);
   const item = ordered[index % Math.max(ordered.length, 1)];
+  const isStarred = !!item && (store.starred || []).includes(item.id);
   const frontText = frontSide === 'ko' ? item?.ko : item?.zh;
   const backText = frontSide === 'ko' ? item?.zh : item?.ko;
   const frontLang = frontSide === 'ko' ? 'ko-KR' : 'zh-TW';
@@ -2213,7 +2268,7 @@ function StudyPage({ set }) {
   useEffect(() => {
     setIndex(0);
     setFlipped(false);
-  }, [filter, random, shuffleSeed, frontSide]);
+  }, [filter, random, shuffleSeed, frontSide, starredOnly]);
 
   useEffect(() => {
     if (autoPlay || !playVoice || !item) return;
@@ -2251,6 +2306,7 @@ function StudyPage({ set }) {
         <button className={random ? 'selected-soft' : ''} onClick={() => { setRandom(!random); setShuffleSeed(Date.now()); }}><Shuffle size={16} /> 隨機</button>
         <button className={autoPlay ? 'selected-soft' : ''} onClick={() => setAutoPlay(!autoPlay)}>{autoPlay ? <Pause size={16} /> : <Play size={16} />} 自動</button>
         <button className={playVoice ? 'selected-soft' : ''} onClick={() => setPlayVoice(!playVoice)}>{playVoice ? <Volume2 size={16} /> : <VolumeX size={16} />} 語音</button>
+        <button className={starredOnly ? 'selected-soft' : ''} onClick={() => setStarredOnly((current) => !current)}><Star size={16} /> 有星號</button>
       </div>
       <div className="flashcard-wrap">
         <button className="card-arrow left" onClick={goPrev} aria-label="上一張"><ChevronLeft size={26} /></button>
@@ -2258,6 +2314,9 @@ function StudyPage({ set }) {
           onClick={() => { const next = !flipped; setFlipped(next); if (playVoice) speakText(next ? backText : frontText, next ? backLang : frontLang); }}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { const next = !flipped; setFlipped(next); if (playVoice) speakText(next ? backText : frontText, next ? backLang : frontLang); } }}
         >
+          <div className="flashcard-star">
+            <StarButton active={isStarred} onClick={() => toggleStarredItem(updateStore, item.id)} />
+          </div>
           <div className="flash-face front">
             <span>{index + 1} / {ordered.length}</span>
             <strong>{frontText}</strong>
@@ -2292,6 +2351,7 @@ function StudyDetails({ item, allItems, onOpenItem }) {
 function PracticePage({ store, updateStore, set }) {
   const [direction, setDirection] = useState('zh-ko');
   const [source, setSource] = useState('term');
+  const [starredOnly, setStarredOnly] = useState(false);
   const fixedSource = set.termOnly || set.dueOnly;
   const activeDirection = set.dueOnly ? 'zh-ko' : direction;
   const [started, setStarted] = useState(!!set.dueOnly);
@@ -2306,12 +2366,15 @@ function PracticePage({ store, updateStore, set }) {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [autoPronounce, setAutoPronounce] = useState(true);
   const sourceQuestions = useMemo(() => {
+    const starredSet = new Set(store.starred || []);
+    const applyStarFilter = (list) => (starredOnly ? list.filter((q) => starredSet.has(q.itemId)) : list);
     if (set.dueOnly) return orderReviewQuestions(dueQuestions(store, reviewQuestions(set.questions)));
-    if (direction === 'ko-zh') return set.questions.filter((q) => q.kind === 'term');
+    if (direction === 'ko-zh') return applyStarFilter(set.questions.filter((q) => q.kind === 'term'));
     const activeSource = set.termOnly ? 'term' : source;
     const filtered = set.questions.filter((q) => activeSource === 'all' || q.kind === activeSource);
-    return activeSource === 'all' ? orderReviewQuestions(filtered) : filtered;
-  }, [set.questions, source, direction, set.termOnly, set.dueOnly, store]);
+    const orderedFiltered = activeSource === 'all' ? orderReviewQuestions(filtered) : filtered;
+    return applyStarFilter(orderedFiltered);
+  }, [set.questions, source, direction, set.termOnly, set.dueOnly, store, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
   const resetSession = () => {
@@ -2451,6 +2514,10 @@ function PracticePage({ store, updateStore, set }) {
               <button className={source === 'all' ? 'active' : ''} onClick={() => setSource('all')}>全部</button>
             </div>
           )}
+          <div className="segmented compact">
+            <button className={!starredOnly ? 'active' : ''} onClick={() => setStarredOnly(false)}>全部卡片</button>
+            <button className={starredOnly ? 'active' : ''} onClick={() => setStarredOnly(true)}><Star size={16} /> 有星號</button>
+          </div>
           <p>{sourceQuestions.length} 題可測驗。{set.dueOnly ? '請看中文提示輸入韓文答案。' : '中翻韓只會出打字題，韓翻中會先思考再公佈答案。'}</p>
           <button className="primary wide" disabled={!sourceQuestions.length} onClick={startSession}>開始</button>
         </div>
@@ -2550,6 +2617,8 @@ function PracticePage({ store, updateStore, set }) {
           onCorrect={() => submit(true)}
           onWrong={() => submit(false)}
           onNext={goNext}
+          isStarred={(store.starred || []).includes(question.source?.id)}
+          onToggleStar={() => toggleStarredItem(updateStore, question.source.id)}
         />
       </div>
     </section>
@@ -2560,7 +2629,7 @@ function QuestionKindBadge({ kind }) {
   return <small className={`question-kind-badge ${kind === 'example' ? 'example' : 'term'}`}>{kind === 'example' ? '例句' : '單字'}</small>;
 }
 
-function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, onWrong, onNext }) {
+function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, onWrong, onNext, isStarred = false, onToggleStar }) {
   return (
     <aside className={`practice-answer-panel ${visible ? 'visible' : ''}`}>
       <div className="answer-panel-inner">
@@ -2577,7 +2646,7 @@ function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, on
               {graded && <small>再按 Enter 進入下一題</small>}
             </div>
             <div className="answer-card-stage">
-              <NoteCard item={question.source} />
+              <NoteCard item={question.source} isStarred={isStarred} onToggleStar={onToggleStar} />
             </div>
             {!graded && (
               <div className="answer-review-actions">
@@ -2664,7 +2733,7 @@ function ExportJsonModal({ items, title = '匯出 JSON', onClose }) {
   );
 }
 
-function NotebookPage({ store, items, questions, onPractice, onStudy, onAddRecords, onUpdateRecord, onDeleteRecord }) {
+function NotebookPage({ store, updateStore, items, questions, onPractice, onStudy, onAddRecords, onUpdateRecord, onDeleteRecord }) {
   const [query, setQuery] = useState('');
   const [type, setType] = useState('全部');
   const [level, setLevel] = useState('全部');
@@ -2674,6 +2743,7 @@ function NotebookPage({ store, items, questions, onPractice, onStudy, onAddRecor
   const [exportOpen, setExportOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [viewingItem, setViewingItem] = useState(null);
+  const starredSet = new Set(store.starred || []);
   const types = ['全部', ...new Set(items.map((item) => item.pos || '比較'))];
   const itemQuestionIds = new Map(items.map((item) => [item.id, questions.filter((q) => q.itemId === item.id).map((q) => q.id)]));
   const enriched = items.map((item) => {
@@ -2753,6 +2823,8 @@ function NotebookPage({ store, items, questions, onPractice, onStudy, onAddRecor
         <ItemDetailModal
           item={viewingItem}
           allItems={items}
+          isStarred={starredSet.has(viewingItem.id)}
+          onToggleStar={() => toggleStarredItem(updateStore, viewingItem.id)}
           onOpenItem={setViewingItem}
           onEdit={(item) => {
             setViewingItem(null);
@@ -2763,7 +2835,17 @@ function NotebookPage({ store, items, questions, onPractice, onStudy, onAddRecor
         />
       )}
       <div className="word-grid">
-        {pagedItems.map((item) => <WordCard key={item.id} item={item} onEdit={setEditingItem} onDelete={onDeleteRecord} onOpen={setViewingItem} />)}
+        {pagedItems.map((item) => (
+          <WordCard
+            key={item.id}
+            item={item}
+            onEdit={setEditingItem}
+            onDelete={onDeleteRecord}
+            onOpen={setViewingItem}
+            isStarred={starredSet.has(item.id)}
+            onToggleStar={() => toggleStarredItem(updateStore, item.id)}
+          />
+        ))}
       </div>
       <div className="pagination">
         <button disabled={pageNumber <= 1} onClick={() => setPageNumber(pageNumber - 1)}><ChevronLeft size={18} /> 上一頁</button>
@@ -2779,12 +2861,13 @@ function MiniQuestion({ question, store }) {
   return <div className="mini"><strong>{question.ko}</strong><span>{question.zh}</span><MasteryBadge level={stats.level} /></div>;
 }
 
-function WordCard({ item, onEdit, onDelete, onOpen }) {
+function WordCard({ item, onEdit, onDelete, onOpen, isStarred = false, onToggleStar }) {
   return (
     <article className="word-card clickable-card" onClick={() => onOpen(item)}>
       <div className="card-head">
         <h3>{item.ko}</h3>
         <div className="card-actions">
+          <StarButton active={isStarred} onClick={onToggleStar} />
           <EditIconButton onClick={() => onEdit(item)} />
           <DeleteIconButton item={item} onDelete={onDelete} />
           <MasteryBadge level={item.level} />
