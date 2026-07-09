@@ -31,7 +31,6 @@ import {
 } from 'lucide-react';
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { collection, deleteDoc, doc, getDoc, getDocs, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
-import notes from '../korean_study_notes_simple_minimal_2026-07-05.json';
 import { auth, db } from './firebase.js';
 import './styles.css';
 
@@ -66,36 +65,6 @@ function useAuthUser() {
   const [authState, setAuthState] = useState({ loading: true, user: null });
   useEffect(() => onAuthStateChanged(auth, (user) => setAuthState({ loading: false, user })), []);
   return authState;
-}
-
-async function seedFirebaseContent(uid, items, questions) {
-  const stateRef = doc(db, 'users', uid, 'appState', APP_STATE_ID);
-  const stateSnap = await getDoc(stateRef);
-  const batch = writeBatch(db);
-  const dayRef = doc(db, 'users', uid, 'days', STUDY_DATE);
-  batch.set(
-    dayRef,
-    {
-      date: STUDY_DATE,
-      rawItems: notes.data,
-      itemCount: items.length,
-      questionCount: questions.length,
-      sourceFile: 'korean_study_notes_simple_minimal_2026-07-05.json',
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true },
-  );
-  items.forEach((item) => {
-    batch.set(doc(db, 'users', uid, 'items', item.id), { ...item, updatedAt: serverTimestamp() });
-  });
-  questions.forEach((question) => {
-    const { source, ...questionDoc } = question;
-    batch.set(doc(db, 'users', uid, 'questions', question.id), { ...questionDoc, updatedAt: serverTimestamp() });
-  });
-  if (!stateSnap.exists()) {
-    batch.set(stateRef, { ...emptyStore(), createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
-  }
-  await batch.commit();
 }
 
 async function fetchCustomRecords(uid) {
@@ -138,7 +107,7 @@ async function cleanupStoredContent(uid) {
   await writeLearningRecords(uid, normalizeRecordSet(records));
 }
 
-function useFirestoreStore(user, items, questions) {
+function useFirestoreStore(user) {
   const [state, setState] = useState({ loading: true, error: '', store: emptyStore() });
 
   useEffect(() => {
@@ -147,7 +116,6 @@ function useFirestoreStore(user, items, questions) {
       if (!user) return;
       setState((current) => ({ ...current, loading: true, error: '' }));
       try {
-        await seedFirebaseContent(user.uid, items, questions);
         await cleanupObsoleteFirebaseData(user.uid);
         await cleanupStoredContent(user.uid);
         const snap = await getDoc(doc(db, 'users', user.uid, 'appState', APP_STATE_ID));
@@ -177,7 +145,7 @@ function useFirestoreStore(user, items, questions) {
     return () => {
       cancelled = true;
     };
-  }, [user, items, questions]);
+  }, [user]);
 
   const update = async (updater) => {
     const next = updater(state.store);
@@ -191,16 +159,6 @@ function useFirestoreStore(user, items, questions) {
   };
 
   return [state.store, update, state.loading, state.error];
-}
-
-function baseRecords() {
-  const records = notes.data.map((item, index) => ({
-    id: item.id || `${item.date || STUDY_DATE}-item-${index}`,
-    date: item.date || STUDY_DATE,
-    item,
-    createdAt: `${STUDY_DATE}T00:00:00.000Z`,
-  }));
-  return normalizeRecordSet(records);
 }
 
 function buildRecordLookup(records) {
@@ -950,10 +908,8 @@ function shuffleReviewQuestionsByKind(questions, seed = Date.now()) {
 }
 
 function App() {
-  const builtInRecords = useMemo(() => baseRecords(), []);
-  const builtInData = useMemo(() => normalizeRecords(builtInRecords), [builtInRecords]);
   const { loading: authLoading, user } = useAuthUser();
-  const [store, updateStore, storeLoading, storeError] = useFirestoreStore(user, builtInData.items, builtInData.questions);
+  const [store, updateStore, storeLoading, storeError] = useFirestoreStore(user);
   const [page, setPage] = useState('home');
   const [pageStack, setPageStack] = useState([]);
   const [selectedDate, setSelectedDate] = useState(STUDY_DATE);
@@ -961,11 +917,10 @@ function App() {
   const [studySet, setStudySet] = useState(null);
   const allRecords = useMemo(() => {
     const byId = new Map();
-    builtInRecords.forEach((record) => byId.set(record.id, record));
     (store.customRecords || []).forEach((record) => byId.set(record.id, record));
     (store.deletedRecordIds || []).forEach((id) => byId.delete(id));
     return [...byId.values()];
-  }, [builtInRecords, store.customRecords, store.deletedRecordIds]);
+  }, [store.customRecords, store.deletedRecordIds]);
   const { items, questions } = useMemo(() => normalizeRecords(allRecords), [allRecords]);
   const dailyQuestions = useMemo(() => reviewQuestions(questions), [questions]);
   const completedAttemptDates = useMemo(

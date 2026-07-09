@@ -13,16 +13,12 @@ npm run dev
 
 ## 資料來源
 
-目前學習內容先由本地 JSON 匯入：
-
-- `korean_study_notes_simple_minimal_2026-07-05.json`
-
-登入後，網站會把這份 JSON 同步到 Firestore：
+學習內容直接讀寫 Firestore：
 
 - `users/{uid}/days/{date}`：每日原始 JSON 與統計
 - `users/{uid}/items/{itemId}`：解析後的學習項目
 - `users/{uid}/questions/{questionId}`：解析後的測驗題
-- `users/{uid}/records/{recordId}`：從日曆或單字本新增的原始單字資料
+- `users/{uid}/records/{recordId}`：原始單字資料
 - `users/{uid}/appState/reviewState`：答題紀錄、熟練度、SRS 進度、學習標記
 
 內容 schema v2：
