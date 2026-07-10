@@ -918,27 +918,12 @@ function speakText(text, lang) {
 }
 
 function speakAnswer(question) {
-  if (!('speechSynthesis' in window) || !question) return;
-  const entries = [
-    { text: question.ko, lang: 'ko-KR', rate: 0.9 },
-    { text: question.zh, lang: 'zh-TW', rate: 1 },
-  ].filter((entry) => entry.text);
-  if (!entries.length) return;
+  if (!('speechSynthesis' in window) || !question?.ko) return;
   window.speechSynthesis.cancel();
-  let index = 0;
-  const playNext = () => {
-    const entry = entries[index];
-    if (!entry) return;
-    const utterance = new SpeechSynthesisUtterance(entry.text);
-    utterance.lang = entry.lang;
-    utterance.rate = entry.rate;
-    utterance.onend = () => {
-      index += 1;
-      playNext();
-    };
-    window.speechSynthesis.speak(utterance);
-  };
-  playNext();
+  const utterance = new SpeechSynthesisUtterance(question.ko);
+  utterance.lang = 'ko-KR';
+  utterance.rate = 0.9;
+  window.speechSynthesis.speak(utterance);
 }
 
 function playResultSound(correct) {
@@ -998,7 +983,7 @@ function App() {
   const [store, updateStore, storeLoading, storeError] = useFirestoreStore(user);
   const [page, setPage] = useState('home');
   const [pageStack, setPageStack] = useState([]);
-  const [selectedDate, setSelectedDate] = useState(STUDY_DATE);
+  const [selectedDate, setSelectedDate] = useState(() => todayString());
   const [practiceSet, setPracticeSet] = useState(null);
   const [studySet, setStudySet] = useState(null);
   const allRecords = useMemo(() => {
@@ -1030,6 +1015,7 @@ function App() {
 
   const navTop = (next) => {
     setPageStack([]);
+    if (next === 'calendar') setSelectedDate(todayString());
     setPage(next);
   };
   const navChild = (next) => {
@@ -1086,9 +1072,9 @@ function App() {
 
   const views = {
     home: <HomePage store={store} items={items} questions={dailyQuestions} onPractice={startPractice} onStudy={startStudy} />,
-    calendar: <CalendarPage store={store} items={items} questions={questions} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
-    notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
-    study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} />,
+    calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} />,
+    notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
+    study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} />,
     practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: dailyQuestions, label: '今日測驗', dueOnly: true }} />,
     notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
   };
@@ -1103,7 +1089,7 @@ function App() {
       </aside>
       <main>
         {storeError && <div className="sync-error">Firebase 同步失敗：{storeError}</div>}
-        {!!pageStack.length && <button className="back-button" onClick={goUp}><ChevronLeft size={18} /> 返回上一層</button>}
+        {!!pageStack.length && page !== 'study' && <button className="back-button" onClick={goUp}><ChevronLeft size={18} /> 返回上一層</button>}
         {views[page]}
       </main>
     </div>
@@ -1238,14 +1224,13 @@ function Stat({ icon, label, value }) {
   return <div className="stat">{icon}<span>{label}</span><strong>{value}</strong></div>;
 }
 
-function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, onOpenNotes, onAddRecords, onUpdateRecord, onDeleteRecord }) {
+function CalendarPage({ store, items, selectedDate, setSelectedDate, onOpenNotes }) {
   const [cursor, setCursor] = useState(new Date(`${selectedDate}T00:00:00`));
-  const [addOpen, setAddOpen] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
-  const [jsonEditOpen, setJsonEditOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState(null);
   const completedDates = new Set(store.completedReviewDates || []);
   const streaks = calculateReviewStreaks(store.completedReviewDates || []);
+  useEffect(() => {
+    setCursor(new Date(`${selectedDate}T00:00:00`));
+  }, [selectedDate]);
   const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
   const days = [];
   const start = new Date(first);
@@ -1265,11 +1250,9 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
     });
   }
   const selectedItems = items.filter((item) => item.date === selectedDate);
-  const deleteSelectedDateItems = async () => {
-    if (!selectedItems.length) return;
-    const confirmed = window.confirm(`確定要刪除 ${selectedDate} 的 ${selectedItems.length} 筆單字嗎？這不會刪除其他日期的單字。`);
-    if (!confirmed) return;
-    await Promise.all(selectedItems.map((item) => onDeleteRecord(item.id)));
+  const openDate = (date) => {
+    setSelectedDate(date);
+    onOpenNotes();
   };
 
   return (
@@ -1291,7 +1274,12 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
         <div className="calendar-grid">
           {['日', '一', '二', '三', '四', '五', '六'].map((d) => <b key={d}>{d}</b>)}
           {days.map((day) => (
-            <button key={day.key} className={`day ${day.current ? '' : 'muted'} ${day.hasStudy ? 'has-study' : ''} ${day.isToday ? 'today' : ''} ${day.key === selectedDate ? 'selected' : ''}`} onClick={() => setSelectedDate(day.key)}>
+            <button
+              key={day.key}
+              className={`day ${day.current ? '' : 'muted'} ${day.hasStudy ? 'has-study' : ''} ${day.isToday ? 'today' : ''} ${day.key === selectedDate ? 'selected' : ''}`}
+              onClick={() => setSelectedDate(day.key)}
+              onDoubleClick={() => openDate(day.key)}
+            >
               <span>{day.day}</span>
               {day.hasCompletedReview && <span className="day-flame"><Flame /></span>}
             </button>
@@ -1311,20 +1299,46 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
           <div className="panel-title"><h2>{selectedDate}</h2><span>{selectedItems.length} 筆內容</span></div>
           {selectedItems.slice(0, 5).map((item) => <NotePreview key={item.id} item={item} />)}
           <div className="calendar-day-actions">
-            <button className="primary wide" disabled={!selectedItems.length} onClick={onOpenNotes}>查看單字</button>
-            <button className="wide add-date-button" onClick={() => setAddOpen(true)}>新增單字</button>
-            <button className="wide export-date-button" disabled={!selectedItems.length} onClick={() => setExportOpen(true)}><Download size={18} /> 匯出這天單字</button>
-            <button className="wide edit-json-button" disabled={!selectedItems.length} onClick={() => setJsonEditOpen(true)}><Pencil size={18} /> 修改 JSON 內容</button>
-            <button className="wide danger-soft" disabled={!selectedItems.length} onClick={deleteSelectedDateItems}>刪除這天所有單字</button>
+            <button className="primary wide" onClick={() => openDate(selectedDate)}>查看日期</button>
           </div>
         </div>
       </div>
-      {exportOpen && <ExportJsonModal items={selectedItems} title={`匯出 ${selectedDate} JSON`} onClose={() => setExportOpen(false)} />}
+    </section>
+  );
+}
+
+function NotesPage({ store, updateStore, items, questions, date, allItems, onPractice, onStudy, onAddRecords, onUpdateRecord, onDeleteRecord }) {
+  const [addOpen, setAddOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [jsonEditOpen, setJsonEditOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+  const [viewingItem, setViewingItem] = useState(null);
+  const starredSet = new Set(store.starred || []);
+  const deleteDateItems = async () => {
+    if (!items.length) return;
+    const confirmed = window.confirm(`確定要刪除 ${date} 的 ${items.length} 筆單字嗎？這不會刪除其他日期的單字。`);
+    if (!confirmed) return;
+    await Promise.all(items.map((item) => onDeleteRecord(item.id)));
+  };
+  return (
+    <section className="page">
+      <div className="topbar">
+        <div><span className="eyebrow">Notes · {dateLabel(date)}</span><h1>日期筆記</h1></div>
+        <div className="actions notebook-actions">
+          <button className="danger-soft" disabled={!items.length} onClick={deleteDateItems}>刪除這天所有單字</button>
+          <button disabled={!items.length} onClick={() => setExportOpen(true)}><Download size={18} /> 匯出這天單字</button>
+          <button disabled={!items.length} onClick={() => setJsonEditOpen(true)}><Pencil size={18} /> 修改 JSON 內容</button>
+          <button disabled={!questions.length} onClick={() => onPractice(questions, `${date} 測驗`)}><Dumbbell size={18} /> 開始測驗</button>
+          <button disabled={!items.length} onClick={() => onStudy(items, `${date} 學習`)}><BookOpen size={18} /> 開始學習</button>
+          <button className="add-date-button" onClick={() => setAddOpen(true)}><Plus size={18} /> 新增單字</button>
+        </div>
+      </div>
+      {exportOpen && <ExportJsonModal items={items} title={`匯出 ${date} JSON`} onClose={() => setExportOpen(false)} />}
       {jsonEditOpen && (
         <EditJsonModal
-          items={selectedItems}
-          allItems={items}
-          date={selectedDate}
+          items={items}
+          allItems={allItems}
+          date={date}
           onSave={async (records) => {
             await Promise.all(records.map((record) => onUpdateRecord(record)));
             setJsonEditOpen(false);
@@ -1335,9 +1349,9 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
       {addOpen && (
         <AddItemsModal
           title="新增這一天的單字"
-          date={selectedDate}
+          date={date}
           lockedDate
-          allItems={items}
+          allItems={allItems}
           onAddRecords={onAddRecords}
           onUpdateRecord={onUpdateRecord}
           onEditExisting={(item) => {
@@ -1347,34 +1361,6 @@ function CalendarPage({ store, items, questions, selectedDate, setSelectedDate, 
           onClose={() => setAddOpen(false)}
         />
       )}
-      {editingItem && (
-        <AddItemsModal
-          title="編輯單字"
-          date={editingItem.date}
-          lockedDate
-          editItem={editingItem}
-          allItems={items}
-          onUpdateRecord={onUpdateRecord}
-          onClose={() => setEditingItem(null)}
-        />
-      )}
-    </section>
-  );
-}
-
-function NotesPage({ store, updateStore, items, questions, date, allItems, onPractice, onStudy, onUpdateRecord, onDeleteRecord }) {
-  const [editingItem, setEditingItem] = useState(null);
-  const [viewingItem, setViewingItem] = useState(null);
-  const starredSet = new Set(store.starred || []);
-  return (
-    <section className="page">
-      <div className="topbar">
-        <div><span className="eyebrow">Notes · {dateLabel(date)}</span><h1>日期筆記</h1></div>
-        <div className="actions">
-          <button onClick={() => onStudy(items, `${date} 學習`)}><BookOpen size={18} /> 開始學習</button>
-          <button className="primary" onClick={() => onPractice(questions, `${date} 測驗`)}><Dumbbell size={18} /> 開始測驗</button>
-        </div>
-      </div>
       {editingItem && (
         <AddItemsModal
           title="編輯單字"
@@ -1462,7 +1448,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setFormDate(date);
+    setFormDate(editItem?.date || date);
     setManual(itemToManual(editItem));
     setMode('manual');
     setImportDraft(null);
@@ -1603,6 +1589,28 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
     }));
   };
 
+  const updateManualMeaning = (meaningIndex, patch) => {
+    setManual((current) => ({
+      ...current,
+      meanings: (current.meanings?.length ? current.meanings : [emptyManualMeaning()])
+        .map((meaning, index) => (index === meaningIndex ? { ...meaning, ...patch } : meaning)),
+    }));
+  };
+
+  const addManualMeaning = () => {
+    setManual((current) => ({
+      ...current,
+      meanings: [...(current.meanings?.length ? current.meanings : [emptyManualMeaning()]), emptyManualMeaning()],
+    }));
+  };
+
+  const removeManualMeaning = (meaningIndex) => {
+    setManual((current) => ({
+      ...current,
+      meanings: current.meanings?.length > 1 ? current.meanings.filter((_, index) => index !== meaningIndex) : (current.meanings || [emptyManualMeaning()]),
+    }));
+  };
+
   const submit = async (event) => {
     event.preventDefault();
     setMessage('');
@@ -1610,11 +1618,11 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
     setDuplicates([]);
     setSaving(true);
     try {
-      const targetDate = lockedDate ? date : formDate;
+      const targetDate = isEditing ? formDate : lockedDate ? date : formDate;
       if (isEditing) {
         const record = {
           id: editItem.id,
-          date: editItem.date,
+          date: targetDate,
           item: mergeEditedItem(editItem, manual, allItems),
           createdAt: editItem.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -1693,7 +1701,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
       ) : <div className="form-grid">
         <label>
           日期
-          <input type="date" value={isEditing ? editItem.date : lockedDate ? date : formDate} onChange={(event) => setFormDate(event.target.value)} disabled={lockedDate || isEditing} required />
+          <input type="date" value={isEditing ? formDate : lockedDate ? date : formDate} onChange={(event) => setFormDate(event.target.value)} disabled={lockedDate && !isEditing} required />
         </label>
         {mode === 'manual' ? (
           <>
@@ -1702,24 +1710,43 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
               <input value={manual.ko} onChange={(event) => setManual({ ...manual, ko: event.target.value })} required />
             </label>
             <label>
-              中文 *
-              <input value={manual.zh} onChange={(event) => setManual({ ...manual, zh: event.target.value })} required />
-            </label>
-            <label>
               詞性 / 類型
               <select value={manual.pos} onChange={(event) => setManual({ ...manual, pos: event.target.value })}>
                 <option value="">不指定</option>
                 {['名詞', '動詞', '形容詞', '副詞', '片語', '動詞片語', '句子', '文法', '比較'].map((option) => <option key={option}>{option}</option>)}
               </select>
             </label>
-            <label>
-              常見句型 / 搭配
-              <input value={manual.pattern} onChange={(event) => setManual({ ...manual, pattern: event.target.value })} />
-            </label>
-            <label className="wide-field">
-              例句
-              <textarea value={manual.examples} onChange={(event) => setManual({ ...manual, examples: event.target.value })} placeholder="每行一筆：韓文 | 中文" />
-            </label>
+            <div className="wide-field meanings-editor">
+              <div className="meanings-editor-head">
+                <div>
+                  <strong>意思與例句</strong>
+                  <span>每個中文意思可以有自己的句型和例句</span>
+                </div>
+                <button type="button" className="soft-button" onClick={addManualMeaning}><Plus size={16} /> 新增意思</button>
+              </div>
+              {manual.meanings.map((meaning, meaningIndex) => (
+                <section className="meaning-editor-card" key={meaning.id || meaningIndex}>
+                  <div className="meaning-editor-title">
+                    <strong>意思 {meaningIndex + 1}</strong>
+                    <button type="button" className="ghost-danger" onClick={() => removeManualMeaning(meaningIndex)} disabled={manual.meanings.length <= 1}>
+                      <Trash2 size={15} /> 刪除
+                    </button>
+                  </div>
+                  <label>
+                    中文 *
+                    <input value={meaning.zh} onChange={(event) => updateManualMeaning(meaningIndex, { zh: event.target.value })} />
+                  </label>
+                  <label>
+                    常見句型 / 搭配
+                    <input value={meaning.pattern} onChange={(event) => updateManualMeaning(meaningIndex, { pattern: event.target.value })} />
+                  </label>
+                  <label className="wide-field">
+                    例句
+                    <textarea value={meaning.examples} onChange={(event) => updateManualMeaning(meaningIndex, { examples: event.target.value })} placeholder="每行一筆：韓文 | 中文" />
+                  </label>
+                </section>
+              ))}
+            </div>
             <label className="wide-field">
               補充說明
               <textarea value={manual.notes} onChange={(event) => setManual({ ...manual, notes: event.target.value })} placeholder="每行一筆說明" />
@@ -1926,16 +1953,31 @@ function RelatedSelector({ manual, setManual, allItems, editItem }) {
   );
 }
 
+function emptyManualMeaning() {
+  return { id: '', zh: '', pattern: '', examples: '' };
+}
+
+function manualMeaningHasContent(meaning) {
+  return Boolean(meaning.zh.trim() || meaning.pattern.trim() || meaning.examples.trim());
+}
+
+function manualMeaningToItemMeaning(meaning, index) {
+  if (!meaning.zh.trim()) throw new Error(`第 ${index + 1} 個意思需要中文`);
+  return {
+    ...(meaning.id ? { id: meaning.id } : {}),
+    zh: meaning.zh.trim(),
+    ...(meaning.pattern.trim() ? { pattern: meaning.pattern.trim() } : {}),
+    examples: parsePairLines(meaning.examples),
+  };
+}
+
 function manualToItem(manual, allItems = []) {
-  if (!manual.ko.trim() || !manual.zh.trim()) throw new Error('韓文和中文是必填');
+  if (!manual.ko.trim()) throw new Error('韓文是必填');
+  const meaningInputs = (manual.meanings || []).filter(manualMeaningHasContent);
+  if (!meaningInputs.length) throw new Error('至少需要 1 個中文意思');
   const item = {
     ko: manual.ko.trim(),
-    meanings: [{
-      ...(manual.meaningId ? { id: manual.meaningId } : {}),
-      zh: manual.zh.trim(),
-      ...(manual.pattern.trim() ? { pattern: manual.pattern.trim() } : {}),
-      examples: parsePairLines(manual.examples),
-    }],
+    meanings: meaningInputs.map(manualMeaningToItemMeaning),
   };
   if (manual.pos) item.pos = manual.pos;
   const notesList = linesToArray(manual.notes);
@@ -1947,19 +1989,20 @@ function manualToItem(manual, allItems = []) {
 
 function itemToManual(item) {
   if (!item) {
-    return { ko: '', zh: '', pos: '', pattern: '', examples: '', notes: '', relatedSelected: [], relatedQuery: '', meaningId: '' };
+    return { ko: '', pos: '', meanings: [emptyManualMeaning()], notes: '', relatedSelected: [], relatedQuery: '' };
   }
-  const primaryMeaning = item.meanings?.[0] || { zh: '', pattern: '', examples: [] };
   return {
     ko: item.ko || '',
-    zh: primaryMeaning.zh || '',
     pos: item.pos || '',
-    pattern: primaryMeaning.pattern || '',
-    examples: (primaryMeaning.examples || []).map((example) => `${example.ko || ''} | ${example.zh || ''}`).join('\n'),
+    meanings: (item.meanings?.length ? item.meanings : [emptyManualMeaning()]).map((meaning) => ({
+      id: meaning.id || '',
+      zh: meaning.zh || '',
+      pattern: meaning.pattern || '',
+      examples: (meaning.examples || []).map((example) => `${example.ko || ''} | ${example.zh || ''}`).join('\n'),
+    })),
     notes: (item.notes || []).join('\n'),
     relatedSelected: (item.related || []).filter(Boolean),
     relatedQuery: '',
-    meaningId: primaryMeaning.id || '',
   };
 }
 
@@ -2062,11 +2105,28 @@ function DeleteIconButton({ item, onDelete }) {
 }
 
 function ItemDetailModal({ item, allItems = [], onEdit, onDelete, onOpenItem, onClose, isStarred = false, onToggleStar }) {
+  const deleteAndClose = onDelete
+    ? async (itemId) => {
+      await onDelete(itemId);
+      onClose();
+    }
+    : null;
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape' || event.isComposing) return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <div className="modal-panel detail-panel">
         <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
-        <NoteCard item={item} allItems={allItems} onEdit={onEdit} onDelete={onDelete} onOpenItem={onOpenItem} isStarred={isStarred} onToggleStar={onToggleStar} />
+        <NoteCard item={item} allItems={allItems} onEdit={onEdit} onDelete={deleteAndClose} onOpenItem={onOpenItem} isStarred={isStarred} onToggleStar={onToggleStar} />
       </div>
     </div>
   );
@@ -2091,13 +2151,32 @@ function StarButton({ active, onClick }) {
   );
 }
 
+function KoreanSpeakButton({ text, label = '播放韓文發音' }) {
+  if (!text) return null;
+  return (
+    <button
+      type="button"
+      className="speak-icon-button"
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        speakText(text, 'ko-KR');
+      }}
+      aria-label={label}
+      title={label}
+    >
+      <Volume2 size={15} />
+    </button>
+  );
+}
+
 function NoteCard({ item, allItems = [], onEdit, onDelete, compact = false, onOpen, onOpenItem, isStarred = false, onToggleStar }) {
   const examplesCount = itemExamples(item).length;
   const relatedItems = displayRelated(item, allItems);
   return (
     <article className={`note-card ${compact ? 'compact-card clickable-card' : ''}`} onClick={compact ? () => onOpen(item) : undefined}>
       <div className="card-head">
-        <h3>{item.ko}</h3>
+        <h3 className="speakable-heading"><span>{item.ko}</span><KoreanSpeakButton text={item.ko} /></h3>
         <div className="card-actions">
           <StarButton active={isStarred} onClick={onToggleStar} />
           {onEdit && <EditIconButton onClick={() => onEdit(item)} />}
@@ -2140,7 +2219,7 @@ function CardRichDetails({ item, relatedItems = [], onOpenItem }) {
                   <div className="example-list">
                     {meaning.examples.map((ex) => (
                       <div key={ex.id || ex.ko} className="example-row">
-                        <p className="example-ko">{ex.ko}</p>
+                        <p className="example-ko"><span>{ex.ko}</span><KoreanSpeakButton text={ex.ko} /></p>
                         <p className="example-zh">{ex.zh}</p>
                       </div>
                     ))}
@@ -2274,7 +2353,7 @@ function RelatedPreviewCard({ item, position }) {
   );
 }
 
-function StudyPage({ store, updateStore, set }) {
+function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onBack }) {
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [filter, setFilter] = useState('全部');
@@ -2284,13 +2363,19 @@ function StudyPage({ store, updateStore, set }) {
   const [autoPlay, setAutoPlay] = useState(false);
   const [playVoice, setPlayVoice] = useState(true);
   const [starredOnly, setStarredOnly] = useState(false);
-  const types = ['全部', ...new Set(set.items.map((item) => item.pos || '比較'))];
+  const [instantReset, setInstantReset] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+  const currentItems = useMemo(() => {
+    const latestById = new Map(allItems.map((entry) => [entry.id, entry]));
+    return set.items.map((entry) => latestById.get(entry.id) || entry);
+  }, [set.items, allItems]);
+  const types = ['全部', ...new Set(currentItems.map((item) => item.pos || '比較'))];
   const filtered = useMemo(() => {
     const starredSet = new Set(store.starred || []);
-    return set.items
+    return currentItems
       .filter((item) => filter === '全部' || item.pos === filter)
       .filter((item) => !starredOnly || starredSet.has(item.id));
-  }, [set.items, filter, store.starred, starredOnly]);
+  }, [currentItems, filter, store.starred, starredOnly]);
   const ordered = useMemo(() => (random ? shuffleItems(filtered, shuffleSeed) : filtered), [filtered, random, shuffleSeed]);
   const item = ordered[index % Math.max(ordered.length, 1)];
   const isStarred = !!item && (store.starred || []).includes(item.id);
@@ -2298,16 +2383,27 @@ function StudyPage({ store, updateStore, set }) {
   const backText = frontSide === 'ko' ? item?.zh : item?.ko;
   const frontLang = frontSide === 'ko' ? 'ko-KR' : 'zh-TW';
   const backLang = frontSide === 'ko' ? 'zh-TW' : 'ko-KR';
-  const goPrev = () => {
-    setIndex((index - 1 + ordered.length) % ordered.length);
+  const toggleCard = () => {
+    const next = !flipped;
+    setFlipped(next);
+    if (playVoice) speakText(next ? backText : frontText, next ? backLang : frontLang);
+  };
+  const moveToIndex = (nextIndex) => {
+    if (flipped) {
+      setInstantReset(true);
+      window.requestAnimationFrame(() => setInstantReset(false));
+    }
     setFlipped(false);
+    setIndex(nextIndex);
+  };
+  const goPrev = () => {
+    moveToIndex((index - 1 + ordered.length) % ordered.length);
   };
   const goNext = () => {
-    setIndex((index + 1) % ordered.length);
-    setFlipped(false);
+    moveToIndex((index + 1) % ordered.length);
   };
   const jumpToItem = (targetItem) => {
-    const targetIndex = set.items.findIndex((entry) => entry.id === targetItem.id);
+    const targetIndex = currentItems.findIndex((entry) => entry.id === targetItem.id);
     if (targetIndex < 0) return;
     setAutoPlay(false);
     setRandom(false);
@@ -2348,11 +2444,35 @@ function StudyPage({ store, updateStore, set }) {
     };
   }, [autoPlay, item?.id, frontSide, playVoice, ordered.length]);
 
+  useEffect(() => {
+    if (!item) return undefined;
+    const onKeyDown = (event) => {
+      const target = event.target;
+      const isTyping = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT' || target?.isContentEditable;
+      if (isTyping || event.isComposing) return;
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        setAutoPlay(false);
+        goPrev();
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        setAutoPlay(false);
+        goNext();
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setAutoPlay(false);
+        toggleCard();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [item?.id, autoPlay, flipped, playVoice, frontSide, index, ordered.length]);
+
   if (!filtered.length) return <section className="page"><div className="empty">沒有可學習的卡片。</div></section>;
   return (
     <section className="page study-page">
-      <div className="topbar">
-        <div><span className="eyebrow">Flashcards · {set.label}</span><h1>學習模式</h1></div>
+      <div className="topbar study-topbar">
+        <div><span className="eyebrow">Flashcards · {set.label}</span></div>
         <select value={filter} onChange={(e) => { setFilter(e.target.value); setIndex(0); }}>{types.map((type) => <option key={type}>{type}</option>)}</select>
       </div>
       <div className="study-toolstrip">
@@ -2362,15 +2482,17 @@ function StudyPage({ store, updateStore, set }) {
         <button className={autoPlay ? 'selected-soft' : ''} onClick={() => setAutoPlay(!autoPlay)}>{autoPlay ? <Pause size={16} /> : <Play size={16} />} 自動</button>
         <button className={playVoice ? 'selected-soft' : ''} onClick={() => setPlayVoice(!playVoice)}>{playVoice ? <Volume2 size={16} /> : <VolumeX size={16} />} 語音</button>
         <button className={starredOnly ? 'selected-soft' : ''} onClick={() => setStarredOnly((current) => !current)}><Star size={16} /> 有星號</button>
+        {onBack && <button className="study-back-button" onClick={onBack}><ChevronLeft size={18} /> 返回上一層</button>}
       </div>
       <div className="flashcard-wrap">
         <button className="card-arrow left" onClick={goPrev} aria-label="上一張"><ChevronLeft size={26} /></button>
-        <div className={`flashcard ${flipped ? 'flipped' : ''}`} role="button" tabIndex={0}
-          onClick={() => { const next = !flipped; setFlipped(next); if (playVoice) speakText(next ? backText : frontText, next ? backLang : frontLang); }}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { const next = !flipped; setFlipped(next); if (playVoice) speakText(next ? backText : frontText, next ? backLang : frontLang); } }}
+        <div className={`flashcard ${flipped ? 'flipped' : ''} ${instantReset ? 'instant-reset' : ''}`} role="button" tabIndex={0}
+          onClick={toggleCard}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCard(); } }}
         >
           <div className="flashcard-star">
             <StarButton active={isStarred} onClick={() => toggleStarredItem(updateStore, item.id)} />
+            {onUpdateRecord && <EditIconButton onClick={() => setEditingItem(item)} />}
           </div>
           <div className="flash-face front">
             <span>{index + 1} / {ordered.length}</span>
@@ -2379,13 +2501,28 @@ function StudyPage({ store, updateStore, set }) {
             <button className="card-speak-btn" onClick={(e) => { e.stopPropagation(); speakText(frontText, frontLang); }} aria-label="播放發音"><Volume2 size={18} /></button>
           </div>
           <div className="flash-face back">
-            <strong>{backText}</strong>
-            <button className="card-speak-btn" onClick={(e) => { e.stopPropagation(); speakText(backText, backLang); }} aria-label="播放發音"><Volume2 size={18} /></button>
+            <div className="flash-back-content" onClick={(event) => event.stopPropagation()}>
+              <div className="flash-back-answer">
+                <strong>{backText}</strong>
+                <button className="card-speak-btn" onClick={(e) => { e.stopPropagation(); speakText(backText, backLang); }} aria-label="播放發音"><Volume2 size={18} /></button>
+              </div>
+              <StudyDetails item={item} allItems={currentItems} onOpenItem={jumpToItem} />
+            </div>
           </div>
         </div>
         <button className="card-arrow right" onClick={goNext} aria-label="下一張"><ChevronRight size={26} /></button>
       </div>
-      {flipped && <div className="card-details"><StudyDetails item={item} allItems={set.items} onOpenItem={jumpToItem} /></div>}
+      {editingItem && (
+        <AddItemsModal
+          title="編輯單字"
+          date={editingItem.date}
+          lockedDate
+          editItem={editingItem}
+          allItems={allItems}
+          onUpdateRecord={onUpdateRecord}
+          onClose={() => setEditingItem(null)}
+        />
+      )}
     </section>
   );
 }
@@ -2550,6 +2687,11 @@ function PracticePage({ store, updateStore, set }) {
   useEffect(() => {
     if (!started) return undefined;
     const onKeyDown = (event) => {
+      if (event.key === ' ' && (revealed || graded) && !event.isComposing) {
+        event.preventDefault();
+        speakAnswer(question);
+        return;
+      }
       if (event.key === 'Enter' && graded && !event.isComposing) {
         event.preventDefault();
         goNext();
@@ -2557,7 +2699,7 @@ function PracticePage({ store, updateStore, set }) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [started, graded, index, queue.length]);
+  }, [started, revealed, graded, question, index, queue.length]);
 
   if (!started && !set.dueOnly) {
     return (
@@ -2618,6 +2760,7 @@ function PracticePage({ store, updateStore, set }) {
             <div className="quiz-options">
               <button className={soundEnabled ? 'selected-soft' : ''} onClick={() => setSoundEnabled((enabled) => !enabled)}>{soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />} 音效</button>
               <button className={autoPronounce ? 'selected-soft' : ''} onClick={() => setAutoPronounce((enabled) => !enabled)}>{autoPronounce ? <Volume2 size={16} /> : <VolumeX size={16} />} 自動發音</button>
+              <button disabled={!revealed && !graded} onClick={() => speakAnswer(question)}><Volume2 size={16} /> 發音</button>
             </div>
           </div>
           {activeDirection === 'zh-ko' ? (
@@ -3029,7 +3172,7 @@ function WordCard({ item, onEdit, onDelete, onOpen, isStarred = false, onToggleS
   return (
     <article className="word-card clickable-card" onClick={() => onOpen(item)}>
       <div className="card-head">
-        <h3>{item.ko}</h3>
+        <h3 className="speakable-heading"><span>{item.ko}</span><KoreanSpeakButton text={item.ko} /></h3>
         <div className="card-actions">
           <StarButton active={isStarred} onClick={onToggleStar} />
           <EditIconButton onClick={() => onEdit(item)} />

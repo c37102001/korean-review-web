@@ -621,6 +621,28 @@ main {
   line-height: 1.15;
 }
 
+.speakable-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.speak-icon-button {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 999px;
+  color: #1d7467;
+  background: #e8f7f2;
+  box-shadow: none;
+}
+
+.speak-icon-button:hover {
+  color: #ffffff;
+  background: #2fae83;
+}
+
 .clickable-card {
   cursor: pointer;
   transition: transform 0.16s ease, box-shadow 0.16s ease;
@@ -744,6 +766,15 @@ main {
   max-width: 920px;
 }
 
+.study-topbar {
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.study-topbar .eyebrow {
+  margin-bottom: 0;
+}
+
 .study-toolstrip {
   display: flex;
   flex-wrap: wrap;
@@ -754,6 +785,10 @@ main {
 .study-toolstrip button {
   padding: 8px 11px;
   border-radius: 12px;
+}
+
+.study-toolstrip .study-back-button {
+  margin-left: auto;
 }
 
 .flashcard-wrap {
@@ -772,14 +807,21 @@ main {
   cursor: pointer;
 }
 
+.flashcard.flipped {
+  min-height: min(720px, calc(100vh - 220px));
+}
+
 .flashcard-star {
   position: absolute;
   top: 18px;
   right: 18px;
   z-index: 3;
+  display: flex;
+  gap: 8px;
 }
 
-.flashcard-star .star-button {
+.flashcard-star .star-button,
+.flashcard-star .edit-icon-button {
   width: 40px;
   height: 40px;
   background: rgba(255, 255, 255, 0.78);
@@ -835,6 +877,8 @@ main {
 }
 
 .back {
+  display: block;
+  overflow: hidden;
   transform: rotateY(180deg);
   background: linear-gradient(135deg, #fff5dc, #ffffff);
 }
@@ -847,20 +891,41 @@ main {
   transform: rotateY(360deg);
 }
 
-.flash-face strong {
+.flashcard.instant-reset .flash-face {
+  transition: none;
+}
+
+.flash-face > strong,
+.flash-back-answer strong {
   font-size: clamp(26px, 5vw, 52px);
   line-height: 1.1;
   text-align: center;
 }
 
-.flash-face span,
-.flash-face small {
+.flash-face > span,
+.flash-face > small {
   color: #677680;
   font-weight: 900;
 }
 
-.card-details {
-  margin-top: 18px;
+.flash-back-content {
+  height: 100%;
+  overflow-y: auto;
+  padding: 34px;
+  cursor: default;
+}
+
+.flash-back-answer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 2px 52px 24px;
+  text-align: center;
+}
+
+.flash-back-answer .card-speak-btn {
+  flex: 0 0 auto;
 }
 
 .study-details {
@@ -868,6 +933,16 @@ main {
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.84);
   box-shadow: 0 14px 36px rgba(58, 73, 84, 0.1);
+}
+
+.flash-back-content .study-details {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.flash-back-content .rich-details {
+  margin-top: 0;
 }
 
 .study-details .subblock:first-child,
@@ -981,10 +1056,19 @@ main {
 }
 
 .example-ko {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   color: #213038;
   font-size: 17px;
   font-weight: 900;
   line-height: 1.45;
+}
+
+.example-ko .speak-icon-button {
+  width: 28px;
+  height: 28px;
 }
 
 .example-zh {
@@ -1386,6 +1470,11 @@ main {
 .quiz-options button.selected-soft {
   color: #1d5d59;
   background: #dff7ef;
+}
+
+.quiz-options button:disabled {
+  background: #eef1f1;
+  color: #8a969c;
 }
 
 .prompt {
@@ -1831,6 +1920,66 @@ textarea:focus {
 }
 
 .wide-field {
+  grid-column: 1 / -1;
+}
+
+.soft-button {
+  color: #197566;
+  background: #e8f6f2;
+  box-shadow: none;
+}
+
+.ghost-danger {
+  color: #b93646;
+  background: transparent;
+  box-shadow: none;
+  padding: 8px 10px;
+}
+
+.meanings-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.meanings-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.meanings-editor-head strong,
+.meaning-editor-title strong {
+  color: #263238;
+}
+
+.meanings-editor-head span {
+  display: block;
+  margin-top: 3px;
+  color: #6a7881;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.meaning-editor-card {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e0eaea;
+  border-radius: 18px;
+  background: #f8fbfb;
+}
+
+.meaning-editor-title {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.meaning-editor-card .wide-field {
   grid-column: 1 / -1;
 }
 
@@ -2286,8 +2435,18 @@ textarea:focus {
   .word-grid,
   .filters,
   .form-grid,
+  .meaning-editor-card,
   .practice-layout {
     grid-template-columns: 1fr;
+  }
+
+  .meanings-editor-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .meanings-editor-head .soft-button {
+    width: 100%;
   }
 
   .stats-grid {
