@@ -35,6 +35,8 @@ import { auth, db } from './firebase.js';
 import './styles.css';
 
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
+const DAILY_EXAMPLE_LIMIT = 15;
+const DAILY_EXAMPLE_ACCUMULATION_START = '2026-07-13';
 const STUDY_DATE = '2026-07-05';
 const CONTENT_SCHEMA_VERSION = 2;
 const APP_STATE_ID = 'reviewState';
@@ -228,6 +230,27 @@ function itemZh(item) {
 
 function itemExamples(item) {
   return (item.meanings || []).flatMap((meaning) => meaning.examples || []);
+}
+
+function blankKoreanAnswerInExample(exampleKo, answerKo) {
+  const answer = (answerKo || '').trim();
+  if (!exampleKo || !answer) return '';
+  const blank = '_'.repeat(Math.max(4, countKoreanLetters(answer)));
+  if (exampleKo.includes(answer)) return exampleKo.replace(answer, blank);
+  const escaped = answer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const particlePattern = new RegExp(`${escaped}([은는이가을를와과도만부터까지로으로에에서])`);
+  if (particlePattern.test(exampleKo)) return exampleKo.replace(particlePattern, `${blank}$1`);
+  return '';
+}
+
+function buildExampleClozeHint(question, seed = 1) {
+  if (question?.kind !== 'term') return null;
+  const examples = itemExamples(question.source || {}).filter((example) => example.ko);
+  const candidates = examples
+    .map((example) => ({ ...example, cloze: blankKoreanAnswerInExample(example.ko, question.ko) }))
+    .filter((example) => example.cloze && example.cloze !== example.ko);
+  if (!candidates.length) return null;
+  return shuffleItems(candidates, seedFromString(`${question.id}-${seed}`))[0];
 }
 
 function displayRelated(item, allItems = []) {
@@ -740,6 +763,10 @@ function dueQuestions(store, questions, date = todayString()) {
   return questions.filter((question) => getProgress(store, question).nextDue <= date);
 }
 
+function seedFromString(text) {
+  return [...text].reduce((seed, char) => ((seed * 31) + char.charCodeAt(0)) % 233280, 17);
+}
+
 function orderReviewQuestions(questions) {
   const kindRank = { term: 0, example: 1 };
   return [...questions].sort((a, b) => {
@@ -757,20 +784,124 @@ function reviewQuestions(questions) {
   return orderReviewQuestions(questions.filter((question) => question.kind === 'term' || question.kind === 'example'));
 }
 
+function currentExampleRoundCorrectIdsBeforeDate(store, exampleQuestions, date = todayString()) {
+  const exampleIds = new Set(exampleQuestions.map((question) => question.id));
+  const correctIds = new Set();
+  const attempts = [...(store.attempts || [])]
+    .filter((attempt) => exampleIds.has(attempt.questionId) && (!attempt.time || attempt.time.slice(0, 10) < date))
+    .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+  attempts.forEach((attempt) => {
+    if (attempt.correct) correctIds.add(attempt.questionId);
+    if (correctIds.size === exampleIds.size && exampleIds.size) correctIds.clear();
+  });
+  return correctIds;
+}
+
+function lastAttemptsByDate(store, questionIds, date) {
+  const ids = new Set(questionIds);
+  const latest = new Map();
+  (store.attempts || []).forEach((attempt) => {
+    if (!ids.has(attempt.questionId) || attempt.time?.slice(0, 10) !== date) return;
+    const previous = latest.get(attempt.questionId);
+    if (!previous || (attempt.time || '') > (previous.time || '')) latest.set(attempt.questionId, attempt);
+  });
+  return latest;
+}
+
+function uniqueQuestions(questions) {
+  const seen = new Set();
+  return questions.filter((question) => {
+    if (seen.has(question.id)) return false;
+    seen.add(question.id);
+    return true;
+  });
+}
+
+function hasAttemptAfterDateThrough(store, questionId, afterDate, throughDate) {
+  return (store.attempts || []).some((attempt) => {
+    const attemptDate = attempt.time?.slice(0, 10);
+    return attempt.questionId === questionId && attemptDate > afterDate && attemptDate <= throughDate;
+  });
+}
+
+function dateRange(startDate, endDate) {
+  const dates = [];
+  let current = startDate;
+  while (current <= endDate) {
+    dates.push(current);
+    current = addDays(current, 1);
+  }
+  return dates;
+}
+
+function exampleAccumulationStartDate(store, date) {
+  const lastCompleted = [...(store.completedReviewDates || [])].filter((completedDate) => completedDate < date).sort().at(-1);
+  const afterLastCompleted = lastCompleted ? addDays(lastCompleted, 1) : DAILY_EXAMPLE_ACCUMULATION_START;
+  const start = afterLastCompleted > DAILY_EXAMPLE_ACCUMULATION_START ? afterLastCompleted : DAILY_EXAMPLE_ACCUMULATION_START;
+  return start > date ? date : start;
+}
+
+function dailyExampleQuestions(store, questions, date = todayString(), limit = DAILY_EXAMPLE_LIMIT, excludedIds = new Set()) {
+  const examples = orderReviewQuestions(questions.filter((question) => question.kind === 'example'));
+  if (!examples.length) return [];
+  const exampleIds = examples.map((question) => question.id);
+  const answeredToday = lastAttemptsByDate(store, exampleIds, date);
+  const yesterday = addDays(date, -1);
+  const yesterdayAttempts = lastAttemptsByDate(store, exampleIds, yesterday);
+  const currentRoundCorrect = currentExampleRoundCorrectIdsBeforeDate(store, examples, date);
+  const available = (question) => !answeredToday.has(question.id) && !excludedIds.has(question.id);
+  const seed = seedFromString(date);
+  const yesterdayWrong = shuffleItems(
+    examples.filter((question) => yesterdayAttempts.get(question.id)?.correct === false),
+    seed + 11,
+  );
+  const currentRoundUnanswered = shuffleItems(
+    examples.filter((question) => !currentRoundCorrect.has(question.id)),
+    seed + 23,
+  );
+  const currentPool = uniqueQuestions([...yesterdayWrong, ...currentRoundUnanswered]);
+  const dailyPool = currentPool.length ? currentPool.filter(available) : shuffleItems(examples.filter(available), seed + 37);
+  return dailyPool.slice(0, limit);
+}
+
+function accumulatedDailyExampleQuestions(store, questions, date = todayString()) {
+  const startDate = exampleAccumulationStartDate(store, date);
+  const selectedIds = new Set();
+  const accumulated = [];
+  dateRange(startDate, date).forEach((quotaDate) => {
+    const batch = dailyExampleQuestions(store, questions, quotaDate, DAILY_EXAMPLE_LIMIT, selectedIds)
+      .filter((question) => quotaDate === date || !hasAttemptAfterDateThrough(store, question.id, quotaDate, date));
+    batch.forEach((question) => {
+      selectedIds.add(question.id);
+      accumulated.push({ ...question, quotaDate });
+    });
+  });
+  return accumulated;
+}
+
+function dailyReviewQuestions(store, questions, date = todayString()) {
+  const reviewable = reviewQuestions(questions);
+  const terms = dueQuestions(store, reviewable.filter((question) => question.kind === 'term'), date);
+  const examples = accumulatedDailyExampleQuestions(store, reviewable, date);
+  return orderReviewQuestions([...terms, ...examples]);
+}
+
 function groupTasks(store, questions, date = todayString()) {
   const groups = new Map();
-  dueQuestions(store, questions, date).forEach((question) => {
+  questions.forEach((question) => {
     const progress = getProgress(store, question);
-    const key = `${question.date}-${progress.nextDue}`;
+    const dueDate = question.kind === 'example' ? (question.quotaDate || date) : progress.nextDue;
+    const key = question.kind === 'example' ? `examples-${date}` : `${question.date}-${dueDate}`;
     const existing = groups.get(key) || {
       id: key,
       studyDate: question.date,
-      dueDate: progress.nextDue,
+      dueDate,
       questions: [],
-      overdue: progress.nextDue < date,
+      overdue: dueDate < date,
+      type: question.kind === 'example' ? 'examples' : 'terms',
     };
     existing.questions.push(question);
-    existing.overdue = existing.overdue || progress.nextDue < date;
+    existing.overdue = existing.overdue || dueDate < date;
     groups.set(key, existing);
   });
   return [...groups.values()].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
@@ -845,7 +976,7 @@ function recordAnswer(store, question, correct) {
         lastResult: correct ? 'correct' : 'wrong',
       },
     },
-    attempts: [{ id: crypto.randomUUID(), questionId: question.id, correct, time: now }, ...store.attempts].slice(0, 300),
+    attempts: [{ id: crypto.randomUUID(), questionId: question.id, correct, time: now }, ...store.attempts].slice(0, 5000),
   };
 }
 
@@ -994,6 +1125,7 @@ function App() {
   }, [store.customRecords, store.deletedRecordIds]);
   const { items, questions } = useMemo(() => normalizeRecords(allRecords), [allRecords]);
   const dailyQuestions = useMemo(() => reviewQuestions(questions), [questions]);
+  const todayDailyQuestions = useMemo(() => dailyReviewQuestions(store, dailyQuestions, todayString()), [store, dailyQuestions]);
   const completedAttemptDates = useMemo(
     () => [...new Set((store.attempts || []).map((attempt) => attempt.time?.slice(0, 10)).filter(Boolean))],
     [store.attempts],
@@ -1003,15 +1135,15 @@ function App() {
     if (!user || storeLoading) return;
     const today = todayString();
     const backfillDates = completedAttemptDates.filter(
-      (date) => date >= REVIEW_COMPLETION_BACKFILL_START && date <= REVIEW_COMPLETION_BACKFILL_END && dueQuestions(store, dailyQuestions, date).length === 0,
+      (date) => date >= REVIEW_COMPLETION_BACKFILL_START && date <= REVIEW_COMPLETION_BACKFILL_END && dailyReviewQuestions(store, dailyQuestions, date).length === 0,
     );
     const datesToMark = [...backfillDates];
-    if (dueQuestions(store, dailyQuestions, today).length === 0) datesToMark.push(today);
+    if (dailyReviewQuestions(store, dailyQuestions, today).length === 0) datesToMark.push(today);
 
     const missingDates = [...new Set(datesToMark)].filter((date) => !(store.completedReviewDates || []).includes(date));
     if (!missingDates.length) return;
     updateStore((current) => missingDates.reduce((nextStore, date) => markReviewDateComplete(nextStore, date), current));
-  }, [user, storeLoading, store.completedReviewDates, store.progress, completedAttemptDates, dailyQuestions, updateStore]);
+  }, [user, storeLoading, store.completedReviewDates, store.progress, store.attempts, completedAttemptDates, dailyQuestions, updateStore]);
 
   const navTop = (next) => {
     setPageStack([]);
@@ -1071,11 +1203,11 @@ function App() {
   if (storeLoading) return <LoadingScreen text="載入資料中" />;
 
   const views = {
-    home: <HomePage store={store} items={items} questions={dailyQuestions} onPractice={startPractice} onStudy={startStudy} />,
+    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} onPractice={startPractice} onStudy={startStudy} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} />,
     notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} />,
-    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: dailyQuestions, label: '今日測驗', dueOnly: true }} />,
+    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} />,
     notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
   };
 
@@ -1158,10 +1290,10 @@ function LoginPage() {
   );
 }
 
-function HomePage({ store, items, questions, onPractice, onStudy }) {
+function HomePage({ store, items, questions, dueQuestionsForToday, onPractice, onStudy }) {
   const today = todayString();
-  const tasks = groupTasks(store, questions, today);
-  const due = dueQuestions(store, questions, today);
+  const due = dueQuestionsForToday;
+  const tasks = groupTasks(store, due, today);
   const answeredToday = store.attempts.filter((attempt) => attempt.time.startsWith(today));
   const correctToday = answeredToday.filter((attempt) => attempt.correct).length;
   const weak = questions.filter((question) => getStats(store, question.id).level === '不熟悉').slice(0, 6);
@@ -1201,10 +1333,10 @@ function HomePage({ store, items, questions, onPractice, onStudy }) {
               <div className="task-card" key={task.id}>
                 <div>
                   <span className={task.overdue ? 'badge danger' : 'badge'}>{task.overdue ? '逾期' : '今日'}</span>
-                  <h3>{dateLabel(task.studyDate)} 的內容</h3>
-                  <p>到期日 {task.dueDate} · {task.questions.length} 題 · 未完成</p>
+                  <h3>{task.type === 'examples' ? '例句練習' : `${dateLabel(task.studyDate)} 的內容`}</h3>
+                  <p>{task.type === 'examples' ? `累積到今天 · ${task.questions.length} 句 · 未完成` : `到期日 ${task.dueDate} · ${task.questions.length} 題 · 未完成`}</p>
                 </div>
-                <button className="primary small" onClick={() => onPractice(task.questions, `${task.studyDate} 測驗`, { dueOnly: true })}>開始</button>
+                <button className="primary small" onClick={() => onPractice(task.questions, task.type === 'examples' ? '例句練習' : `${task.studyDate} 測驗`, { dueOnly: true })}>開始</button>
               </div>
             ))}
             {!tasks.length && <div className="empty">今天沒有排程到期。你可以從日曆或單字本主動測驗。</div>}
@@ -2562,7 +2694,7 @@ function PracticePage({ store, updateStore, set }) {
   const sourceQuestions = useMemo(() => {
     const starredSet = new Set(store.starred || []);
     const applyStarFilter = (list) => (starredOnly ? list.filter((q) => starredSet.has(q.itemId)) : list);
-    if (set.dueOnly) return orderReviewQuestions(dueQuestions(store, reviewQuestions(set.questions)));
+    if (set.dueOnly) return orderReviewQuestions(set.questions);
     if (direction === 'ko-zh') return applyStarFilter(set.questions.filter((q) => q.kind === 'term'));
     const activeSource = set.termOnly ? 'term' : source;
     const filtered = set.questions.filter((q) => activeSource === 'all' || q.kind === activeSource);
@@ -2571,6 +2703,10 @@ function PracticePage({ store, updateStore, set }) {
   }, [set.questions, source, direction, set.termOnly, set.dueOnly, store, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
+  const exampleClozeHint = useMemo(
+    () => (activeDirection === 'zh-ko' && question?.kind === 'term' ? buildExampleClozeHint(question, index + queue.length) : null),
+    [activeDirection, question, index, queue.length],
+  );
   const resetSession = () => {
     setStarted(false);
     setQuestionQueue([]);
@@ -2712,7 +2848,7 @@ function PracticePage({ store, updateStore, set }) {
             <button className={direction === 'ko-zh' ? 'active' : ''} onClick={() => setDirection('ko-zh')}>韓翻中</button>
           </div>
           {fixedSource ? (
-            <div className="fixed-source-note">每日測驗會先完成單字，再接著測驗例句。</div>
+            <div className="fixed-source-note">每日測驗會先完成所有到期單字，再接著測驗最多 {DAILY_EXAMPLE_LIMIT} 句例句。</div>
           ) : direction === 'ko-zh' ? (
             <div className="fixed-source-note">韓翻中只測驗單字。答對不會寫入長期正確率，答錯仍會記錄為不熟悉。</div>
           ) : (
@@ -2772,6 +2908,13 @@ function PracticePage({ store, updateStore, set }) {
                   <QuestionKindBadge kind={question.kind} />
                 </div>
                 <small className="answer-length-hint">答案 {countKoreanLetters(question.ko)} 個韓文字</small>
+                {exampleClozeHint && (
+                  <div className="prompt-example-hint">
+                    <span>例句提示</span>
+                    <strong>{exampleClozeHint.cloze}</strong>
+                    {exampleClozeHint.zh && <small>{exampleClozeHint.zh}</small>}
+                  </div>
+                )}
               </div>
               <div className="typed-answer-area">
                 <textarea

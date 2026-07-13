@@ -35,6 +35,8 @@ PROJECT_ID = "korean-review-web"
 APP_STATE_ID = "reviewState"
 STUDY_DATE = "2026-07-05"
 REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90]
+DAILY_EXAMPLE_LIMIT = 15
+DAILY_EXAMPLE_ACCUMULATION_START = "2026-07-13"
 
 
 def utc_now_iso() -> str:
@@ -321,9 +323,152 @@ def due_questions(state: Dict[str, Any], questions: List[Question], date_key: Op
     return [question for question in questions if get_progress(state, question).get("nextDue", question.date) <= date_key]
 
 
+def seed_from_string(text: str) -> int:
+    seed = 17
+    for ch in text:
+        seed = ((seed * 31) + ord(ch)) % 233280
+    return seed
+
+
+def shuffle_items(items: List[Question], seed: int) -> List[Question]:
+    result = list(items)
+    value = seed or 1
+    for i in range(len(result) - 1, 0, -1):
+        value = (value * 9301 + 49297) % 233280
+        j = int((value / 233280) * (i + 1))
+        result[i], result[j] = result[j], result[i]
+    return result
+
+
 def order_questions(questions: Iterable[Question]) -> List[Question]:
     rank = {"term": 0, "example": 1}
     return sorted(questions, key=lambda q: (rank.get(q.kind, 99), q.date, q.source.index, q.id))
+
+
+def current_example_round_correct_ids_before_date(state: Dict[str, Any], example_questions: List[Question], date_key: Optional[str] = None) -> set[str]:
+    date_key = date_key or today_string()
+    example_ids = {question.id for question in example_questions}
+    correct_ids: set[str] = set()
+    attempts = sorted(
+        [
+            attempt
+            for attempt in (state.get("attempts") or [])
+            if attempt.get("questionId") in example_ids and str(attempt.get("time", ""))[:10] < date_key
+        ],
+        key=lambda attempt: attempt.get("time") or "",
+    )
+    for attempt in attempts:
+        if attempt.get("correct"):
+            correct_ids.add(attempt.get("questionId"))
+        if example_ids and len(correct_ids) == len(example_ids):
+            correct_ids.clear()
+    return correct_ids
+
+
+def last_attempts_by_date(state: Dict[str, Any], question_ids: Iterable[str], date_key: str) -> Dict[str, Dict[str, Any]]:
+    ids = set(question_ids)
+    latest: Dict[str, Dict[str, Any]] = {}
+    for attempt in state.get("attempts") or []:
+        question_id = attempt.get("questionId")
+        if question_id not in ids or str(attempt.get("time", ""))[:10] != date_key:
+            continue
+        previous = latest.get(question_id)
+        if previous is None or str(attempt.get("time", "")) > str(previous.get("time", "")):
+            latest[question_id] = attempt
+    return latest
+
+
+def unique_questions(questions: Iterable[Question]) -> List[Question]:
+    seen: set[str] = set()
+    result: List[Question] = []
+    for question in questions:
+        if question.id in seen:
+            continue
+        seen.add(question.id)
+        result.append(question)
+    return result
+
+
+def has_attempt_after_date_through(state: Dict[str, Any], question_id: str, after_date: str, through_date: str) -> bool:
+    for attempt in state.get("attempts") or []:
+        attempt_date = str(attempt.get("time", ""))[:10]
+        if attempt.get("questionId") == question_id and after_date < attempt_date <= through_date:
+            return True
+    return False
+
+
+def date_range(start_date: str, end_date: str) -> List[str]:
+    dates: List[str] = []
+    current = start_date
+    while current <= end_date:
+        dates.append(current)
+        current = add_days(current, 1)
+    return dates
+
+
+def example_accumulation_start_date(state: Dict[str, Any], date_key: str) -> str:
+    completed = sorted(date for date in (state.get("completedReviewDates") or []) if date < date_key)
+    after_last_completed = add_days(completed[-1], 1) if completed else DAILY_EXAMPLE_ACCUMULATION_START
+    start = max(after_last_completed, DAILY_EXAMPLE_ACCUMULATION_START)
+    return date_key if start > date_key else start
+
+
+def daily_example_questions(
+    state: Dict[str, Any],
+    questions: List[Question],
+    date_key: Optional[str] = None,
+    limit: int = DAILY_EXAMPLE_LIMIT,
+    excluded_ids: Optional[set[str]] = None,
+) -> List[Question]:
+    date_key = date_key or today_string()
+    excluded_ids = excluded_ids or set()
+    examples = order_questions([question for question in questions if question.kind == "example"])
+    if not examples:
+        return []
+    example_ids = [question.id for question in examples]
+    answered_today = last_attempts_by_date(state, example_ids, date_key)
+    yesterday_attempts = last_attempts_by_date(state, example_ids, add_days(date_key, -1))
+    current_round_correct = current_example_round_correct_ids_before_date(state, examples, date_key)
+    seed = seed_from_string(date_key)
+
+    def available(question: Question) -> bool:
+        return question.id not in answered_today and question.id not in excluded_ids
+
+    yesterday_wrong = shuffle_items(
+        [question for question in examples if yesterday_attempts.get(question.id, {}).get("correct") is False],
+        seed + 11,
+    )
+    current_round_unanswered = shuffle_items(
+        [question for question in examples if question.id not in current_round_correct],
+        seed + 23,
+    )
+    current_pool = unique_questions([*yesterday_wrong, *current_round_unanswered])
+    daily_pool = [question for question in current_pool if available(question)] if current_pool else shuffle_items([question for question in examples if available(question)], seed + 37)
+    return daily_pool[:limit]
+
+
+def accumulated_daily_example_questions(state: Dict[str, Any], questions: List[Question], date_key: Optional[str] = None) -> List[Question]:
+    date_key = date_key or today_string()
+    start_date = example_accumulation_start_date(state, date_key)
+    selected_ids: set[str] = set()
+    accumulated: List[Question] = []
+    for quota_date in date_range(start_date, date_key):
+        batch = [
+            question for question in daily_example_questions(state, questions, quota_date, DAILY_EXAMPLE_LIMIT, selected_ids)
+            if quota_date == date_key or not has_attempt_after_date_through(state, question.id, quota_date, date_key)
+        ]
+        for question in batch:
+            selected_ids.add(question.id)
+            accumulated.append(question)
+    return accumulated
+
+
+def daily_due_questions(state: Dict[str, Any], questions: List[Question], date_key: Optional[str] = None) -> List[Question]:
+    date_key = date_key or today_string()
+    reviewable = [question for question in questions if question.kind in ("term", "example")]
+    terms = due_questions(state, [question for question in reviewable if question.kind == "term"], date_key)
+    examples = accumulated_daily_example_questions(state, reviewable, date_key)
+    return order_questions([*terms, *examples])
 
 
 def record_answer(state: Dict[str, Any], question: Question, correct: bool) -> None:
@@ -347,7 +492,7 @@ def record_answer(state: Dict[str, Any], question: Question, correct: bool) -> N
     }
     attempts = state.setdefault("attempts", [])
     attempts.insert(0, {"id": str(uuid.uuid4()), "questionId": question.id, "correct": correct, "time": now})
-    del attempts[300:]
+    del attempts[5000:]
 
 
 def toggle_star(state: Dict[str, Any], card: Card) -> None:
@@ -596,14 +741,18 @@ def date_menu(stdscr: curses.window, cards: List[Card]) -> Optional[str]:
 
 
 def due_task_menu(stdscr: curses.window, state: Dict[str, Any], questions: List[Question]) -> Optional[List[Question]]:
-    due = due_questions(state, questions)
+    due = daily_due_questions(state, questions)
     grouped: Dict[str, List[Question]] = {}
     for question in due:
-        grouped.setdefault(question.date, []).append(question)
+        key = "examples" if question.kind == "example" else question.date
+        grouped.setdefault(key, []).append(question)
     if not grouped:
         wait_message(stdscr, "今日複習題", "今天沒有到期題目。")
         return None
-    options = [(date_key, f"{date_key} · {len(items)} 題") for date_key, items in sorted(grouped.items())]
+    options = []
+    if "examples" in grouped:
+        options.append(("examples", f"例句練習 · {len(grouped['examples'])} 句"))
+    options.extend((date_key, f"{date_key} · {len(items)} 題") for date_key, items in sorted(grouped.items()) if date_key != "examples")
     selected = menu(stdscr, "今日複習題 | 選擇學習日期", options)
     return order_questions(grouped[selected]) if selected else None
 

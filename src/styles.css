@@ -1539,6 +1539,32 @@ main {
   font-weight: 900;
 }
 
+.prompt-example-hint {
+  display: grid;
+  gap: 5px;
+  margin-top: 14px;
+  padding: 14px 15px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.prompt-example-hint span {
+  color: #2f8f82;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.prompt-example-hint strong {
+  color: #26343a;
+  font-size: 18px;
+  line-height: 1.45;
+}
+
+.prompt-example-hint small {
+  color: #6f7b83;
+  font-weight: 750;
+}
+
 textarea {
   width: 100%;
   min-height: 130px;
