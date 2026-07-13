@@ -232,27 +232,6 @@ function itemExamples(item) {
   return (item.meanings || []).flatMap((meaning) => meaning.examples || []);
 }
 
-function blankKoreanAnswerInExample(exampleKo, answerKo) {
-  const answer = (answerKo || '').trim();
-  if (!exampleKo || !answer) return '';
-  const blank = '_'.repeat(Math.max(4, countKoreanLetters(answer)));
-  if (exampleKo.includes(answer)) return exampleKo.replace(answer, blank);
-  const escaped = answer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const particlePattern = new RegExp(`${escaped}([은는이가을를와과도만부터까지로으로에에서])`);
-  if (particlePattern.test(exampleKo)) return exampleKo.replace(particlePattern, `${blank}$1`);
-  return '';
-}
-
-function buildExampleClozeHint(question, seed = 1) {
-  if (question?.kind !== 'term') return null;
-  const examples = itemExamples(question.source || {}).filter((example) => example.ko);
-  const candidates = examples
-    .map((example) => ({ ...example, cloze: blankKoreanAnswerInExample(example.ko, question.ko) }))
-    .filter((example) => example.cloze && example.cloze !== example.ko);
-  if (!candidates.length) return null;
-  return shuffleItems(candidates, seedFromString(`${question.id}-${seed}`))[0];
-}
-
 function displayRelated(item, allItems = []) {
   const byId = new Map(allItems.map((entry) => [entry.id, entry]));
   return (item.related || []).map((id) => byId.get(id)).filter(Boolean);
@@ -2703,10 +2682,6 @@ function PracticePage({ store, updateStore, set }) {
   }, [set.questions, source, direction, set.termOnly, set.dueOnly, store, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
-  const exampleClozeHint = useMemo(
-    () => (activeDirection === 'zh-ko' && question?.kind === 'term' ? buildExampleClozeHint(question, index + queue.length) : null),
-    [activeDirection, question, index, queue.length],
-  );
   const resetSession = () => {
     setStarted(false);
     setQuestionQueue([]);
@@ -2908,13 +2883,6 @@ function PracticePage({ store, updateStore, set }) {
                   <QuestionKindBadge kind={question.kind} />
                 </div>
                 <small className="answer-length-hint">答案 {countKoreanLetters(question.ko)} 個韓文字</small>
-                {exampleClozeHint && (
-                  <div className="prompt-example-hint">
-                    <span>例句提示</span>
-                    <strong>{exampleClozeHint.cloze}</strong>
-                    {exampleClozeHint.zh && <small>{exampleClozeHint.zh}</small>}
-                  </div>
-                )}
               </div>
               <div className="typed-answer-area">
                 <textarea

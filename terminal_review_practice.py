@@ -513,36 +513,15 @@ def count_korean_letters(text: str) -> int:
     return sum(1 for ch in text if "\uac00" <= ch <= "\ud7af" or "\u1100" <= ch <= "\u11ff" or "\u3130" <= ch <= "\u318f")
 
 
-def blank_korean_answer_in_example(example_ko: str, answer_ko: str) -> str:
-    answer = answer_ko.strip()
-    if not example_ko or not answer:
-        return ""
-    blank = "_" * max(4, count_korean_letters(answer))
-    if answer in example_ko:
-        return example_ko.replace(answer, blank, 1)
-    particle_pattern = re.compile(f"{re.escape(answer)}([은는이가을를와과도만부터까지로으로에에서])")
-    return particle_pattern.sub(f"{blank}\\1", example_ko, count=1)
-
-
-def build_example_cloze_hint(question: Question, seed: int = 1) -> Optional[Dict[str, str]]:
-    if question.kind != "term":
-        return None
-    candidates = []
-    for example in question.source.meanings:
-        for entry in example.get("examples", []) or []:
+def card_examples(card: Card) -> List[Dict[str, str]]:
+    examples: List[Dict[str, str]] = []
+    for meaning in card.meanings:
+        for entry in meaning.get("examples", []) or []:
             ko = str(entry.get("ko", "")).strip()
-            cloze = blank_korean_answer_in_example(ko, question.ko)
-            if cloze and cloze != ko:
-                candidates.append({"ko": ko, "zh": str(entry.get("zh", "")).strip(), "cloze": cloze})
-    if not candidates:
-        return None
-    shuffled = list(candidates)
-    value = seed_from_string(f"{question.id}-{seed}")
-    for i in range(len(shuffled) - 1, 0, -1):
-        value = (value * 9301 + 49297) % 233280
-        j = int((value / 233280) * (i + 1))
-        shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
-    return shuffled[0]
+            zh = str(entry.get("zh", "")).strip()
+            if ko or zh:
+                examples.append({"ko": ko, "zh": zh})
+    return examples
 
 
 def _cell_width(ch: str) -> int:
@@ -935,9 +914,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         record_label = "" if should_record_results else " 不紀錄"
         draw_line(stdscr, 1, 2, f"測驗{record_label} | {title} | {idx + 1}/{len(questions)}  Esc=返回 0=星號 8=答案 4/6=上下題 +=檢查 Enter=送出", curses.A_BOLD)
         length_hint = f"  ({count_korean_letters(answer)} 個韓文字)" if config["direction"] == "zh-ko" else ""
-        cloze_hint = build_example_cloze_hint(question, idx + len(questions)) if config["direction"] == "zh-ko" else None
-        cloze_text = f"  ｜例句: {cloze_hint['cloze']}" if cloze_hint else ""
-        y = draw_wrapped(stdscr, 2, 2, width - 4, f"{'★' if question.source.is_starred else '☆'} 題目: {prompt}{length_hint}{cloze_text}")
+        y = draw_wrapped(stdscr, 2, 2, width - 4, f"{'★' if question.source.is_starred else '☆'} 題目: {prompt}{length_hint}")
         draw_line(stdscr, y, 2, f"答案: {answer}" if show_hint else "答案: hidden (press 8)")
         input_y = y + 1
         answered_attr = ok_attr if graded and last_correct is True else 0
@@ -945,6 +922,14 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         count_x = max(positions[-1] + 2, width - 18)
         draw_line(stdscr, input_y, count_x, f"{count_korean_letters(user_input)} 個韓文字", curses.A_DIM)
         message_y = input_y + 1
+        if (show_hint or graded) and question.kind == "term":
+            examples = card_examples(question.source)
+            if examples:
+                draw_line(stdscr, message_y, 2, "例句:", curses.A_DIM)
+                message_y += 1
+                for example in examples:
+                    text = " / ".join(part for part in (example.get("ko"), example.get("zh")) if part)
+                    message_y = draw_wrapped(stdscr, message_y, 4, width - 6, text, curses.A_DIM)
         if retry_diff or (graded and last_correct is False):
             draw_answer_diff(stdscr, message_y, 2, user_input, answer, wrong_attr)
             message_y += 1
