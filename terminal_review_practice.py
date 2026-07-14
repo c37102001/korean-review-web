@@ -443,8 +443,8 @@ def daily_example_questions(
         seed + 23,
     )
     current_pool = unique_questions([*yesterday_wrong, *current_round_unanswered])
-    daily_pool = [question for question in current_pool if available(question)] if current_pool else shuffle_items([question for question in examples if available(question)], seed + 37)
-    return daily_pool[:limit]
+    quota_pool = current_pool[:limit] if current_pool else shuffle_items(examples, seed + 37)[:limit]
+    return [question for question in quota_pool if available(question)]
 
 
 def accumulated_daily_example_questions(state: Dict[str, Any], questions: List[Question], date_key: Optional[str] = None) -> List[Question]:
@@ -848,11 +848,19 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
         draw_line(stdscr, 1, 2, f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回  0=星號  8=詳情  4/6=上下張", curses.A_BOLD)
         draw_line(stdscr, 2, 2, f"{'★' if card.is_starred else '☆'} {card.ko}", curses.A_BOLD)
         y = draw_wrapped(stdscr, 3, 2, stdscr.getmaxyx()[1] - 4, card.zh)
+        examples = card_examples(card)
+        if examples:
+            draw_line(stdscr, y, 2, "例句:", curses.A_DIM)
+            y += 1
+            for example in examples:
+                text = " / ".join(part for part in (example.get("ko"), example.get("zh")) if part)
+                y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, text, curses.A_DIM)
         if show_details:
             for meaning in card.meanings:
-                y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, f"- {meaning.get('zh', '')}")
-                for example in meaning.get("examples", []) or []:
-                    y = draw_wrapped(stdscr, y, 6, stdscr.getmaxyx()[1] - 8, f"{example.get('ko', '')} / {example.get('zh', '')}", curses.A_DIM)
+                detail = f"- {meaning.get('zh', '')}"
+                if meaning.get("pattern"):
+                    detail += f" · {meaning.get('pattern')}"
+                y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, detail)
             for note in card.notes:
                 y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, f"筆記: {note}", curses.A_DIM)
         if message:

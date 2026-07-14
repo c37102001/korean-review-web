@@ -839,8 +839,8 @@ function dailyExampleQuestions(store, questions, date = todayString(), limit = D
     seed + 23,
   );
   const currentPool = uniqueQuestions([...yesterdayWrong, ...currentRoundUnanswered]);
-  const dailyPool = currentPool.length ? currentPool.filter(available) : shuffleItems(examples.filter(available), seed + 37);
-  return dailyPool.slice(0, limit);
+  const quotaPool = currentPool.length ? currentPool.slice(0, limit) : shuffleItems(examples, seed + 37).slice(0, limit);
+  return quotaPool.filter(available);
 }
 
 function accumulatedDailyExampleQuestions(store, questions, date = todayString()) {
