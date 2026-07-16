@@ -13,13 +13,19 @@ npm run dev
 
 ## 資料來源
 
-學習內容直接讀寫 Firestore：
+學習內容直接讀寫 Firestore（schema v3）：
 
-- `users/{uid}/days/{date}`：每日原始 JSON 與統計
-- `users/{uid}/items/{itemId}`：解析後的學習項目
-- `users/{uid}/questions/{questionId}`：解析後的測驗題
-- `users/{uid}/records/{recordId}`：原始單字資料
-- `users/{uid}/appState/reviewState`：答題紀錄、熟練度、SRS 進度、學習標記
+- `users/{uid}/records/{recordId}`：單字卡唯一資料來源
+- `users/{uid}/progressShards/{00..15}`：分成 16 份的答題統計與 SRS 進度
+- `users/{uid}/reviewDays/{date}`：按日期分組的作答紀錄
+- `users/{uid}/settings/review`：星號、完成日期與 DB schema 版本
+
+舊的 `days`、`items`、`questions` 與 `appState/reviewState` 不再由應用程式讀寫。遷移工具會先驗證 v3 資料，再視參數清理舊資料：
+
+```bash
+npm run db:migrate
+npm run db:migrate -- --cleanup
+```
 
 內容 schema v2：
 

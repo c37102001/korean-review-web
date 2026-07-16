@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import {
@@ -30,7 +30,7 @@ import {
   X,
 } from 'lucide-react';
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { collection, deleteDoc, doc, getDocs, onSnapshot, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import { auth, db } from './firebase.js';
 import './styles.css';
 
@@ -39,6 +39,8 @@ const DAILY_EXAMPLE_LIMIT = 15;
 const DAILY_EXAMPLE_ACCUMULATION_START = '2026-07-13';
 const STUDY_DATE = '2026-07-05';
 const CONTENT_SCHEMA_VERSION = 2;
+const FIRESTORE_SCHEMA_VERSION = 3;
+const PROGRESS_SHARD_COUNT = 16;
 const APP_STATE_ID = 'reviewState';
 const PUNCTUATION_RE = /[^\p{L}\p{N}\s]/gu;
 const REVIEW_COMPLETION_BACKFILL_START = '2026-07-06';
@@ -77,19 +79,6 @@ async function fetchCustomRecords(uid) {
   });
 }
 
-async function deleteCollectionDocs(uid, collectionName) {
-  const snap = await getDocs(collection(db, 'users', uid, collectionName));
-  await Promise.all(snap.docs.map((documentSnap) => deleteDoc(documentSnap.ref)));
-}
-
-async function cleanupObsoleteFirebaseData(uid) {
-  await Promise.all([
-    deleteCollectionDocs(uid, 'cards'),
-    deleteDoc(doc(db, 'users', uid, 'meta', 'replaceCurrentAppData')),
-    deleteDoc(doc(db, 'users', uid, 'meta', 'contentSchemaV2')),
-  ]);
-}
-
 function recordHasObsoleteContent(record) {
   const item = record.item || {};
   return Boolean(
@@ -101,52 +90,224 @@ function recordHasObsoleteContent(record) {
   );
 }
 
-async function cleanupStoredContent(uid) {
-  const records = await fetchCustomRecords(uid);
-  const staleRecords = records.filter(recordHasObsoleteContent);
-  if (!staleRecords.length) return;
-  await Promise.all(staleRecords.map((record) => deleteQuestionsForRecord(uid, record.id)));
-  await writeLearningRecords(uid, normalizeRecordSet(records));
+const reviewSettingsRef = (uid) => doc(db, 'users', uid, 'settings', 'review');
+const legacyAppStateRef = (uid) => doc(db, 'users', uid, 'appState', APP_STATE_ID);
+
+async function commitFirestoreOperations(operations, chunkSize = 400) {
+  for (let start = 0; start < operations.length; start += chunkSize) {
+    const batch = writeBatch(db);
+    operations.slice(start, start + chunkSize).forEach((operation) => operation(batch));
+    await batch.commit();
+  }
+}
+
+function attemptsByDate(attempts) {
+  return (attempts || []).reduce((groups, attempt) => {
+    const date = attempt.time?.slice(0, 10);
+    if (!date) return groups;
+    if (!groups[date]) groups[date] = [];
+    groups[date].push(attempt);
+    return groups;
+  }, {});
+}
+
+function progressShardId(questionId) {
+  const hash = [...questionId].reduce((sum, character) => sum + character.codePointAt(0), 0);
+  return String(hash % PROGRESS_SHARD_COUNT).padStart(2, '0');
+}
+
+function buildProgressShards(store) {
+  const shards = {};
+  const questionIds = new Set([...Object.keys(store.stats || {}), ...Object.keys(store.progress || {})]);
+  questionIds.forEach((questionId) => {
+    const shardId = progressShardId(questionId);
+    if (!shards[shardId]) shards[shardId] = {};
+    shards[shardId][questionId] = {
+      stats: store.stats?.[questionId] || null,
+      progress: store.progress?.[questionId] || null,
+    };
+  });
+  return shards;
+}
+
+async function readFirestoreStoreV3(uid) {
+  const settingsSnap = await getDoc(reviewSettingsRef(uid));
+  if (!settingsSnap.exists() || settingsSnap.data().schemaVersion !== FIRESTORE_SCHEMA_VERSION) return null;
+
+  const [progressSnap, reviewDaysSnap] = await Promise.all([
+    getDocs(collection(db, 'users', uid, 'progressShards')),
+    getDocs(collection(db, 'users', uid, 'reviewDays')),
+  ]);
+  const stats = {};
+  const progress = {};
+  progressSnap.docs.forEach((documentSnap) => {
+    const entries = documentSnap.data().entries || {};
+    Object.entries(entries).forEach(([questionId, data]) => {
+      if (data.stats) stats[questionId] = data.stats;
+      if (data.progress) progress[questionId] = data.progress;
+    });
+  });
+  const attempts = reviewDaysSnap.docs
+    .flatMap((documentSnap) => documentSnap.data().attempts || [])
+    .sort((a, b) => (b.time || '').localeCompare(a.time || ''))
+    .slice(0, 5000);
+  const settings = settingsSnap.data();
+  return {
+    ...emptyStore(),
+    stats,
+    progress,
+    attempts,
+    completedReviewDates: settings.completedReviewDates || [],
+    starred: settings.starred || [],
+    migratedLegacyUpdatedAt: settings.migratedLegacyUpdatedAt || null,
+  };
+}
+
+async function readLegacyFirestoreStore(uid) {
+  const snap = await getDoc(legacyAppStateRef(uid));
+  if (!snap.exists()) return null;
+  const data = snap.data();
+  return { ...emptyStore(), ...data, legacyUpdatedAt: data.updatedAt || null };
+}
+
+function timestampMillis(value) {
+  if (!value) return 0;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+async function writeFullFirestoreStoreV3(uid, store) {
+  const operations = [];
+  Object.entries(buildProgressShards(store)).forEach(([shardId, entries]) => {
+    operations.push((batch) => batch.set(
+      doc(db, 'users', uid, 'progressShards', shardId),
+      { entries, updatedAt: serverTimestamp() },
+    ));
+  });
+  Object.entries(attemptsByDate(store.attempts)).forEach(([date, attempts]) => {
+    operations.push((batch) => batch.set(
+      doc(db, 'users', uid, 'reviewDays', date),
+      { date, attempts, updatedAt: serverTimestamp() },
+    ));
+  });
+  await commitFirestoreOperations(operations);
+  await setDoc(reviewSettingsRef(uid), {
+    schemaVersion: FIRESTORE_SCHEMA_VERSION,
+    completedReviewDates: store.completedReviewDates || [],
+    starred: store.starred || [],
+    migratedLegacyUpdatedAt: store.legacyUpdatedAt || store.migratedLegacyUpdatedAt || null,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+async function persistFirestoreStoreChanges(uid, previous, next) {
+  const operations = [];
+  const changedShardIds = new Set();
+  const questionIds = new Set([
+    ...Object.keys(previous.stats || {}),
+    ...Object.keys(previous.progress || {}),
+    ...Object.keys(next.stats || {}),
+    ...Object.keys(next.progress || {}),
+  ]);
+  questionIds.forEach((questionId) => {
+    const previousValue = { stats: previous.stats?.[questionId] || null, progress: previous.progress?.[questionId] || null };
+    const nextValue = { stats: next.stats?.[questionId] || null, progress: next.progress?.[questionId] || null };
+    if (JSON.stringify(previousValue) === JSON.stringify(nextValue)) return;
+    changedShardIds.add(progressShardId(questionId));
+  });
+  const nextShards = buildProgressShards(next);
+  changedShardIds.forEach((shardId) => {
+    const ref = doc(db, 'users', uid, 'progressShards', shardId);
+    if (!nextShards[shardId]) operations.push((batch) => batch.delete(ref));
+    else operations.push((batch) => batch.set(ref, { entries: nextShards[shardId], updatedAt: serverTimestamp() }));
+  });
+
+  const previousDays = attemptsByDate(previous.attempts);
+  const nextDays = attemptsByDate(next.attempts);
+  new Set([...Object.keys(previousDays), ...Object.keys(nextDays)]).forEach((date) => {
+    if (JSON.stringify(previousDays[date] || []) === JSON.stringify(nextDays[date] || [])) return;
+    const ref = doc(db, 'users', uid, 'reviewDays', date);
+    if (!nextDays[date]?.length) operations.push((batch) => batch.delete(ref));
+    else operations.push((batch) => batch.set(ref, { date, attempts: nextDays[date], updatedAt: serverTimestamp() }));
+  });
+
+  const settingsChanged = JSON.stringify(previous.completedReviewDates || []) !== JSON.stringify(next.completedReviewDates || [])
+    || JSON.stringify(previous.starred || []) !== JSON.stringify(next.starred || []);
+  if (settingsChanged) {
+    operations.push((batch) => batch.set(reviewSettingsRef(uid), {
+      schemaVersion: FIRESTORE_SCHEMA_VERSION,
+      completedReviewDates: next.completedReviewDates || [],
+      starred: next.starred || [],
+      migratedLegacyUpdatedAt: next.migratedLegacyUpdatedAt || null,
+      updatedAt: serverTimestamp(),
+    }));
+  }
+  await commitFirestoreOperations(operations);
 }
 
 function useFirestoreStore(user) {
   const [state, setState] = useState({ loading: true, error: '', store: emptyStore() });
+  const storeRef = useRef(emptyStore());
+  const writeQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
     let cancelled = false;
-    let unsubscribe = null;
+    const unsubscribers = [];
+    const applyRemoteStore = (updater) => {
+      if (cancelled) return;
+      const next = updater(storeRef.current);
+      storeRef.current = next;
+      setState((current) => ({ ...current, store: next }));
+    };
     async function load() {
       if (!user) return;
       setState((current) => ({ ...current, loading: true, error: '' }));
       try {
-        await cleanupObsoleteFirebaseData(user.uid);
-        await cleanupStoredContent(user.uid);
         const customRecords = await fetchCustomRecords(user.uid);
+        const staleRecords = customRecords.filter(recordHasObsoleteContent);
+        const normalizedRecords = staleRecords.length ? normalizeRecordSet(customRecords) : customRecords;
+        if (staleRecords.length) await writeLearningRecords(user.uid, normalizedRecords);
+        let persistedStore = await readFirestoreStoreV3(user.uid);
+        const legacyStore = await readLegacyFirestoreStore(user.uid);
+        const legacyIsNewer = legacyStore
+          && timestampMillis(legacyStore.legacyUpdatedAt) > timestampMillis(persistedStore?.migratedLegacyUpdatedAt);
+        if (!persistedStore || legacyIsNewer) {
+          persistedStore = legacyStore || emptyStore();
+          await writeFullFirestoreStoreV3(user.uid, persistedStore);
+        }
         if (cancelled) return;
-        unsubscribe = onSnapshot(
-          doc(db, 'users', user.uid, 'appState', APP_STATE_ID),
-          (snap) => {
-            if (cancelled) return;
-            const data = snap.exists() ? snap.data() : emptyStore();
-            setState((current) => ({
-              loading: false,
-              error: '',
-              store: {
-                stats: data.stats || {},
-                progress: data.progress || {},
-                learning: data.learning || {},
-                attempts: data.attempts || [],
-                deletedRecordIds: data.deletedRecordIds || [],
-                completedReviewDates: data.completedReviewDates || [],
-                starred: data.starred || [],
-                customRecords: current.loading ? customRecords : (current.store.customRecords || []),
-              },
-            }));
-          },
-          (error) => {
-            if (!cancelled) setState({ loading: false, error: error.message, store: emptyStore() });
-          },
-        );
+        const loadedStore = { ...persistedStore, customRecords: normalizedRecords, deletedRecordIds: [], learning: {} };
+        storeRef.current = loadedStore;
+        setState({ loading: false, error: '', store: loadedStore });
+
+        unsubscribers.push(onSnapshot(reviewSettingsRef(user.uid), (snap) => {
+          if (!snap.exists()) return;
+          const settings = snap.data();
+          applyRemoteStore((current) => ({
+            ...current,
+            completedReviewDates: settings.completedReviewDates || [],
+            starred: settings.starred || [],
+          }));
+        }));
+        unsubscribers.push(onSnapshot(collection(db, 'users', user.uid, 'progressShards'), (snap) => {
+          const stats = {};
+          const progress = {};
+          snap.docs.forEach((documentSnap) => {
+            Object.entries(documentSnap.data().entries || {}).forEach(([questionId, data]) => {
+              if (data.stats) stats[questionId] = data.stats;
+              if (data.progress) progress[questionId] = data.progress;
+            });
+          });
+          applyRemoteStore((current) => ({ ...current, stats, progress }));
+        }));
+        unsubscribers.push(onSnapshot(collection(db, 'users', user.uid, 'reviewDays'), (snap) => {
+          const attempts = snap.docs
+            .flatMap((documentSnap) => documentSnap.data().attempts || [])
+            .sort((a, b) => (b.time || '').localeCompare(a.time || ''))
+            .slice(0, 5000);
+          applyRemoteStore((current) => ({ ...current, attempts }));
+        }));
       } catch (error) {
         if (!cancelled) setState({ loading: false, error: error.message, store: emptyStore() });
       }
@@ -154,20 +315,21 @@ function useFirestoreStore(user) {
     load();
     return () => {
       cancelled = true;
-      if (unsubscribe) unsubscribe();
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
   }, [user]);
 
-  const update = async (updater) => {
-    const next = updater(state.store);
+  const update = useCallback(async (updater) => {
+    if (!user) return;
+    const previous = storeRef.current;
+    const next = updater(previous);
+    storeRef.current = next;
     setState((current) => ({ ...current, store: next }));
-    const { customRecords, ...persistedState } = next;
-    await setDoc(
-      doc(db, 'users', user.uid, 'appState', APP_STATE_ID),
-      { ...persistedState, updatedAt: serverTimestamp() },
-      { merge: true },
-    );
-  };
+    writeQueueRef.current = writeQueueRef.current
+      .catch(() => {})
+      .then(() => persistFirestoreStoreChanges(user.uid, previous, next));
+    await writeQueueRef.current;
+  }, [user]);
 
   return [state.store, update, state.loading, state.error];
 }
@@ -678,57 +840,19 @@ function parseEditedImportItem(text, label = '編輯後的單字') {
 
 async function writeLearningRecords(uid, records) {
   const normalizedRecords = normalizeRecordSet(records);
-  const { items, questions } = normalizeRecords(normalizedRecords);
-  const batch = writeBatch(db);
-  const byDate = normalizedRecords.reduce((acc, record) => {
-    acc[record.date] = acc[record.date] || [];
-    acc[record.date].push(record.item);
-    return acc;
-  }, {});
-
-  Object.entries(byDate).forEach(([date, rawItems]) => {
-    batch.set(
-      doc(db, 'users', uid, 'days', date),
-      {
-        date,
-        lastAddedItems: rawItems,
-        itemCount: rawItems.length,
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true },
-    );
-  });
-  normalizedRecords.forEach((record) => {
-    batch.set(doc(db, 'users', uid, 'records', record.id), { ...record, updatedAt: serverTimestamp() });
-  });
-  items.forEach((item) => {
-    batch.set(doc(db, 'users', uid, 'items', item.id), { ...item, updatedAt: serverTimestamp() });
-  });
-  questions.forEach((question) => {
-    const { source, ...questionDoc } = question;
-    batch.set(doc(db, 'users', uid, 'questions', question.id), { ...questionDoc, updatedAt: serverTimestamp() });
-  });
-  await batch.commit();
-}
-
-async function deleteQuestionsForRecord(uid, recordId) {
-  const snap = await getDocs(collection(db, 'users', uid, 'questions'));
-  await Promise.all(snap.docs
-    .filter((documentSnap) => documentSnap.data().itemId === recordId)
-    .map((documentSnap) => deleteDoc(documentSnap.ref)));
+  const operations = normalizedRecords.map((record) => (batch) => batch.set(
+    doc(db, 'users', uid, 'records', record.id),
+    { ...record, updatedAt: serverTimestamp() },
+  ));
+  await commitFirestoreOperations(operations);
 }
 
 async function writeLearningRecord(uid, record) {
-  await deleteQuestionsForRecord(uid, record.id);
   await writeLearningRecords(uid, [record]);
 }
 
 async function deleteLearningRecord(uid, recordId) {
-  await deleteQuestionsForRecord(uid, recordId);
-  await Promise.all([
-    deleteDoc(doc(db, 'users', uid, 'records', recordId)),
-    deleteDoc(doc(db, 'users', uid, 'items', recordId)),
-  ]);
+  await deleteDoc(doc(db, 'users', uid, 'records', recordId));
 }
 
 function getStats(store, id) {
@@ -873,6 +997,7 @@ function accumulatedDailyExampleQuestions(store, questions, date = todayString()
 }
 
 function dailyReviewQuestions(store, questions, date = todayString()) {
+  if ((store.completedReviewDates || []).includes(date)) return [];
   const reviewable = reviewQuestions(questions);
   const terms = dueQuestions(store, reviewable.filter((question) => question.kind === 'term'), date);
   const examples = accumulatedDailyExampleQuestions(store, reviewable, date);
@@ -1113,9 +1238,8 @@ function App() {
   const allRecords = useMemo(() => {
     const byId = new Map();
     (store.customRecords || []).forEach((record) => byId.set(record.id, record));
-    (store.deletedRecordIds || []).forEach((id) => byId.delete(id));
     return [...byId.values()];
-  }, [store.customRecords, store.deletedRecordIds]);
+  }, [store.customRecords]);
   const { items, questions } = useMemo(() => normalizeRecords(allRecords), [allRecords]);
   const dailyQuestions = useMemo(() => reviewQuestions(questions), [questions]);
   const todayDailyQuestions = useMemo(() => dailyReviewQuestions(store, dailyQuestions, todayString()), [store, dailyQuestions]);
@@ -1183,15 +1307,12 @@ function App() {
       updatedRecords.forEach((record) => recordsById.set(record.id, record));
       return { ...current, customRecords: [...recordsById.values()] };
     });
-    for (const record of updatedRecords) {
-      await writeLearningRecord(user.uid, record);
-    }
+    await writeLearningRecords(user.uid, updatedRecords);
   };
   const deleteLearningRecordFromStore = async (recordId) => {
     await updateStore((current) => ({
       ...current,
       customRecords: (current.customRecords || []).filter((record) => record.id !== recordId),
-      deletedRecordIds: [...new Set([...(current.deletedRecordIds || []), recordId])],
       stats: Object.fromEntries(Object.entries(current.stats || {}).filter(([id]) => id !== recordId && !id.startsWith(`${recordId}-`))),
       progress: Object.fromEntries(Object.entries(current.progress || {}).filter(([id]) => id !== recordId && !id.startsWith(`${recordId}-`))),
       learning: Object.fromEntries(Object.entries(current.learning || {}).filter(([id]) => id !== recordId)),

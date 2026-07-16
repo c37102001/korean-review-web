@@ -33,6 +33,8 @@ from urllib import error, parse, request
 API_KEY = "AIzaSyCfy63R72H6LDCb-bR7L7RwkKNnGCTHPgU"
 PROJECT_ID = "korean-review-web"
 APP_STATE_ID = "reviewState"
+FIRESTORE_SCHEMA_VERSION = 3
+PROGRESS_SHARD_COUNT = 16
 STUDY_DATE = "2026-07-05"
 REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90]
 DAILY_EXAMPLE_LIMIT = 15
@@ -88,6 +90,8 @@ class FirebaseClient:
     def __init__(self, api_key: str, project_id: str) -> None:
         self.api_key = api_key
         self.project_id = project_id
+        self._legacy_state = False
+        self._saved_state: Dict[str, Any] = empty_state()
 
     def sign_in(self, email: str, password: str) -> AuthSession:
         url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={self.api_key}"
@@ -107,21 +111,120 @@ class FirebaseClient:
         ]
 
     def get_app_state(self, session: AuthSession) -> Dict[str, Any]:
+        try:
+            settings_doc = self._request_json(
+                "GET",
+                self._document_url(["users", session.uid, "settings", "review"]),
+                session=session,
+            )
+            settings = _parse_firestore_fields(settings_doc.get("fields", {}))
+        except RuntimeError as exc:
+            if "NOT_FOUND" not in str(exc) and "404" not in str(exc):
+                raise
+            settings = {}
+
+        if settings.get("schemaVersion") == FIRESTORE_SCHEMA_VERSION:
+            state = empty_state()
+            for document in self._list_documents(["users", session.uid, "progressShards"], session):
+                data = _parse_firestore_fields(document.get("fields", {}))
+                for question_id, entry in (data.get("entries") or {}).items():
+                    if entry.get("stats") is not None:
+                        state["stats"][question_id] = entry["stats"]
+                    if entry.get("progress") is not None:
+                        state["progress"][question_id] = entry["progress"]
+            attempts = []
+            for document in self._list_documents(["users", session.uid, "reviewDays"], session):
+                data = _parse_firestore_fields(document.get("fields", {}))
+                attempts.extend(data.get("attempts") or [])
+            state["attempts"] = sorted(attempts, key=lambda attempt: attempt.get("time", ""), reverse=True)[:5000]
+            state["completedReviewDates"] = settings.get("completedReviewDates") or []
+            state["starred"] = settings.get("starred") or []
+            self._legacy_state = False
+            self._saved_state = _clone_json(state)
+            return state
+
         url = self._document_url(["users", session.uid, "appState", APP_STATE_ID])
         try:
             doc = self._request_json("GET", url, session=session)
         except RuntimeError as exc:
             if "NOT_FOUND" in str(exc) or "404" in str(exc):
-                return empty_state()
+                state = empty_state()
+                self._legacy_state = True
+                self._saved_state = _clone_json(state)
+                return state
             raise
         state = _parse_firestore_fields(doc.get("fields", {}))
-        return {**empty_state(), **state}
+        state = {**empty_state(), **state}
+        self._legacy_state = True
+        self._saved_state = _clone_json(state)
+        return state
 
     def save_app_state(self, session: AuthSession, state: Dict[str, Any]) -> None:
+        if not self._legacy_state:
+            self._save_v3_state_changes(session, self._saved_state, state)
+            self._saved_state = _clone_json(state)
+            return
         persisted = {key: value for key, value in state.items() if key != "customRecords"}
         persisted["updatedAt"] = utc_now_iso()
         payload = {"fields": {key: _to_firestore_value(value) for key, value in persisted.items()}}
         self._request_json("PATCH", self._document_url(["users", session.uid, "appState", APP_STATE_ID]), payload=payload, session=session)
+        self._saved_state = _clone_json(state)
+
+    def _save_v3_state_changes(self, session: AuthSession, previous: Dict[str, Any], state: Dict[str, Any]) -> None:
+        question_ids = set(previous.get("stats") or {}) | set(previous.get("progress") or {}) | set(state.get("stats") or {}) | set(state.get("progress") or {})
+        changed_shards = set()
+        for question_id in question_ids:
+            old_value = {
+                "stats": (previous.get("stats") or {}).get(question_id),
+                "progress": (previous.get("progress") or {}).get(question_id),
+            }
+            new_value = {
+                "stats": (state.get("stats") or {}).get(question_id),
+                "progress": (state.get("progress") or {}).get(question_id),
+            }
+            if old_value == new_value:
+                continue
+            changed_shards.add(_progress_shard_id(question_id))
+        current_shards = _build_progress_shards(state)
+        for shard_id in changed_shards:
+            payload_data = {"entries": current_shards.get(shard_id, {}), "updatedAt": utc_now_iso()}
+            payload = {"fields": {key: _to_firestore_value(value) for key, value in payload_data.items()}}
+            self._request_json(
+                "PATCH",
+                self._document_url(["users", session.uid, "progressShards", shard_id]),
+                payload=payload,
+                session=session,
+            )
+
+        previous_days = _attempts_by_date(previous.get("attempts") or [])
+        current_days = _attempts_by_date(state.get("attempts") or [])
+        for date_key in set(previous_days) | set(current_days):
+            if previous_days.get(date_key) == current_days.get(date_key):
+                continue
+            payload_data = {"date": date_key, "attempts": current_days.get(date_key, []), "updatedAt": utc_now_iso()}
+            payload = {"fields": {key: _to_firestore_value(value) for key, value in payload_data.items()}}
+            self._request_json(
+                "PATCH",
+                self._document_url(["users", session.uid, "reviewDays", date_key]),
+                payload=payload,
+                session=session,
+            )
+
+        settings_changed = previous.get("completedReviewDates") != state.get("completedReviewDates") or previous.get("starred") != state.get("starred")
+        if settings_changed:
+            payload_data = {
+                "schemaVersion": FIRESTORE_SCHEMA_VERSION,
+                "completedReviewDates": state.get("completedReviewDates") or [],
+                "starred": state.get("starred") or [],
+                "updatedAt": utc_now_iso(),
+            }
+            payload = {"fields": {key: _to_firestore_value(value) for key, value in payload_data.items()}}
+            self._request_json(
+                "PATCH",
+                self._document_url(["users", session.uid, "settings", "review"]),
+                payload=payload,
+                session=session,
+            )
 
     def _list_documents(self, segments: List[str], session: AuthSession) -> List[Dict[str, Any]]:
         docs: List[Dict[str, Any]] = []
@@ -185,6 +288,35 @@ def empty_state() -> Dict[str, Any]:
         "completedReviewDates": [],
         "starred": [],
     }
+
+
+def _clone_json(value: Any) -> Any:
+    return json.loads(json.dumps(value))
+
+
+def _attempts_by_date(attempts: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for attempt in attempts:
+        date_key = str(attempt.get("time") or "")[:10]
+        if date_key:
+            groups.setdefault(date_key, []).append(attempt)
+    return groups
+
+
+def _progress_shard_id(question_id: str) -> str:
+    return str(sum(ord(character) for character in question_id) % PROGRESS_SHARD_COUNT).zfill(2)
+
+
+def _build_progress_shards(state: Dict[str, Any]) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    shards: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    question_ids = set(state.get("stats") or {}) | set(state.get("progress") or {})
+    for question_id in question_ids:
+        shard_id = _progress_shard_id(question_id)
+        shards.setdefault(shard_id, {})[question_id] = {
+            "stats": (state.get("stats") or {}).get(question_id),
+            "progress": (state.get("progress") or {}).get(question_id),
+        }
+    return shards
 
 
 def _extract_http_error_message(body: str) -> str:
@@ -465,6 +597,8 @@ def accumulated_daily_example_questions(state: Dict[str, Any], questions: List[Q
 
 def daily_due_questions(state: Dict[str, Any], questions: List[Question], date_key: Optional[str] = None) -> List[Question]:
     date_key = date_key or today_string()
+    if date_key in (state.get("completedReviewDates") or []):
+        return []
     reviewable = [question for question in questions if question.kind in ("term", "example")]
     terms = due_questions(state, [question for question in reviewable if question.kind == "term"], date_key)
     examples = accumulated_daily_example_questions(state, reviewable, date_key)
@@ -1105,6 +1239,13 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                     client,
                     session,
                 )
+                if not daily_due_questions(state, questions):
+                    completed = state.setdefault("completedReviewDates", [])
+                    today = today_string()
+                    if today not in completed:
+                        completed.append(today)
+                        completed.sort()
+                        client.save_app_state(session, state)
         elif choice == "calendar":
             selected_date = date_menu(stdscr, cards)
             if selected_date:
