@@ -128,7 +128,7 @@ function useFirestoreStore(user) {
           (snap) => {
             if (cancelled) return;
             const data = snap.exists() ? snap.data() : emptyStore();
-            setState({
+            setState((current) => ({
               loading: false,
               error: '',
               store: {
@@ -139,9 +139,9 @@ function useFirestoreStore(user) {
                 deletedRecordIds: data.deletedRecordIds || [],
                 completedReviewDates: data.completedReviewDates || [],
                 starred: data.starred || [],
-                customRecords,
+                customRecords: current.loading ? customRecords : (current.store.customRecords || []),
               },
-            });
+            }));
           },
           (error) => {
             if (!cancelled) setState({ loading: false, error: error.message, store: emptyStore() });
@@ -1177,6 +1177,16 @@ function App() {
     });
     await writeLearningRecord(user.uid, record);
   };
+  const updateLearningRecords = async (updatedRecords) => {
+    await updateStore((current) => {
+      const recordsById = new Map((current.customRecords || []).map((record) => [record.id, record]));
+      updatedRecords.forEach((record) => recordsById.set(record.id, record));
+      return { ...current, customRecords: [...recordsById.values()] };
+    });
+    for (const record of updatedRecords) {
+      await writeLearningRecord(user.uid, record);
+    }
+  };
   const deleteLearningRecordFromStore = async (recordId) => {
     await updateStore((current) => ({
       ...current,
@@ -1198,10 +1208,10 @@ function App() {
   const views = {
     home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} onPractice={startPractice} onStudy={startStudy} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} />,
-    notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
+    notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} />,
     practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} />,
-    notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} />,
+    notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} />,
   };
 
   return (
@@ -1432,7 +1442,7 @@ function CalendarPage({ store, items, selectedDate, setSelectedDate, onOpenNotes
   );
 }
 
-function NotesPage({ store, updateStore, items, questions, date, allItems, onPractice, onStudy, onAddRecords, onUpdateRecord, onDeleteRecord }) {
+function NotesPage({ store, updateStore, items, questions, date, allItems, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord }) {
   const [addOpen, setAddOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [jsonEditOpen, setJsonEditOpen] = useState(false);
@@ -1465,7 +1475,7 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, onPra
           allItems={allItems}
           date={date}
           onSave={async (records) => {
-            await Promise.all(records.map((record) => onUpdateRecord(record)));
+            await onUpdateRecords(records);
             setJsonEditOpen(false);
           }}
           onClose={() => setJsonEditOpen(false)}
@@ -3166,7 +3176,7 @@ function EditJsonModal({ items, allItems, date, onSave, onClose }) {
   );
 }
 
-function NotebookPage({ store, updateStore, items, questions, onPractice, onStudy, onAddRecords, onUpdateRecord, onDeleteRecord }) {
+function NotebookPage({ store, updateStore, items, questions, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord }) {
   const [query, setQuery] = useState('');
   const [type, setType] = useState('全部');
   const [level, setLevel] = useState('全部');
@@ -3228,7 +3238,7 @@ function NotebookPage({ store, updateStore, items, questions, onPractice, onStud
           items={items}
           allItems={items}
           onSave={async (records) => {
-            await Promise.all(records.map((record) => onUpdateRecord(record)));
+            await onUpdateRecords(records);
             setJsonEditOpen(false);
           }}
           onClose={() => setJsonEditOpen(false)}
