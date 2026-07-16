@@ -30,7 +30,7 @@ import {
   X,
 } from 'lucide-react';
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { collection, deleteDoc, doc, getDoc, getDocs, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDocs, onSnapshot, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import { auth, db } from './firebase.js';
 import './styles.css';
 
@@ -114,31 +114,39 @@ function useFirestoreStore(user) {
 
   useEffect(() => {
     let cancelled = false;
+    let unsubscribe = null;
     async function load() {
       if (!user) return;
       setState((current) => ({ ...current, loading: true, error: '' }));
       try {
         await cleanupObsoleteFirebaseData(user.uid);
         await cleanupStoredContent(user.uid);
-        const snap = await getDoc(doc(db, 'users', user.uid, 'appState', APP_STATE_ID));
         const customRecords = await fetchCustomRecords(user.uid);
-        const data = snap.exists() ? snap.data() : emptyStore();
-        if (!cancelled) {
-          setState({
-            loading: false,
-            error: '',
-            store: {
-              stats: data.stats || {},
-              progress: data.progress || {},
-              learning: data.learning || {},
-              attempts: data.attempts || [],
-              deletedRecordIds: data.deletedRecordIds || [],
-              completedReviewDates: data.completedReviewDates || [],
-              starred: data.starred || [],
-              customRecords,
-            },
-          });
-        }
+        if (cancelled) return;
+        unsubscribe = onSnapshot(
+          doc(db, 'users', user.uid, 'appState', APP_STATE_ID),
+          (snap) => {
+            if (cancelled) return;
+            const data = snap.exists() ? snap.data() : emptyStore();
+            setState({
+              loading: false,
+              error: '',
+              store: {
+                stats: data.stats || {},
+                progress: data.progress || {},
+                learning: data.learning || {},
+                attempts: data.attempts || [],
+                deletedRecordIds: data.deletedRecordIds || [],
+                completedReviewDates: data.completedReviewDates || [],
+                starred: data.starred || [],
+                customRecords,
+              },
+            });
+          },
+          (error) => {
+            if (!cancelled) setState({ loading: false, error: error.message, store: emptyStore() });
+          },
+        );
       } catch (error) {
         if (!cancelled) setState({ loading: false, error: error.message, store: emptyStore() });
       }
@@ -146,6 +154,7 @@ function useFirestoreStore(user) {
     load();
     return () => {
       cancelled = true;
+      if (unsubscribe) unsubscribe();
     };
   }, [user]);
 
@@ -477,6 +486,7 @@ function createRecordsFromImportEntries(entries, date, existingItems = []) {
 function createUpdateRecordsFromEditedJson(text, date, selectedItems, allItems = []) {
   const data = readJsonImportDocument(text);
   data.forEach(validateImportItem);
+  const scopeLabel = date ? '這一天' : '目前匯出的';
   const selectedById = new Map(selectedItems.map((item) => [item.id, item]));
   const expectedIds = new Set(selectedItems.map((item) => item.id));
   const editedIds = data.map((item) => item.id).filter(Boolean);
@@ -484,12 +494,15 @@ function createUpdateRecordsFromEditedJson(text, date, selectedItems, allItems =
   if (duplicateIds.length) throw new Error(`JSON 中有重複 id：${[...new Set(duplicateIds)].join('、')}`);
   const missingIds = [...expectedIds].filter((id) => !editedIds.includes(id));
   const extraIds = editedIds.filter((id) => !expectedIds.has(id));
-  if (missingIds.length) throw new Error(`缺少這一天原本的單字 id：${missingIds.join('、')}`);
-  if (extraIds.length) throw new Error(`不能在這裡新增或修改其他日期的單字 id：${extraIds.join('、')}`);
+  if (missingIds.length) throw new Error(`缺少${scopeLabel}原本的單字 id：${missingIds.join('、')}`);
+  if (extraIds.length) throw new Error(`不能在這裡新增或修改${scopeLabel}範圍外的單字 id：${extraIds.join('、')}`);
 
   const koById = new Map();
   data.forEach((item) => {
-    if (item.date && item.date !== date) throw new Error(`單字「${item.ko}」的 date 必須維持 ${date}`);
+    const original = selectedById.get(item.id);
+    const expectedDate = date || original?.date;
+    if (!item.date) throw new Error(`單字「${item.ko}」需要保留 date`);
+    if (item.date !== expectedDate) throw new Error(`單字「${item.ko}」的 date 必須維持 ${expectedDate}`);
     const normalizedKo = item.ko.trim();
     const existingId = koById.get(normalizedKo);
     if (existingId && existingId !== item.id) throw new Error(`JSON 中有重複韓文單字：${normalizedKo}`);
@@ -501,10 +514,11 @@ function createUpdateRecordsFromEditedJson(text, date, selectedItems, allItems =
   const now = new Date().toISOString();
   const records = data.map((item) => {
     const original = selectedById.get(item.id);
+    const recordDate = date || original.date;
     return {
       id: original.id,
-      date,
-      item: { ...item, date },
+      date: recordDate,
+      item: { ...item, date: recordDate },
       createdAt: original.createdAt || now,
       updatedAt: now,
     };
@@ -3060,6 +3074,7 @@ function ExportJsonModal({ items, title = '匯出 JSON', onClose }) {
 
 function EditJsonModal({ items, allItems, date, onSave, onClose }) {
   const initialJson = useMemo(() => buildNotebookExport(items), [items]);
+  const scopeText = date || '全部單字';
   const [jsonText, setJsonText] = useState(initialJson);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
@@ -3101,7 +3116,7 @@ function EditJsonModal({ items, allItems, date, onSave, onClose }) {
         <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
         <div className="export-head">
           <div>
-            <span className="eyebrow">Edit JSON · {date}</span>
+            <span className="eyebrow">Edit JSON · {scopeText}</span>
             <h2>修改 JSON 內容</h2>
           </div>
           <div className="actions">
@@ -3145,7 +3160,7 @@ function EditJsonModal({ items, allItems, date, onSave, onClose }) {
             </div>
           </div>
         )}
-        <p className="json-edit-note">請保留每張卡片的 id 和 date。這裡只修改 {date} 既有單字，不新增或刪除卡片。</p>
+        <p className="json-edit-note">請保留每張卡片的 id 和 date。這裡只修改{date ? ` ${date} ` : ' '}既有單字，不新增、刪除或移動日期。</p>
       </div>
     </div>
   );
@@ -3159,6 +3174,7 @@ function NotebookPage({ store, updateStore, items, questions, onPractice, onStud
   const [pageNumber, setPageNumber] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [jsonEditOpen, setJsonEditOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [viewingItem, setViewingItem] = useState(null);
   const starredSet = new Set(store.starred || []);
@@ -3200,12 +3216,24 @@ function NotebookPage({ store, updateStore, items, questions, onPractice, onStud
         <div><span className="eyebrow">Notebook</span><h1>單字本</h1></div>
         <div className="actions notebook-actions">
           <button onClick={() => setExportOpen(true)}><Download size={18} /> 匯出 JSON</button>
+          <button onClick={() => setJsonEditOpen(true)}><Pencil size={18} /> 修改 JSON</button>
           <button className="add-date-button" onClick={() => setAddOpen(true)}><Plus size={18} /> 新增單字</button>
           <button onClick={() => onStudy(enriched, '篩選結果')}><BookOpen size={18} /> 學習篩選結果</button>
           <button className="primary" onClick={() => onPractice(practiceQuestions, '篩選結果測驗')}><Dumbbell size={18} /> 測驗篩選結果</button>
         </div>
       </div>
       {exportOpen && <ExportJsonModal items={items} onClose={() => setExportOpen(false)} />}
+      {jsonEditOpen && (
+        <EditJsonModal
+          items={items}
+          allItems={items}
+          onSave={async (records) => {
+            await Promise.all(records.map((record) => onUpdateRecord(record)));
+            setJsonEditOpen(false);
+          }}
+          onClose={() => setJsonEditOpen(false)}
+        />
+      )}
       <div className="filters">
         <label className="search"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜尋單字、例句、筆記或相關詞" /></label>
         <select value={type} onChange={(e) => setType(e.target.value)}>{types.map((option) => <option key={option}>{option}</option>)}</select>
