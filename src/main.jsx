@@ -2648,6 +2648,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   const [starredOnly, setStarredOnly] = useState(false);
   const [instantReset, setInstantReset] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const wakeLockRef = useRef(null);
   const currentItems = useMemo(() => {
     const latestById = new Map(allItems.map((entry) => [entry.id, entry]));
     return set.items.map((entry) => latestById.get(entry.id) || entry);
@@ -2722,6 +2723,49 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
     if (autoPlay || !playVoice || !item) return;
     speakText(frontText, frontLang);
   }, [autoPlay, playVoice, item?.id, frontSide]);
+
+  useEffect(() => {
+    let active = true;
+    const releaseWakeLock = async () => {
+      const wakeLock = wakeLockRef.current;
+      wakeLockRef.current = null;
+      if (wakeLock && !wakeLock.released) {
+        try {
+          await wakeLock.release();
+        } catch {
+          // The browser may already have released it after hiding the page.
+        }
+      }
+    };
+    const requestWakeLock = async () => {
+      if (!active || !autoPlay || document.visibilityState !== 'visible' || !navigator.wakeLock || wakeLockRef.current) return;
+      try {
+        const wakeLock = await navigator.wakeLock.request('screen');
+        if (!active || !autoPlay) {
+          await wakeLock.release();
+          return;
+        }
+        wakeLockRef.current = wakeLock;
+        wakeLock.addEventListener('release', () => {
+          if (wakeLockRef.current === wakeLock) wakeLockRef.current = null;
+        });
+      } catch {
+        // Unsupported devices keep their normal screen timeout behavior.
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') requestWakeLock();
+      else releaseWakeLock();
+    };
+
+    if (autoPlay) requestWakeLock();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      active = false;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      releaseWakeLock();
+    };
+  }, [autoPlay]);
 
   useEffect(() => {
     if (!autoPlay || !item) return undefined;
@@ -2801,7 +2845,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
         <button className={frontSide === 'ko' ? 'selected-soft' : ''} onClick={() => setFrontSide('ko')}>韓文正面</button>
         <button className={frontSide === 'zh' ? 'selected-soft' : ''} onClick={() => setFrontSide('zh')}>中文正面</button>
         <button className={random ? 'selected-soft' : ''} onClick={() => { setRandom(!random); setShuffleSeed(Date.now()); }}><Shuffle size={16} /> 隨機</button>
-        <button className={autoPlay ? 'selected-soft' : ''} onClick={() => setAutoPlay(!autoPlay)}>{autoPlay ? <Pause size={16} /> : <Play size={16} />} 自動</button>
+        <button title="自動播放期間保持螢幕開啟" className={autoPlay ? 'selected-soft' : ''} onClick={() => setAutoPlay(!autoPlay)}>{autoPlay ? <Pause size={16} /> : <Play size={16} />} 自動</button>
         <button className={playVoice ? 'selected-soft' : ''} onClick={() => setPlayVoice(!playVoice)}>{playVoice ? <Volume2 size={16} /> : <VolumeX size={16} />} 語音</button>
         <button disabled={!playVoice} className={playExampleVoice && playVoice ? 'selected-soft' : ''} onClick={() => setPlayExampleVoice((current) => !current)}><Volume2 size={16} /> 例句語音</button>
         <label className="study-repeat-control" title="每張卡片完整播放幾次">
