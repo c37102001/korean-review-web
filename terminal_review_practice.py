@@ -37,6 +37,8 @@ FIRESTORE_SCHEMA_VERSION = 3
 PROGRESS_SHARD_COUNT = 16
 STUDY_DATE = "2026-07-05"
 REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90]
+DAILY_RECOGNITION_LIMIT = 50
+DAILY_RECOGNITION_MODE = "daily-recognition"
 
 
 def utc_now_iso() -> str:
@@ -460,10 +462,76 @@ def order_questions(questions: Iterable[Question]) -> List[Question]:
 
 def daily_due_questions(state: Dict[str, Any], questions: List[Question], date_key: Optional[str] = None) -> List[Question]:
     date_key = date_key or today_string()
-    if date_key in (state.get("completedReviewDates") or []):
-        return []
     terms = [question for question in questions if question.kind == "term"]
     return order_questions(due_questions(state, terms, date_key))
+
+
+def seed_from_string(text: str) -> int:
+    seed = 17
+    for char in text:
+        seed = ((seed * 31) + ord(char)) % 233280
+    return seed
+
+
+def shuffle_items(items: Iterable[Any], seed: int) -> List[Any]:
+    result = list(items)
+    value = seed or 1
+    for idx in range(len(result) - 1, 0, -1):
+        value = (value * 9301 + 49297) % 233280
+        swap_idx = int((value / 233280) * (idx + 1))
+        result[idx], result[swap_idx] = result[swap_idx], result[idx]
+    return result
+
+
+def daily_recognition_questions(
+    state: Dict[str, Any],
+    questions: List[Question],
+    date_key: Optional[str] = None,
+    limit: int = DAILY_RECOGNITION_LIMIT,
+) -> List[Question]:
+    date_key = date_key or today_string()
+    terms = order_questions(question for question in questions if question.kind == "term")
+    if not terms:
+        return []
+
+    term_ids = {question.id for question in terms}
+    attempts = [
+        attempt for attempt in (state.get("attempts") or [])
+        if attempt.get("mode") == DAILY_RECOGNITION_MODE and attempt.get("questionId") in term_ids
+    ]
+    previous_attempts = sorted(
+        (attempt for attempt in attempts if str(attempt.get("time") or "")[:10] < date_key),
+        key=lambda attempt: str(attempt.get("time") or ""),
+    )
+    round_correct: set[str] = set()
+    latest_result: Dict[str, bool] = {}
+    for attempt in previous_attempts:
+        question_id = str(attempt.get("questionId"))
+        correct = bool(attempt.get("correct"))
+        latest_result[question_id] = correct
+        if correct:
+            round_correct.add(question_id)
+        else:
+            round_correct.discard(question_id)
+        if len(round_correct) == len(term_ids):
+            round_correct.clear()
+            latest_result.clear()
+
+    wrong = shuffle_items(
+        (question for question in terms if latest_result.get(question.id) is False),
+        seed_from_string(f"{date_key}-wrong"),
+    )[:limit]
+    wrong_ids = {question.id for question in wrong}
+    unseen = [question for question in terms if question.id not in round_correct and question.id not in wrong_ids]
+    assignment = shuffle_items(
+        wrong + shuffle_items(unseen, seed_from_string(f"{date_key}-unseen"))[:max(0, limit - len(wrong))],
+        seed_from_string(f"{date_key}-assignment"),
+    )
+    answered_today = {
+        str(attempt.get("questionId")) for attempt in attempts
+        if str(attempt.get("time") or "")[:10] == date_key
+    }
+    return [question for question in assignment if question.id not in answered_today]
 
 
 def record_answer(state: Dict[str, Any], question: Question, correct: bool) -> None:
@@ -487,6 +555,22 @@ def record_answer(state: Dict[str, Any], question: Question, correct: bool) -> N
     }
     attempts = state.setdefault("attempts", [])
     attempts.insert(0, {"id": str(uuid.uuid4()), "questionId": question.id, "correct": correct, "time": now})
+    del attempts[5000:]
+
+
+def record_daily_recognition_answer(state: Dict[str, Any], question: Question, correct: bool) -> None:
+    if not correct:
+        record_answer(state, question, False)
+        state["attempts"][0]["mode"] = DAILY_RECOGNITION_MODE
+        return
+    attempts = state.setdefault("attempts", [])
+    attempts.insert(0, {
+        "id": str(uuid.uuid4()),
+        "questionId": question.id,
+        "correct": True,
+        "time": utc_now_iso(),
+        "mode": DAILY_RECOGNITION_MODE,
+    })
     del attempts[5000:]
 
 
@@ -746,17 +830,25 @@ def date_menu(stdscr: curses.window, cards: List[Card]) -> Optional[str]:
     return menu(stdscr, "月曆 | 選擇日期", options)
 
 
-def due_task_menu(stdscr: curses.window, state: Dict[str, Any], questions: List[Question]) -> Optional[List[Question]]:
+def due_task_menu(stdscr: curses.window, state: Dict[str, Any], questions: List[Question]) -> Optional[Tuple[str, List[Question]]]:
     due = daily_due_questions(state, questions)
+    recognition = daily_recognition_questions(state, questions)
     grouped: Dict[str, List[Question]] = {}
     for question in due:
         grouped.setdefault(question.date, []).append(question)
-    if not grouped:
-        wait_message(stdscr, "今日複習題", "今天沒有到期題目。")
+    if not grouped and not recognition:
+        wait_message(stdscr, "今日複習題", "今天的測驗已全部完成。")
         return None
-    options = [(date_key, f"{date_key} · {len(items)} 題") for date_key, items in sorted(grouped.items())]
-    selected = menu(stdscr, "今日複習題 | 選擇學習日期", options)
-    return order_questions(grouped[selected]) if selected else None
+    options = []
+    if recognition:
+        options.append((DAILY_RECOGNITION_MODE, f"每日韓文認字測驗 · 剩餘 {len(recognition)} 題"))
+    options.extend((date_key, f"{date_key} · {len(items)} 題") for date_key, items in sorted(grouped.items()))
+    selected = menu(stdscr, "今日複習題 | 選擇任務", options)
+    if not selected:
+        return None
+    if selected == DAILY_RECOGNITION_MODE:
+        return selected, recognition
+    return selected, order_questions(grouped[selected])
 
 
 def setup_menu(stdscr: curses.window, title: str, allow_examples: bool = True) -> Optional[Dict[str, Any]]:
@@ -872,6 +964,148 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
         elif key == "6":
             idx = min(len(cards) - 1, idx + 1)
             show_details = False
+
+
+def run_daily_recognition(
+    stdscr: curses.window,
+    questions: List[Question],
+    all_cards: List[Card],
+    state: Dict[str, Any],
+    client: FirebaseClient,
+    session: AuthSession,
+) -> None:
+    if not questions:
+        wait_message(stdscr, "每日韓文認字測驗", "今天的認字題已完成。")
+        return
+
+    idx = 0
+    revealed = False
+    message = ""
+    scroll_offset = 0
+    results: Dict[str, bool] = {}
+    cards_by_id = {card.id: card for card in all_cards}
+    curses.curs_set(0)
+    stdscr.keypad(True)
+    while True:
+        question = questions[idx]
+        card = question.source
+        graded = question.id in results
+        if graded:
+            revealed = True
+        stdscr.erase()
+        height, width = stdscr.getmaxyx()
+        draw_line(
+            stdscr,
+            1,
+            2,
+            f"認字 | 每日韓文認字測驗 | {idx + 1}/{len(questions)}  Esc=返回 0=星號 8=翻面 4/6=上下題 1=答錯 2=答對 ↑↓=捲動",
+            curses.A_BOLD,
+        )
+        draw_wrapped(stdscr, 2, 2, width - 4, f"{'★' if card.is_starred else '☆'} {card.ko}", curses.A_BOLD)
+        detail_lines: List[Tuple[str, int, int]] = []
+
+        def append_detail(text: str, indent: int = 0, attr: int = 0) -> None:
+            line_width = max(1, width - 4 - indent)
+            for line in textwrap.wrap(text, line_width) or [""]:
+                detail_lines.append((line, indent, attr))
+
+        if not revealed:
+            append_detail("按 8 翻面查看完整單字卡。", attr=curses.A_DIM)
+        else:
+            heading = " / ".join(part for part in (card.zh, card.pos) if part)
+            append_detail(heading, attr=curses.A_BOLD)
+            for meaning_idx, meaning in enumerate(card.meanings, 1):
+                detail = f"{meaning_idx}. {meaning.get('zh', '')}"
+                if meaning.get("pattern"):
+                    detail += f" · {meaning.get('pattern')}"
+                append_detail(detail, indent=2)
+                for example in meaning.get("examples") or []:
+                    example_text = " / ".join(part for part in (example.get("ko"), example.get("zh")) if part)
+                    append_detail(example_text, indent=4, attr=curses.A_DIM)
+            for note in card.notes:
+                append_detail(f"筆記: {note}", indent=2, attr=curses.A_DIM)
+            related_words = [cards_by_id[item_id].ko for item_id in card.related if item_id in cards_by_id]
+            if related_words:
+                append_detail(f"相關詞: {'、'.join(related_words)}", indent=2, attr=curses.A_DIM)
+            if not graded:
+                append_detail("請按 1（答錯）或 2（答對）自評。", attr=curses.A_BOLD)
+        visible_rows = max(1, height - 5)
+        scroll_offset = min(scroll_offset, max(0, len(detail_lines) - visible_rows))
+        for row, (line, indent, attr) in enumerate(detail_lines[scroll_offset:scroll_offset + visible_rows], 3):
+            draw_line(stdscr, row, 2 + indent, line, attr)
+        footer = message
+        if graded:
+            result_text = "答對" if results[question.id] else "答錯，已加入明日題目並記入不熟悉"
+            footer = f"{result_text}。按 Enter 或 6 進入下一題。"
+        elif revealed and not footer:
+            footer = "1=答錯  2=答對"
+        if len(detail_lines) > visible_rows:
+            footer = f"{footer}  內容 {scroll_offset + 1}-{min(len(detail_lines), scroll_offset + visible_rows)}/{len(detail_lines)}"
+        if footer:
+            draw_line(stdscr, height - 1, 2, footer, curses.A_BOLD)
+        update_curses_screen(stdscr)
+        key = stdscr.get_wch()
+        if isinstance(key, int) and 0 <= key <= 255:
+            key = chr(key)
+        if key == "\x1b":
+            return
+        if key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13):
+            if not graded:
+                message = "請先翻面並選擇答對或答錯。"
+                continue
+            if idx == len(questions) - 1:
+                wait_message(stdscr, "完成", "今天的韓文認字測驗已完成。")
+                return
+            idx += 1
+            revealed = questions[idx].id in results
+            message = ""
+            scroll_offset = 0
+            continue
+        if key == curses.KEY_UP:
+            scroll_offset = max(0, scroll_offset - 1)
+            continue
+        if key == curses.KEY_DOWN:
+            scroll_offset += 1
+            continue
+        if not isinstance(key, str):
+            continue
+        if key == "0":
+            toggle_star(state, card)
+            client.save_app_state(session, state)
+            message = "已打星號" if card.is_starred else "已取消星號"
+        elif key == "8":
+            if not graded:
+                revealed = not revealed
+            message = ""
+            scroll_offset = 0
+        elif key in ("1", "2"):
+            if not revealed:
+                message = "請先按 8 翻面查看答案。"
+                continue
+            if graded:
+                message = "這題已完成評分。"
+                continue
+            correct = key == "2"
+            record_daily_recognition_answer(state, question, correct)
+            client.save_app_state(session, state)
+            results[question.id] = correct
+            message = ""
+        elif key == "4":
+            idx = max(0, idx - 1)
+            revealed = questions[idx].id in results
+            message = ""
+            scroll_offset = 0
+        elif key == "6":
+            if not graded:
+                message = "請先翻面並選擇答對或答錯。"
+                continue
+            if idx == len(questions) - 1:
+                wait_message(stdscr, "完成", "今天的韓文認字測驗已完成。")
+                return
+            idx += 1
+            revealed = questions[idx].id in results
+            message = ""
+            scroll_offset = 0
 
 
 def run_practice(stdscr: curses.window, title: str, questions: List[Question], config: Dict[str, Any], state: Dict[str, Any], client: FirebaseClient, session: AuthSession) -> None:
@@ -1074,6 +1308,11 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
         except RuntimeError as exc:
             wait_message(stdscr, "載入失敗", str(exc))
             return
+        today = today_string()
+        completed = state.setdefault("completedReviewDates", [])
+        if today in completed and (daily_due_questions(state, questions) or daily_recognition_questions(state, questions)):
+            completed.remove(today)
+            client.save_app_state(session, state)
         choice = menu(
             stdscr,
             f"韓文筆記 Terminal | {session.email}",
@@ -1085,18 +1324,22 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
         if choice == "refresh":
             continue
         if choice == "due":
-            selected = due_task_menu(stdscr, state, questions)
-            if selected:
-                run_practice(
-                    stdscr,
-                    "今日複習題",
-                    selected,
-                    {"direction": "zh-ko", "source": "all", "starred": False, "random": True, "record_results": True},
-                    state,
-                    client,
-                    session,
-                )
-                if not daily_due_questions(state, questions):
+            task = due_task_menu(stdscr, state, questions)
+            if task:
+                task_type, selected = task
+                if task_type == DAILY_RECOGNITION_MODE:
+                    run_daily_recognition(stdscr, selected, cards, state, client, session)
+                else:
+                    run_practice(
+                        stdscr,
+                        "今日複習題",
+                        selected,
+                        {"direction": "zh-ko", "source": "all", "starred": False, "random": True, "record_results": True},
+                        state,
+                        client,
+                        session,
+                    )
+                if not daily_due_questions(state, questions) and not daily_recognition_questions(state, questions):
                     completed = state.setdefault("completedReviewDates", [])
                     today = today_string()
                     if today not in completed:

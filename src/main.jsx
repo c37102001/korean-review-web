@@ -35,6 +35,8 @@ import { auth, db } from './firebase.js';
 import './styles.css';
 
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
+const DAILY_RECOGNITION_LIMIT = 50;
+const DAILY_RECOGNITION_MODE = 'daily-recognition';
 const STUDY_DATE = '2026-07-05';
 const CONTENT_SCHEMA_VERSION = 2;
 const FIRESTORE_SCHEMA_VERSION = 3;
@@ -896,9 +898,51 @@ function reviewQuestions(questions) {
 }
 
 function dailyReviewQuestions(store, questions, date = todayString()) {
-  if ((store.completedReviewDates || []).includes(date)) return [];
   const terms = questions.filter((question) => question.kind === 'term');
   return orderReviewQuestions(dueQuestions(store, terms, date));
+}
+
+function seedFromString(text) {
+  return [...text].reduce((seed, char) => ((seed * 31) + char.charCodeAt(0)) % 233280, 17);
+}
+
+function dailyRecognitionQuestions(store, questions, date = todayString(), limit = DAILY_RECOGNITION_LIMIT) {
+  const terms = orderReviewQuestions(questions.filter((question) => question.kind === 'term'));
+  if (!terms.length) return [];
+
+  const termIds = new Set(terms.map((question) => question.id));
+  const attempts = (store.attempts || [])
+    .filter((attempt) => attempt.mode === DAILY_RECOGNITION_MODE && termIds.has(attempt.questionId));
+  const previousAttempts = attempts
+    .filter((attempt) => attempt.time?.slice(0, 10) < date)
+    .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+  const roundCorrect = new Set();
+  const latestResult = new Map();
+
+  previousAttempts.forEach((attempt) => {
+    latestResult.set(attempt.questionId, attempt.correct);
+    if (attempt.correct) roundCorrect.add(attempt.questionId);
+    else roundCorrect.delete(attempt.questionId);
+    if (roundCorrect.size === termIds.size) {
+      roundCorrect.clear();
+      latestResult.clear();
+    }
+  });
+
+  const wrong = shuffleItems(
+    terms.filter((question) => latestResult.get(question.id) === false),
+    seedFromString(`${date}-wrong`),
+  ).slice(0, limit);
+  const wrongIds = new Set(wrong.map((question) => question.id));
+  const unseen = terms.filter((question) => !roundCorrect.has(question.id) && !wrongIds.has(question.id));
+  const assignment = shuffleItems([
+    ...wrong,
+    ...shuffleItems(unseen, seedFromString(`${date}-unseen`)).slice(0, Math.max(0, limit - wrong.length)),
+  ], seedFromString(`${date}-assignment`));
+  const answeredToday = new Set(
+    attempts.filter((attempt) => attempt.time?.slice(0, 10) === date).map((attempt) => attempt.questionId),
+  );
+  return assignment.filter((question) => !answeredToday.has(question.id));
 }
 
 function groupTasks(store, questions, date = todayString()) {
@@ -991,6 +1035,29 @@ function recordAnswer(store, question, correct) {
       },
     },
     attempts: [{ id: crypto.randomUUID(), questionId: question.id, correct, time: now }, ...store.attempts].slice(0, 5000),
+  };
+}
+
+function recordDailyRecognitionAnswer(store, question, correct) {
+  if (!correct) {
+    const next = recordAnswer(store, question, false);
+    return {
+      ...next,
+      attempts: next.attempts.map((attempt, index) => (
+        index === 0 ? { ...attempt, mode: DAILY_RECOGNITION_MODE } : attempt
+      )),
+    };
+  }
+  const now = new Date().toISOString();
+  return {
+    ...store,
+    attempts: [{
+      id: crypto.randomUUID(),
+      questionId: question.id,
+      correct: true,
+      time: now,
+      mode: DAILY_RECOGNITION_MODE,
+    }, ...store.attempts].slice(0, 5000),
   };
 }
 
@@ -1163,6 +1230,10 @@ function App() {
   const { items, questions } = useMemo(() => normalizeRecords(allRecords), [allRecords]);
   const dailyQuestions = useMemo(() => reviewQuestions(questions), [questions]);
   const todayDailyQuestions = useMemo(() => dailyReviewQuestions(store, dailyQuestions, todayString()), [store, dailyQuestions]);
+  const todayRecognitionQuestions = useMemo(
+    () => dailyRecognitionQuestions(store, dailyQuestions, todayString()),
+    [store.attempts, dailyQuestions],
+  );
   const completedAttemptDates = useMemo(
     () => [...new Set((store.attempts || []).map((attempt) => attempt.time?.slice(0, 10)).filter(Boolean))],
     [store.attempts],
@@ -1174,13 +1245,23 @@ function App() {
     const backfillDates = completedAttemptDates.filter(
       (date) => date >= REVIEW_COMPLETION_BACKFILL_START && date <= REVIEW_COMPLETION_BACKFILL_END && dailyReviewQuestions(store, dailyQuestions, date).length === 0,
     );
+    const todayComplete = todayDailyQuestions.length === 0 && todayRecognitionQuestions.length === 0;
+    const todayMarked = (store.completedReviewDates || []).includes(today);
+    if (!todayComplete && todayMarked) {
+      updateStore((current) => ({
+        ...current,
+        completedReviewDates: (current.completedReviewDates || []).filter((date) => date !== today),
+      }));
+      return;
+    }
+
     const datesToMark = [...backfillDates];
-    if (dailyReviewQuestions(store, dailyQuestions, today).length === 0) datesToMark.push(today);
+    if (todayComplete) datesToMark.push(today);
 
     const missingDates = [...new Set(datesToMark)].filter((date) => !(store.completedReviewDates || []).includes(date));
     if (!missingDates.length) return;
     updateStore((current) => missingDates.reduce((nextStore, date) => markReviewDateComplete(nextStore, date), current));
-  }, [user, storeLoading, store.completedReviewDates, store.progress, store.attempts, completedAttemptDates, dailyQuestions, updateStore]);
+  }, [user, storeLoading, store.completedReviewDates, store.progress, store.attempts, completedAttemptDates, dailyQuestions, todayDailyQuestions, todayRecognitionQuestions, updateStore]);
 
   const navTop = (next) => {
     setPageStack([]);
@@ -1197,7 +1278,7 @@ function App() {
     setPageStack(pageStack.slice(0, -1));
   };
   const startPractice = (sourceQuestions, label, options = {}) => {
-    setPracticeSet({ questions: sourceQuestions, label, dueOnly: !!options.dueOnly, recordResults: options.recordResults ?? true });
+    setPracticeSet({ questions: sourceQuestions, label, dueOnly: !!options.dueOnly, recordResults: options.recordResults ?? true, mode: options.mode || '' });
     navChild('practice');
   };
   const startStudy = (sourceItems, label) => {
@@ -1247,7 +1328,7 @@ function App() {
   if (storeLoading) return <LoadingScreen text="載入資料中" />;
 
   const views = {
-    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} onPractice={startPractice} onStudy={startStudy} />,
+    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} recognitionQuestions={todayRecognitionQuestions} onPractice={startPractice} onStudy={startStudy} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} />,
     notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} />,
@@ -1334,15 +1415,21 @@ function LoginPage() {
   );
 }
 
-function HomePage({ store, items, questions, dueQuestionsForToday, onPractice, onStudy }) {
+function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQuestions, onPractice, onStudy }) {
   const today = todayString();
   const due = dueQuestionsForToday;
+  const recognition = recognitionQuestions;
+  const totalPending = due.length + recognition.length;
   const tasks = groupTasks(store, due, today);
   const answeredToday = store.attempts.filter((attempt) => attempt.time.startsWith(today));
   const correctToday = answeredToday.filter((attempt) => attempt.correct).length;
   const weak = questions.filter((question) => getStats(store, question.id).level === '不熟悉').slice(0, 6);
   const mastered = questions.filter((question) => getStats(store, question.id).level === '已熟練').length;
-  const progress = due.length ? Math.max(0, Math.round((answeredToday.length / (answeredToday.length + due.length)) * 100)) : 100;
+  const progress = totalPending ? Math.max(0, Math.round((answeredToday.length / (answeredToday.length + totalPending)) * 100)) : 100;
+  const startNextDailyTask = () => {
+    if (due.length) onPractice(due, '今日測驗', { dueOnly: true });
+    else onPractice(recognition, '每日韓文認字測驗', { dueOnly: true, mode: DAILY_RECOGNITION_MODE });
+  };
 
   return (
     <section className="page">
@@ -1350,9 +1437,9 @@ function HomePage({ store, items, questions, dueQuestionsForToday, onPractice, o
         <div>
           <span className="eyebrow">Today · {dateLabel(today)}</span>
           <h1>今天也來練一點韓文</h1>
-          <p>目前有 {due.length} 題等待主動回想，答錯會自動回到第一階段重新安排。</p>
+          <p>目前有 {totalPending} 題等待完成，包含到期單字與每日韓文認字測驗。</p>
           <div className="actions">
-            <button className="primary" disabled={!due.length} onClick={() => onPractice(due, '今日測驗', { dueOnly: true })}><Dumbbell size={18} /> 開始今日測驗</button>
+            <button className="primary" disabled={!totalPending} onClick={startNextDailyTask}><Dumbbell size={18} /> 開始今日測驗</button>
             <button onClick={() => onStudy(items, '全部內容')}><BookOpen size={18} /> 先用單字卡學習</button>
           </div>
         </div>
@@ -1363,7 +1450,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, onPractice, o
       </div>
 
       <div className="stats-grid">
-        <Stat icon={<Target />} label="待測驗" value={`${due.length} 題`} />
+        <Stat icon={<Target />} label="待測驗" value={`${totalPending} 題`} />
         <Stat icon={<Check />} label="今日答對" value={`${correctToday}/${answeredToday.length || 0}`} />
         <Stat icon={<Trophy />} label="已熟練" value={`${mastered} 題`} />
         <Stat icon={<Flame />} label="不熟悉" value={`${weak.length} 題`} />
@@ -1371,8 +1458,18 @@ function HomePage({ store, items, questions, dueQuestionsForToday, onPractice, o
 
       <div className="split">
         <div className="panel">
-          <div className="panel-title"><h2>測驗任務</h2><span>{tasks.length ? '未完成任務會保留' : '目前沒有到期任務'}</span></div>
+          <div className="panel-title"><h2>測驗任務</h2><span>{tasks.length || recognition.length ? '未完成任務會保留' : '目前沒有待完成任務'}</span></div>
           <div className="task-list">
+            {!!recognition.length && (
+              <div className="task-card recognition-task-card">
+                <div>
+                  <span className="badge">每日</span>
+                  <h3>韓文認字測驗</h3>
+                  <p>從全部單字隨機抽題 · 剩餘 {recognition.length} 題</p>
+                </div>
+                <button className="primary small" onClick={() => onPractice(recognition, '每日韓文認字測驗', { dueOnly: true, mode: DAILY_RECOGNITION_MODE })}>開始</button>
+              </div>
+            )}
             {tasks.map((task) => (
               <div className="task-card" key={task.id}>
                 <div>
@@ -1383,7 +1480,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, onPractice, o
                 <button className="primary small" onClick={() => onPractice(task.questions, `${task.studyDate} 測驗`, { dueOnly: true })}>開始</button>
               </div>
             ))}
-            {!tasks.length && <div className="empty">今天沒有排程到期。你可以從日曆或單字本主動測驗。</div>}
+            {!tasks.length && !recognition.length && <div className="empty">今天的測驗已完成。你可以從日曆或單字本主動測驗。</div>}
           </div>
         </div>
         <div className="panel">
@@ -2815,8 +2912,9 @@ function PracticePage({ store, updateStore, set }) {
   const [source, setSource] = useState('term');
   const [starredOnly, setStarredOnly] = useState(false);
   const [recordResults, setRecordResults] = useState(set.recordResults ?? true);
+  const recognitionMode = set.mode === DAILY_RECOGNITION_MODE;
   const fixedSource = set.termOnly || set.dueOnly;
-  const activeDirection = set.dueOnly ? 'zh-ko' : direction;
+  const activeDirection = recognitionMode ? 'ko-zh' : set.dueOnly ? 'zh-ko' : direction;
   const shouldRecordResults = set.dueOnly || recordResults;
   const [started, setStarted] = useState(!!set.dueOnly);
   const [questionQueue, setQuestionQueue] = useState([]);
@@ -2833,13 +2931,14 @@ function PracticePage({ store, updateStore, set }) {
   const sourceQuestions = useMemo(() => {
     const starredSet = new Set(store.starred || []);
     const applyStarFilter = (list) => (starredOnly ? list.filter((q) => starredSet.has(q.itemId)) : list);
+    if (recognitionMode) return set.questions;
     if (set.dueOnly) return orderReviewQuestions(set.questions);
     if (direction === 'ko-zh') return applyStarFilter(set.questions.filter((q) => q.kind === 'term'));
     const activeSource = set.termOnly ? 'term' : source;
     const filtered = set.questions.filter((q) => activeSource === 'all' || q.kind === activeSource);
     const orderedFiltered = activeSource === 'all' ? orderReviewQuestions(filtered) : filtered;
     return applyStarFilter(orderedFiltered);
-  }, [set.questions, source, direction, set.termOnly, set.dueOnly, store, starredOnly]);
+  }, [set.questions, source, direction, set.termOnly, set.dueOnly, recognitionMode, store, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
   const resetSession = () => {
@@ -2855,7 +2954,9 @@ function PracticePage({ store, updateStore, set }) {
     setTypedAttempts(0);
   };
   const startSession = () => {
-    const nextQuestions = set.dueOnly ? shuffleReviewQuestionsByKind(sourceQuestions) : shuffleItems(sourceQuestions, Date.now());
+    const nextQuestions = recognitionMode
+      ? sourceQuestions
+      : set.dueOnly ? shuffleReviewQuestionsByKind(sourceQuestions) : shuffleItems(sourceQuestions, Date.now());
     if (!nextQuestions.length) {
       resetSession();
       return;
@@ -2875,7 +2976,7 @@ function PracticePage({ store, updateStore, set }) {
   useEffect(() => {
     if (!set.dueOnly) return;
     if (questionQueue.length) return;
-    const nextQuestions = shuffleReviewQuestionsByKind(sourceQuestions);
+    const nextQuestions = recognitionMode ? sourceQuestions : shuffleReviewQuestionsByKind(sourceQuestions);
     setQuestionQueue(nextQuestions);
     setStarted(!!nextQuestions.length);
     setIndex(0);
@@ -2885,7 +2986,7 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
-  }, [set.dueOnly, sourceQuestions, questionQueue.length]);
+  }, [set.dueOnly, recognitionMode, sourceQuestions, questionQueue.length]);
 
   useEffect(() => {
     if (direction === 'ko-zh') setSource('term');
@@ -2909,7 +3010,9 @@ function PracticePage({ store, updateStore, set }) {
   // Korean-to-Chinese correct answers are intentionally lightweight: they do
   // not improve long-term accuracy, while wrong answers still mark the card.
   const submit = (correct) => {
-    if (shouldRecordResults && (!correct || activeDirection !== 'ko-zh')) {
+    if (recognitionMode) {
+      updateStore((current) => recordDailyRecognitionAnswer(current, question, correct));
+    } else if (shouldRecordResults && (!correct || activeDirection !== 'ko-zh')) {
       updateStore((current) => recordAnswer(current, question, correct));
     }
     if (soundEnabled) playResultSound(correct);
