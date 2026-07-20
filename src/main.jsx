@@ -2813,6 +2813,7 @@ function PracticePage({ store, updateStore, set }) {
   const [graded, setGraded] = useState(false);
   const [lastCorrect, setLastCorrect] = useState(null);
   const [typedAttempts, setTypedAttempts] = useState(0);
+  const [sessionFinished, setSessionFinished] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [autoPronounce, setAutoPronounce] = useState(true);
   const sourceQuestions = useMemo(() => {
@@ -2828,6 +2829,7 @@ function PracticePage({ store, updateStore, set }) {
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
   const resetSession = () => {
+    setSessionFinished(false);
     setStarted(false);
     setQuestionQueue([]);
     setIndex(0);
@@ -2845,6 +2847,7 @@ function PracticePage({ store, updateStore, set }) {
       return;
     }
     setQuestionQueue(nextQuestions);
+    setSessionFinished(false);
     setStarted(true);
     setIndex(0);
     setInput('');
@@ -2886,6 +2889,7 @@ function PracticePage({ store, updateStore, set }) {
     setLastCorrect(null);
     setTypedAttempts(0);
     if (index + 1 < queue.length) setIndex(index + 1);
+    else if (set.dueOnly) setSessionFinished(true);
     else resetSession();
   };
   // Korean-to-Chinese correct answers are intentionally lightweight: they do
@@ -2989,6 +2993,19 @@ function PracticePage({ store, updateStore, set }) {
           {!recordResults && <div className="fixed-source-note muted-note">這次測驗不會改變答對率、間隔排程或今日紀錄。</div>}
           <p>{sourceQuestions.length} 題可測驗。{set.dueOnly ? '請看中文提示輸入韓文答案。' : '中翻韓只會出打字題，韓翻中會先思考再公佈答案。'}</p>
           <button className="primary wide" disabled={!sourceQuestions.length} onClick={startSession}>開始</button>
+        </div>
+      </section>
+    );
+  }
+
+  if (sessionFinished) {
+    return (
+      <section className="page practice-start">
+        <div className="panel start-panel practice-complete-panel">
+          <Trophy size={34} aria-hidden="true" />
+          <span className="eyebrow">Test complete</span>
+          <h1>{`${set.label} 已完成`}</h1>
+          <p>這一組的 {questionQueue.length} 題已全部作答。</p>
         </div>
       </section>
     );

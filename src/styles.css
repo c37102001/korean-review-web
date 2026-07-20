@@ -1248,6 +1248,17 @@ main {
   width: min(680px, 100%);
 }
 
+.practice-complete-panel {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.practice-complete-panel > svg {
+  color: #e9783f;
+}
+
 .segmented {
   display: flex;
   gap: 10px;
