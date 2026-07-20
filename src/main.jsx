@@ -35,8 +35,6 @@ import { auth, db } from './firebase.js';
 import './styles.css';
 
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
-const DAILY_EXAMPLE_LIMIT = 15;
-const DAILY_EXAMPLE_ACCUMULATION_START = '2026-07-13';
 const STUDY_DATE = '2026-07-05';
 const CONTENT_SCHEMA_VERSION = 2;
 const FIRESTORE_SCHEMA_VERSION = 3;
@@ -880,10 +878,6 @@ function dueQuestions(store, questions, date = todayString()) {
   return questions.filter((question) => getProgress(store, question).nextDue <= date);
 }
 
-function seedFromString(text) {
-  return [...text].reduce((seed, char) => ((seed * 31) + char.charCodeAt(0)) % 233280, 17);
-}
-
 function orderReviewQuestions(questions) {
   const kindRank = { term: 0, example: 1 };
   return [...questions].sort((a, b) => {
@@ -901,122 +895,24 @@ function reviewQuestions(questions) {
   return orderReviewQuestions(questions.filter((question) => question.kind === 'term' || question.kind === 'example'));
 }
 
-function currentExampleRoundCorrectIdsBeforeDate(store, exampleQuestions, date = todayString()) {
-  const exampleIds = new Set(exampleQuestions.map((question) => question.id));
-  const correctIds = new Set();
-  const attempts = [...(store.attempts || [])]
-    .filter((attempt) => exampleIds.has(attempt.questionId) && (!attempt.time || attempt.time.slice(0, 10) < date))
-    .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
-  attempts.forEach((attempt) => {
-    if (attempt.correct) correctIds.add(attempt.questionId);
-    if (correctIds.size === exampleIds.size && exampleIds.size) correctIds.clear();
-  });
-  return correctIds;
-}
-
-function lastAttemptsByDate(store, questionIds, date) {
-  const ids = new Set(questionIds);
-  const latest = new Map();
-  (store.attempts || []).forEach((attempt) => {
-    if (!ids.has(attempt.questionId) || attempt.time?.slice(0, 10) !== date) return;
-    const previous = latest.get(attempt.questionId);
-    if (!previous || (attempt.time || '') > (previous.time || '')) latest.set(attempt.questionId, attempt);
-  });
-  return latest;
-}
-
-function uniqueQuestions(questions) {
-  const seen = new Set();
-  return questions.filter((question) => {
-    if (seen.has(question.id)) return false;
-    seen.add(question.id);
-    return true;
-  });
-}
-
-function hasAttemptAfterDateThrough(store, questionId, afterDate, throughDate) {
-  return (store.attempts || []).some((attempt) => {
-    const attemptDate = attempt.time?.slice(0, 10);
-    return attempt.questionId === questionId && attemptDate > afterDate && attemptDate <= throughDate;
-  });
-}
-
-function dateRange(startDate, endDate) {
-  const dates = [];
-  let current = startDate;
-  while (current <= endDate) {
-    dates.push(current);
-    current = addDays(current, 1);
-  }
-  return dates;
-}
-
-function exampleAccumulationStartDate(store, date) {
-  const lastCompleted = [...(store.completedReviewDates || [])].filter((completedDate) => completedDate < date).sort().at(-1);
-  const afterLastCompleted = lastCompleted ? addDays(lastCompleted, 1) : DAILY_EXAMPLE_ACCUMULATION_START;
-  const start = afterLastCompleted > DAILY_EXAMPLE_ACCUMULATION_START ? afterLastCompleted : DAILY_EXAMPLE_ACCUMULATION_START;
-  return start > date ? date : start;
-}
-
-function dailyExampleQuestions(store, questions, date = todayString(), limit = DAILY_EXAMPLE_LIMIT, excludedIds = new Set()) {
-  const examples = orderReviewQuestions(questions.filter((question) => question.kind === 'example'));
-  if (!examples.length) return [];
-  const exampleIds = examples.map((question) => question.id);
-  const answeredToday = lastAttemptsByDate(store, exampleIds, date);
-  const yesterday = addDays(date, -1);
-  const yesterdayAttempts = lastAttemptsByDate(store, exampleIds, yesterday);
-  const currentRoundCorrect = currentExampleRoundCorrectIdsBeforeDate(store, examples, date);
-  const available = (question) => !answeredToday.has(question.id) && !excludedIds.has(question.id);
-  const seed = seedFromString(date);
-  const yesterdayWrong = shuffleItems(
-    examples.filter((question) => yesterdayAttempts.get(question.id)?.correct === false),
-    seed + 11,
-  );
-  const currentRoundUnanswered = shuffleItems(
-    examples.filter((question) => !currentRoundCorrect.has(question.id)),
-    seed + 23,
-  );
-  const currentPool = uniqueQuestions([...yesterdayWrong, ...currentRoundUnanswered]);
-  const quotaPool = currentPool.length ? currentPool.slice(0, limit) : shuffleItems(examples, seed + 37).slice(0, limit);
-  return quotaPool.filter(available);
-}
-
-function accumulatedDailyExampleQuestions(store, questions, date = todayString()) {
-  const startDate = exampleAccumulationStartDate(store, date);
-  const selectedIds = new Set();
-  const accumulated = [];
-  dateRange(startDate, date).forEach((quotaDate) => {
-    const batch = dailyExampleQuestions(store, questions, quotaDate, DAILY_EXAMPLE_LIMIT, selectedIds)
-      .filter((question) => quotaDate === date || !hasAttemptAfterDateThrough(store, question.id, quotaDate, date));
-    batch.forEach((question) => {
-      selectedIds.add(question.id);
-      accumulated.push({ ...question, quotaDate });
-    });
-  });
-  return accumulated;
-}
-
 function dailyReviewQuestions(store, questions, date = todayString()) {
   if ((store.completedReviewDates || []).includes(date)) return [];
-  const reviewable = reviewQuestions(questions);
-  const terms = dueQuestions(store, reviewable.filter((question) => question.kind === 'term'), date);
-  const examples = accumulatedDailyExampleQuestions(store, reviewable, date);
-  return orderReviewQuestions([...terms, ...examples]);
+  const terms = questions.filter((question) => question.kind === 'term');
+  return orderReviewQuestions(dueQuestions(store, terms, date));
 }
 
 function groupTasks(store, questions, date = todayString()) {
   const groups = new Map();
   questions.forEach((question) => {
     const progress = getProgress(store, question);
-    const dueDate = question.kind === 'example' ? (question.quotaDate || date) : progress.nextDue;
-    const key = question.kind === 'example' ? `examples-${date}` : `${question.date}-${dueDate}`;
+    const dueDate = progress.nextDue;
+    const key = `${question.date}-${dueDate}`;
     const existing = groups.get(key) || {
       id: key,
       studyDate: question.date,
       dueDate,
       questions: [],
       overdue: dueDate < date,
-      type: question.kind === 'example' ? 'examples' : 'terms',
     };
     existing.questions.push(question);
     existing.overdue = existing.overdue || dueDate < date;
@@ -1481,10 +1377,10 @@ function HomePage({ store, items, questions, dueQuestionsForToday, onPractice, o
               <div className="task-card" key={task.id}>
                 <div>
                   <span className={task.overdue ? 'badge danger' : 'badge'}>{task.overdue ? '逾期' : '今日'}</span>
-                  <h3>{task.type === 'examples' ? '例句練習' : `${dateLabel(task.studyDate)} 的內容`}</h3>
-                  <p>{task.type === 'examples' ? `累積到今天 · ${task.questions.length} 句 · 未完成` : `到期日 ${task.dueDate} · ${task.questions.length} 題 · 未完成`}</p>
+                  <h3>{dateLabel(task.studyDate)} 的內容</h3>
+                  <p>到期日 {task.dueDate} · {task.questions.length} 題 · 未完成</p>
                 </div>
-                <button className="primary small" onClick={() => onPractice(task.questions, task.type === 'examples' ? '例句練習' : `${task.studyDate} 測驗`, { dueOnly: true })}>開始</button>
+                <button className="primary small" onClick={() => onPractice(task.questions, `${task.studyDate} 測驗`, { dueOnly: true })}>開始</button>
               </div>
             ))}
             {!tasks.length && <div className="empty">今天沒有排程到期。你可以從日曆或單字本主動測驗。</div>}
@@ -3090,7 +2986,7 @@ function PracticePage({ store, updateStore, set }) {
             <button className={direction === 'ko-zh' ? 'active' : ''} onClick={() => setDirection('ko-zh')}>韓翻中</button>
           </div>
           {fixedSource ? (
-            <div className="fixed-source-note">每日測驗會先完成所有到期單字，再接著測驗最多 {DAILY_EXAMPLE_LIMIT} 句例句。</div>
+            <div className="fixed-source-note">此測驗只包含單字題。</div>
           ) : direction === 'ko-zh' ? (
             <div className="fixed-source-note">韓翻中只測驗單字。答對不會寫入長期正確率，答錯仍會記錄為不熟悉。</div>
           ) : (
@@ -3135,7 +3031,7 @@ function PracticePage({ store, updateStore, set }) {
         <div className="panel start-panel">
           <span className="eyebrow">Test · {set.label}</span>
           <h1>目前沒有待測驗題目</h1>
-          <p>單字和例句都已經清完，今天的測驗任務已完成。</p>
+          <p>到期單字都已經清完，今天的測驗任務已完成。</p>
         </div>
       </section>
     );
