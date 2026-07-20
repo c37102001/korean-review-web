@@ -1166,6 +1166,30 @@ function speakText(text, lang) {
   window.speechSynthesis.speak(utterance);
 }
 
+function speakTextAndWait(text, lang) {
+  if (!('speechSynthesis' in window) || !text) return Promise.resolve();
+  return new Promise((resolve) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = lang;
+    utterance.rate = lang.startsWith('ko') ? 0.9 : 1;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(fallbackTimer);
+      resolve();
+    };
+    const fallbackTimer = window.setTimeout(finish, Math.max(3500, [...text].length * 320));
+    utterance.onend = finish;
+    utterance.onerror = finish;
+    window.speechSynthesis.speak(utterance);
+  });
+}
+
+function waitFor(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
 function speakAnswer(question) {
   if (!('speechSynthesis' in window) || !question?.ko) return;
   window.speechSynthesis.cancel();
@@ -2618,6 +2642,9 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   const [shuffleSeed, setShuffleSeed] = useState(Date.now());
   const [autoPlay, setAutoPlay] = useState(false);
   const [playVoice, setPlayVoice] = useState(true);
+  const [playExampleVoice, setPlayExampleVoice] = useState(false);
+  const [voiceRepeatCount, setVoiceRepeatCount] = useState(1);
+  const [autoPlayCycle, setAutoPlayCycle] = useState(0);
   const [starredOnly, setStarredOnly] = useState(false);
   const [instantReset, setInstantReset] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
@@ -2639,6 +2666,20 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   const backText = frontSide === 'ko' ? item?.zh : item?.ko;
   const frontLang = frontSide === 'ko' ? 'ko-KR' : 'zh-TW';
   const backLang = frontSide === 'ko' ? 'zh-TW' : 'ko-KR';
+  const autoPlaySpeechSequence = useMemo(() => {
+    if (!item) return [];
+    const cycle = [
+      { text: item.ko, lang: 'ko-KR', face: frontSide === 'ko' ? 'front' : 'back' },
+      { text: item.zh, lang: 'zh-TW', face: frontSide === 'zh' ? 'front' : 'back' },
+    ];
+    if (playExampleVoice) {
+      itemExamples(item).forEach((example) => {
+        if (example.ko) cycle.push({ text: example.ko, lang: 'ko-KR', face: 'back' });
+        if (example.zh) cycle.push({ text: example.zh, lang: 'zh-TW', face: 'back' });
+      });
+    }
+    return Array.from({ length: voiceRepeatCount }, () => cycle).flat();
+  }, [item, frontSide, playExampleVoice, voiceRepeatCount]);
   const toggleCard = () => {
     const next = !flipped;
     setFlipped(next);
@@ -2684,21 +2725,46 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
 
   useEffect(() => {
     if (!autoPlay || !item) return undefined;
+    let cancelled = false;
+    window.speechSynthesis?.cancel();
     setFlipped(false);
-    if (playVoice) speakText(frontText, frontLang);
-    const flipTimer = window.setTimeout(() => {
-      setFlipped(true);
-      if (playVoice) speakText(backText, backLang);
-    }, 1800);
-    const nextTimer = window.setTimeout(() => {
-      setIndex((current) => (current + 1) % ordered.length);
-      setFlipped(false);
-    }, 3900);
+    let flipTimer;
+    let nextTimer;
+    if (playVoice) {
+      const playSequence = async () => {
+        for (const part of autoPlaySpeechSequence) {
+          if (cancelled) return;
+          setFlipped(part.face === 'back');
+          await waitFor(220);
+          if (cancelled) return;
+          await speakTextAndWait(part.text, part.lang);
+          if (cancelled) return;
+          await waitFor(260);
+        }
+        if (cancelled) return;
+        await waitFor(450);
+        if (!cancelled) {
+          setIndex((current) => (current + 1) % ordered.length);
+          setAutoPlayCycle((current) => current + 1);
+          setFlipped(false);
+        }
+      };
+      playSequence();
+    } else {
+      flipTimer = window.setTimeout(() => setFlipped(true), 1800);
+      nextTimer = window.setTimeout(() => {
+        setIndex((current) => (current + 1) % ordered.length);
+        setAutoPlayCycle((current) => current + 1);
+        setFlipped(false);
+      }, 3900);
+    }
     return () => {
+      cancelled = true;
       window.clearTimeout(flipTimer);
       window.clearTimeout(nextTimer);
+      window.speechSynthesis?.cancel();
     };
-  }, [autoPlay, item?.id, frontSide, playVoice, ordered.length]);
+  }, [autoPlay, item?.id, index, playVoice, autoPlaySpeechSequence, ordered.length, autoPlayCycle]);
 
   useEffect(() => {
     if (!item) return undefined;
@@ -2737,6 +2803,14 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
         <button className={random ? 'selected-soft' : ''} onClick={() => { setRandom(!random); setShuffleSeed(Date.now()); }}><Shuffle size={16} /> 隨機</button>
         <button className={autoPlay ? 'selected-soft' : ''} onClick={() => setAutoPlay(!autoPlay)}>{autoPlay ? <Pause size={16} /> : <Play size={16} />} 自動</button>
         <button className={playVoice ? 'selected-soft' : ''} onClick={() => setPlayVoice(!playVoice)}>{playVoice ? <Volume2 size={16} /> : <VolumeX size={16} />} 語音</button>
+        <button disabled={!playVoice} className={playExampleVoice && playVoice ? 'selected-soft' : ''} onClick={() => setPlayExampleVoice((current) => !current)}><Volume2 size={16} /> 例句語音</button>
+        <label className="study-repeat-control" title="每張卡片完整播放幾次">
+          <RotateCcw size={15} />
+          <span>每張</span>
+          <select value={voiceRepeatCount} disabled={!playVoice} onChange={(event) => setVoiceRepeatCount(Number(event.target.value))}>
+            {[1, 2, 3].map((count) => <option key={count} value={count}>{count} 次</option>)}
+          </select>
+        </label>
         <button className={starredOnly ? 'selected-soft' : ''} onClick={() => setStarredOnly((current) => !current)}><Star size={16} /> 有星號</button>
         {onBack && <button className="study-back-button" onClick={onBack}><ChevronLeft size={18} /> 返回上一層</button>}
       </div>

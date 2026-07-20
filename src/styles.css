@@ -787,6 +787,34 @@ main {
   border-radius: 12px;
 }
 
+.study-repeat-control {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px 4px 11px;
+  border: 1px solid rgba(46, 87, 85, 0.12);
+  border-radius: 12px;
+  color: #48605f;
+  background: rgba(255, 255, 255, 0.88);
+  font-size: 13px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.study-repeat-control select {
+  min-height: 28px;
+  padding: 3px 24px 3px 8px;
+  border: 0;
+  border-radius: 8px;
+  background-color: #eef5f3;
+  box-shadow: none;
+}
+
+.study-repeat-control:has(select:disabled) {
+  opacity: 0.5;
+}
+
 .study-toolstrip .study-back-button {
   margin-left: auto;
 }
