@@ -41,7 +41,6 @@ const STUDY_DATE = '2026-07-05';
 const CONTENT_SCHEMA_VERSION = 2;
 const FIRESTORE_SCHEMA_VERSION = 3;
 const PROGRESS_SHARD_COUNT = 16;
-const APP_STATE_ID = 'reviewState';
 const PUNCTUATION_RE = /[^\p{L}\p{N}\s]/gu;
 const REVIEW_COMPLETION_BACKFILL_START = '2026-07-06';
 const REVIEW_COMPLETION_BACKFILL_END = '2026-07-07';
@@ -91,7 +90,6 @@ function recordHasObsoleteContent(record) {
 }
 
 const reviewSettingsRef = (uid) => doc(db, 'users', uid, 'settings', 'review');
-const legacyAppStateRef = (uid) => doc(db, 'users', uid, 'appState', APP_STATE_ID);
 
 async function commitFirestoreOperations(operations, chunkSize = 400) {
   for (let start = 0; start < operations.length; start += chunkSize) {
@@ -159,22 +157,7 @@ async function readFirestoreStoreV3(uid) {
     attempts,
     completedReviewDates: settings.completedReviewDates || [],
     starred: settings.starred || [],
-    migratedLegacyUpdatedAt: settings.migratedLegacyUpdatedAt || null,
   };
-}
-
-async function readLegacyFirestoreStore(uid) {
-  const snap = await getDoc(legacyAppStateRef(uid));
-  if (!snap.exists()) return null;
-  const data = snap.data();
-  return { ...emptyStore(), ...data, legacyUpdatedAt: data.updatedAt || null };
-}
-
-function timestampMillis(value) {
-  if (!value) return 0;
-  if (typeof value.toMillis === 'function') return value.toMillis();
-  const parsed = new Date(value).getTime();
-  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 async function writeFullFirestoreStoreV3(uid, store) {
@@ -196,7 +179,6 @@ async function writeFullFirestoreStoreV3(uid, store) {
     schemaVersion: FIRESTORE_SCHEMA_VERSION,
     completedReviewDates: store.completedReviewDates || [],
     starred: store.starred || [],
-    migratedLegacyUpdatedAt: store.legacyUpdatedAt || store.migratedLegacyUpdatedAt || null,
     updatedAt: serverTimestamp(),
   });
 }
@@ -239,7 +221,6 @@ async function persistFirestoreStoreChanges(uid, previous, next) {
       schemaVersion: FIRESTORE_SCHEMA_VERSION,
       completedReviewDates: next.completedReviewDates || [],
       starred: next.starred || [],
-      migratedLegacyUpdatedAt: next.migratedLegacyUpdatedAt || null,
       updatedAt: serverTimestamp(),
     }));
   }
@@ -269,11 +250,8 @@ function useFirestoreStore(user) {
         const normalizedRecords = staleRecords.length ? normalizeRecordSet(customRecords) : customRecords;
         if (staleRecords.length) await writeLearningRecords(user.uid, normalizedRecords);
         let persistedStore = await readFirestoreStoreV3(user.uid);
-        const legacyStore = await readLegacyFirestoreStore(user.uid);
-        const legacyIsNewer = legacyStore
-          && timestampMillis(legacyStore.legacyUpdatedAt) > timestampMillis(persistedStore?.migratedLegacyUpdatedAt);
-        if (!persistedStore || legacyIsNewer) {
-          persistedStore = legacyStore || emptyStore();
+        if (!persistedStore) {
+          persistedStore = emptyStore();
           await writeFullFirestoreStoreV3(user.uid, persistedStore);
         }
         if (cancelled) return;

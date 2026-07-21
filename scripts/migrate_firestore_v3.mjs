@@ -96,6 +96,15 @@ async function main() {
   const uid = credential.user.uid;
   const legacySnap = await getDoc(doc(db, 'users', uid, 'appState', 'reviewState'));
   const currentSettingsSnap = await getDoc(doc(db, 'users', uid, 'settings', 'review'));
+  if (currentSettingsSnap.data()?.schemaVersion === SCHEMA_VERSION && !process.argv.includes('--force')) {
+    if (process.argv.includes('--cleanup') && legacySnap.exists()) {
+      await deleteDoc(doc(db, 'users', uid, 'appState', 'reviewState'));
+      console.log('Firestore is already using schema v3; removed the remaining legacy app state.');
+    } else {
+      console.log('Firestore is already using schema v3; migration skipped. Use --force only for intentional replacement.');
+    }
+    return;
+  }
   if (!legacySnap.exists()) {
     if (currentSettingsSnap.data()?.schemaVersion !== SCHEMA_VERSION) throw new Error('Neither legacy state nor a verified v3 state exists');
     console.log('Firestore is already using schema v3; no legacy app state remains.');
