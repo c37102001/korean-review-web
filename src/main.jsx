@@ -1306,7 +1306,7 @@ function App() {
   if (storeLoading) return <LoadingScreen text="載入資料中" />;
 
   const views = {
-    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} recognitionQuestions={todayRecognitionQuestions} onPractice={startPractice} onStudy={startStudy} />,
+    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} recognitionQuestions={todayRecognitionQuestions} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} />,
     notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} />,
@@ -1393,7 +1393,9 @@ function LoginPage() {
   );
 }
 
-function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQuestions, onPractice, onStudy }) {
+function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQuestions, onPractice, onAddRecords, onUpdateRecord }) {
+  const [addOpen, setAddOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
   const today = todayString();
   const due = dueQuestionsForToday;
   const recognition = recognitionQuestions;
@@ -1418,7 +1420,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
           <p>目前有 {totalPending} 題等待完成，包含到期單字與每日韓文認字測驗。</p>
           <div className="actions">
             <button className="primary" disabled={!totalPending} onClick={startNextDailyTask}><Dumbbell size={18} /> 開始今日測驗</button>
-            <button onClick={() => onStudy(items, '全部內容')}><BookOpen size={18} /> 先用單字卡學習</button>
+            <button onClick={() => setAddOpen(true)}><Plus size={18} /> 快速新增單字</button>
           </div>
         </div>
         <div className="hero-meter">
@@ -1433,6 +1435,33 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
         <Stat icon={<Trophy />} label="已熟練" value={`${mastered} 題`} />
         <Stat icon={<Flame />} label="不熟悉" value={`${weak.length} 題`} />
       </div>
+
+      {addOpen && (
+        <AddItemsModal
+          title="快速新增今天的單字"
+          date={today}
+          lockedDate
+          allItems={items}
+          onAddRecords={onAddRecords}
+          onUpdateRecord={onUpdateRecord}
+          onEditExisting={(item) => {
+            setAddOpen(false);
+            setEditingItem(item);
+          }}
+          onClose={() => setAddOpen(false)}
+        />
+      )}
+      {editingItem && (
+        <AddItemsModal
+          title="編輯單字"
+          date={editingItem.date}
+          lockedDate
+          editItem={editingItem}
+          allItems={items}
+          onUpdateRecord={onUpdateRecord}
+          onClose={() => setEditingItem(null)}
+        />
+      )}
 
       <div className="split">
         <div className="panel">
