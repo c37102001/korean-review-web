@@ -2001,6 +2001,119 @@ textarea:focus {
   width: min(980px, 100%);
 }
 
+.import-progress {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid #cfe3df;
+  border-radius: 8px;
+  color: #34484a;
+  background: #f3f9f7;
+}
+
+.import-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.import-progress-head strong {
+  color: #1f5f57;
+  font-size: 15px;
+}
+
+.import-progress-head span {
+  color: #54716f;
+  font-size: 13px;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+
+.import-progress > p {
+  margin: 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.import-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #dceae7;
+}
+
+.import-progress-track span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: #19a890;
+  transition: width 160ms ease;
+}
+
+.import-progress-log {
+  max-height: 132px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid #dce8e6;
+  border-radius: 6px;
+  color: #607174;
+  background: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.import-progress-log div {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.import-progress-log time {
+  color: #879798;
+  font-variant-numeric: tabular-nums;
+}
+
+.import-progress-error {
+  border-color: #efb8bf;
+  color: #8f2c39;
+  background: #fff2f4;
+}
+
+.import-progress-error .import-progress-head strong {
+  color: #a52e3d;
+}
+
+.import-progress-success {
+  border-color: #a9d9c2;
+  background: #eef9f3;
+}
+
+.import-complete {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 28px 16px 12px;
+  text-align: center;
+}
+
+.import-complete svg,
+.import-complete strong {
+  color: #148a72;
+}
+
+.import-complete strong {
+  font-size: 20px;
+}
+
+.import-complete p {
+  margin: 0;
+  color: #617174;
+}
+
 .import-review {
   display: grid;
   gap: 16px;
