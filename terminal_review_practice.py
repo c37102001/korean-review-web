@@ -197,13 +197,12 @@ class FirebaseClient:
             commit_url = f"https://firestore.googleapis.com/v1/projects/{self.project_id}/databases/(default)/documents:commit"
             self._request_json("POST", commit_url, payload={"writes": writes}, session=session)
 
-        settings_changed = previous.get("completedReviewDates") != state.get("completedReviewDates") or previous.get("starred") != state.get("starred") or previous.get("recognition") != state.get("recognition")
+        previous_completed = set(previous.get("completedReviewDates") or [])
+        added_completed = [date_key for date_key in (state.get("completedReviewDates") or []) if date_key not in previous_completed]
+        settings_changed = previous.get("starred") != state.get("starred") or previous.get("recognition") != state.get("recognition")
         if settings_changed:
             payload_data = {"schemaVersion": FIRESTORE_SCHEMA_VERSION, "updatedAt": utc_now_iso()}
             field_paths = ["schemaVersion", "updatedAt"]
-            if previous.get("completedReviewDates") != state.get("completedReviewDates"):
-                payload_data["completedReviewDates"] = state.get("completedReviewDates") or []
-                field_paths.append("completedReviewDates")
             if previous.get("starred") != state.get("starred"):
                 payload_data["starred"] = state.get("starred") or []
                 field_paths.append("starred")
@@ -218,6 +217,18 @@ class FirebaseClient:
                 payload=payload,
                 session=session,
             )
+        if added_completed:
+            document_name = f"projects/{self.project_id}/databases/(default)/documents/users/{session.uid}/settings/review"
+            commit_url = f"https://firestore.googleapis.com/v1/projects/{self.project_id}/databases/(default)/documents:commit"
+            self._request_json("POST", commit_url, payload={"writes": [{
+                "transform": {
+                    "document": document_name,
+                    "fieldTransforms": [
+                        {"fieldPath": "completedReviewDates", "appendMissingElements": {"values": [_to_firestore_value(date_key) for date_key in added_completed]}},
+                        {"fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"},
+                    ],
+                },
+            }]}, session=session)
 
     def _list_documents(self, segments: List[str], session: AuthSession) -> List[Dict[str, Any]]:
         docs: List[Dict[str, Any]] = []
@@ -1339,9 +1350,6 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
             client.save_review_state(session, state)
         today = today_string()
         completed = state.setdefault("completedReviewDates", [])
-        if today in completed and (daily_due_questions(state, questions) or daily_recognition_questions(state, questions)):
-            completed.remove(today)
-            client.save_review_state(session, state)
         choice = menu(
             stdscr,
             f"韓文筆記 Terminal | {session.email}",

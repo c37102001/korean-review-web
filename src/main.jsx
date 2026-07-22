@@ -205,12 +205,14 @@ async function persistFirestoreStoreChanges(uid, previous, next) {
     operations.push((batch) => batch.set(ref, { date, attempts: arrayUnion(...attempts), updatedAt: serverTimestamp() }, { merge: true }));
   });
 
-  const settingsChanged = JSON.stringify(previous.completedReviewDates || []) !== JSON.stringify(next.completedReviewDates || [])
+  const previousCompletedDates = new Set(previous.completedReviewDates || []);
+  const addedCompletedDates = (next.completedReviewDates || []).filter((date) => !previousCompletedDates.has(date));
+  const settingsChanged = addedCompletedDates.length
     || JSON.stringify(previous.starred || []) !== JSON.stringify(next.starred || [])
     || JSON.stringify(previous.recognition || null) !== JSON.stringify(next.recognition || null);
   if (settingsChanged) {
     const settingsUpdate = { schemaVersion: FIRESTORE_SCHEMA_VERSION, updatedAt: serverTimestamp() };
-    if (JSON.stringify(previous.completedReviewDates || []) !== JSON.stringify(next.completedReviewDates || [])) settingsUpdate.completedReviewDates = next.completedReviewDates || [];
+    if (addedCompletedDates.length) settingsUpdate.completedReviewDates = arrayUnion(...addedCompletedDates);
     if (JSON.stringify(previous.starred || []) !== JSON.stringify(next.starred || [])) settingsUpdate.starred = next.starred || [];
     if (JSON.stringify(previous.recognition || null) !== JSON.stringify(next.recognition || null)) settingsUpdate.recognition = next.recognition || null;
     operations.push((batch) => batch.set(reviewSettingsRef(uid), settingsUpdate, { merge: true }));
@@ -1284,13 +1286,6 @@ function App() {
     const today = todayString();
     const todayComplete = todayDailyQuestions.length === 0 && todayRecognitionQuestions.length === 0;
     const todayMarked = (store.completedReviewDates || []).includes(today);
-    if (!todayComplete && todayMarked) {
-      updateStore((current) => ({
-        ...current,
-        completedReviewDates: (current.completedReviewDates || []).filter((date) => date !== today),
-      }));
-      return;
-    }
     if (!todayComplete || todayMarked) return;
     updateStore((current) => markReviewDateComplete(current, today));
   }, [user, storeLoading, store.completedReviewDates, todayDailyQuestions, todayRecognitionQuestions, updateStore]);
