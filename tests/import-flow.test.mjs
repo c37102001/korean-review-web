@@ -43,6 +43,21 @@ test('replacing an existing duplicate becomes one update with no second conflict
   assert.equal(records.updateRecords[0].id, existing.id);
   assert.equal(records.updateRecords[0].date, existing.date);
   assert.equal(records.updateRecords[0].item.meanings[0].zh, '提問');
+  assert.ok(records.updateRecords[0].order > 0);
+});
+
+test('replaced existing cards follow their position in the current JSON batch', () => {
+  const existing = { id: 'existing-id', date: '2026-07-22', order: 1, ...item('하나도', '舊資料') };
+  const draft = helpers.buildJsonImportDraft(JSON.stringify({ data: [
+    item('하나도', '一點都不'),
+    item('직접', '親自'),
+  ] }), '2026-07-22');
+  draft.conflict = helpers.findImportConflict(draft.entries, [existing]);
+  const resolved = helpers.resolveImportConflictDraft(draft, 'incoming', [existing]);
+  const { addRecords, updateRecords } = helpers.createRecordsFromImportEntries(resolved.entries, draft.targetDate, [existing], true);
+
+  const ordered = [...addRecords, ...updateRecords].sort((a, b) => a.order - b.order);
+  assert.deepEqual(ordered.map((record) => record.item.ko), ['하나도', '직접']);
 });
 
 test('duplicate input ids are reported even when Korean words differ', () => {
@@ -70,6 +85,39 @@ test('generated ids remain stable across retries and locked imports force the se
   const retry = helpers.createRecordsFromImportEntries(draft.entries, draft.targetDate, [], true).addRecords[0];
   assert.equal(first.id, retry.id);
   assert.equal(first.date, '2026-07-22');
+});
+
+test('JSON array order is persisted as ascending record order', () => {
+  const draft = helpers.buildJsonImportDraft(JSON.stringify({ data: [
+    item('첫째', '第一'),
+    item('둘째', '第二'),
+    item('셋째', '第三'),
+  ] }), '2026-07-22');
+  const records = helpers.createRecordsFromImportEntries(draft.entries, draft.targetDate, [], true).addRecords;
+
+  assert.deepEqual(records.map((record) => record.item.ko), ['첫째', '둘째', '셋째']);
+  assert.ok(records[0].order < records[1].order);
+  assert.ok(records[1].order < records[2].order);
+});
+
+test('explicit exported order is preserved when importing', () => {
+  const draft = helpers.buildJsonImportDraft(JSON.stringify({ data: [
+    item('순서', '順序', { order: 123456 }),
+  ] }), '2026-07-22');
+  const record = helpers.createRecordsFromImportEntries(draft.entries, draft.targetDate, [], true).addRecords[0];
+  assert.equal(record.order, 123456);
+});
+
+test('Firebase date records use ascending order and a stable id fallback', () => {
+  const values = [
+    { id: 'third', date: '2026-07-22', order: 10 },
+    { id: 'second', date: '2026-07-22', order: 20 },
+    { id: 'first', date: '2026-07-22', order: 20 },
+  ];
+  const records = helpers.recordsFromSnapshot({
+    docs: values.map((value) => ({ data: () => value })),
+  });
+  assert.deepEqual(records.map((record) => record.id), ['third', 'first', 'second']);
 });
 
 test('empty JSON imports are rejected before opening review', () => {

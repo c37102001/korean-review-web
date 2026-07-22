@@ -70,9 +70,19 @@ function useAuthUser() {
 
 function recordsFromSnapshot(snap) {
   return snap.docs.map((documentSnap) => documentSnap.data()).sort((a, b) => {
-    if (a.date === b.date) return (a.createdAt || '').localeCompare(b.createdAt || '');
+    if (a.date === b.date) {
+      const orderDifference = recordOrder(a) - recordOrder(b);
+      if (orderDifference) return orderDifference;
+      return String(a.id || '').localeCompare(String(b.id || ''));
+    }
     return a.date.localeCompare(b.date);
   });
+}
+
+function recordOrder(record) {
+  if (Number.isSafeInteger(record?.order)) return record.order;
+  const createdAt = Date.parse(record?.createdAt || '');
+  return Number.isFinite(createdAt) ? createdAt * 1000 : 0;
 }
 
 const reviewSettingsRef = (uid) => doc(db, 'users', uid, 'settings', 'review');
@@ -403,6 +413,7 @@ function normalizeRecords(records) {
     date: record.date,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+    order: recordOrder(record),
     index,
     zh: itemZh(record.item),
   }));
@@ -494,6 +505,10 @@ function assertString(value, label, { required = false } = {}) {
   if (required && !value.trim()) throw new Error(`${label} 不可以空白`);
 }
 
+function assertSafeInteger(value, label) {
+  if (value !== undefined && !Number.isSafeInteger(value)) throw new Error(`${label} 需要是安全整數`);
+}
+
 function assertNoUnsupportedKeys(value, allowedKeys, label) {
   const unsupported = Object.keys(value).filter((key) => !allowedKeys.includes(key));
   if (unsupported.length) throw new Error(`${label} 有不支援的欄位：${unsupported.join('、')}`);
@@ -508,9 +523,10 @@ function assertUniqueIds(values, label) {
 function validateImportItem(item, itemIndex) {
   const label = `第 ${itemIndex + 1} 筆資料`;
   assertPlainObject(item, label);
-  assertNoUnsupportedKeys(item, ['id', 'date', 'ko', 'pos', 'meanings', 'notes', 'related'], label);
+  assertNoUnsupportedKeys(item, ['id', 'date', 'order', 'ko', 'pos', 'meanings', 'notes', 'related'], label);
   assertString(item.id, `${label} 的 id`);
   assertString(item.date, `${label} 的 date`);
+  assertSafeInteger(item.order, `${label} 的 order`);
   assertString(item.ko, `${label} 的 ko`, { required: true });
   assertString(item.pos, `${label} 的 pos`);
 
@@ -560,9 +576,11 @@ function parsePairLines(text) {
 
 function createRecordsForDate(date, rawItems, existingItems = []) {
   const now = new Date().toISOString();
-  const records = rawItems.map((item) => ({
+  const orderBase = Date.now() * 1000;
+  const records = rawItems.map((item, index) => ({
     id: item.id || `${date}-custom-${crypto.randomUUID()}`,
     date: item.date || date,
+    order: Number.isSafeInteger(item.order) ? item.order : orderBase + index,
     item,
     createdAt: item.createdAt || now,
   }));
@@ -583,15 +601,18 @@ function createRecordsForDate(date, rawItems, existingItems = []) {
 
 function createRecordsFromImportEntries(entries, date, existingItems = [], forceDate = false) {
   const now = new Date().toISOString();
+  const orderBase = Date.now() * 1000;
   const addRecords = entries.filter((entry) => entry.action === 'add').map((entry) => ({
     id: entry.recordId || entry.item.id,
     date: forceDate ? date : entry.item.date || date,
+    order: Number.isSafeInteger(entry.item.order) ? entry.item.order : orderBase + entry.index,
     item: entry.item,
     createdAt: entry.item.createdAt || now,
   }));
   const updateRecords = entries.filter((entry) => entry.action === 'update').map((entry) => ({
     id: entry.existing.id,
     date: entry.existing.date,
+    order: Number.isSafeInteger(entry.item.order) ? entry.item.order : orderBase + entry.index,
     item: entry.item,
     createdAt: entry.existing.createdAt || now,
     updatedAt: now,
@@ -649,6 +670,7 @@ function createUpdateRecordsFromEditedJson(text, date, selectedItems, allItems =
     return {
       id: original.id,
       date: recordDate,
+      order: Number.isSafeInteger(item.order) ? item.order : recordOrder(original),
       item: { ...item, date: recordDate },
       createdAt: original.createdAt || now,
       updatedAt: now,
@@ -672,6 +694,7 @@ function createUpdateRecordsFromEditedJson(text, date, selectedItems, allItems =
 
 function comparableItemSnapshot(item) {
   return {
+    order: item.order,
     ko: item.ko || '',
     pos: item.pos || '',
     meanings: item.meanings || [],
@@ -688,8 +711,9 @@ function summarizeEditedJsonChanges(originalItems, records) {
   const originalById = new Map(originalItems.map((item) => [item.id, item]));
   return records.map((record) => {
     const original = originalById.get(record.id);
-    const next = { ...record.item, id: record.id, date: record.date };
+    const next = { ...record.item, id: record.id, date: record.date, order: record.order };
     const fields = [];
+    if (!jsonEqual(original?.order, next.order)) fields.push('排序');
     if (!jsonEqual(original?.ko, next.ko)) fields.push('韓文');
     if (!jsonEqual(original?.pos || '', next.pos || '')) fields.push('詞性');
     if (!jsonEqual(original?.meanings || [], next.meanings || [])) fields.push('意思/例句');
@@ -2070,6 +2094,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
         const record = {
           id: editItem.id,
           date: targetDate,
+          order: recordOrder(editItem),
           item: mergeEditedItem(editItem, manual, allItems),
           createdAt: editItem.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -2512,6 +2537,7 @@ function mergeEditedItem(original, manual, allItems = []) {
     id,
     date,
     index,
+    order,
     createdAt,
     updatedAt,
     total,
@@ -2531,6 +2557,7 @@ function buildNotebookExport(items) {
     const {
       date,
       index,
+      order,
       createdAt,
       updatedAt,
       total,
@@ -2539,7 +2566,7 @@ function buildNotebookExport(items) {
       zh,
       ...content
     } = item;
-    return { date, ...content };
+    return { date, order, ...content };
   });
   return JSON.stringify({ schemaVersion: CONTENT_SCHEMA_VERSION, exportedAt: new Date().toISOString(), data: cleanItems }, null, 2);
 }
@@ -3670,10 +3697,8 @@ function NotebookPage({ store, updateStore, items, questions, onPractice, onStud
   }).sort((a, b) => {
     if (sort === 'rate') return a.rate - b.rate;
     if (a.date !== b.date) return b.date.localeCompare(a.date);
-    const aTime = a.createdAt || `${a.date}T00:00:00.000Z`;
-    const bTime = b.createdAt || `${b.date}T00:00:00.000Z`;
-    if (aTime !== bTime) return bTime.localeCompare(aTime);
-    return b.index - a.index;
+    if (a.order !== b.order) return b.order - a.order;
+    return a.id.localeCompare(b.id);
   });
   const pageSize = 30;
   const pageCount = Math.max(1, Math.ceil(enriched.length / pageSize));
@@ -3800,6 +3825,6 @@ function WordCard({ item, onEdit, onDelete, onOpen, isStarred = false, onToggleS
   );
 }
 
-export { buildJsonImportDraft, createRecordsFromImportEntries, findImportConflict, normalizeKoreanKey, resolveImportConflictDraft };
+export { buildJsonImportDraft, createRecordsFromImportEntries, findImportConflict, normalizeKoreanKey, recordOrder, recordsFromSnapshot, resolveImportConflictDraft };
 
 if (typeof document !== 'undefined') createRoot(document.getElementById('root')).render(<App />);

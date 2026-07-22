@@ -62,6 +62,7 @@ class Card:
     notes: List[str] = field(default_factory=list)
     related: List[str] = field(default_factory=list)
     created_at: str = ""
+    order: int = 0
     index: int = 0
     is_starred: bool = False
 
@@ -375,6 +376,17 @@ def item_zh(item: Dict[str, Any]) -> str:
     return "；".join(str(meaning.get("zh", "")).strip() for meaning in item.get("meanings", []) if meaning.get("zh"))
 
 
+def record_order(record: Dict[str, Any]) -> int:
+    value = record.get("order")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    created_at = str(record.get("createdAt", ""))
+    try:
+        return int(datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp() * 1_000_000)
+    except ValueError:
+        return 0
+
+
 def normalize_records(records: List[Dict[str, Any]], state: Dict[str, Any]) -> Tuple[List[Card], List[Question]]:
     starred = set(state.get("starred") or [])
     cards: List[Card] = []
@@ -397,6 +409,7 @@ def normalize_records(records: List[Dict[str, Any]], state: Dict[str, Any]) -> T
             notes=[str(note) for note in (item.get("notes", []) or [])],
             related=[str(entry) for entry in (item.get("related", []) or [])],
             created_at=str(record.get("createdAt", "")),
+            order=record_order(record),
             index=index,
             is_starred=(record.get("id") or record.get("_docId")) in starred,
         )
@@ -413,7 +426,9 @@ def normalize_records(records: List[Dict[str, Any]], state: Dict[str, Any]) -> T
                 seen_examples.add((ko, zh))
                 qid = str(example.get("id") or f"{card.id}-{meaning.get('id', 'meaning')}-ex-{ex_index}")
                 questions.append(Question(qid, card.id, card.date, "example", ko, zh, card))
-    cards.sort(key=lambda c: (c.date, c.index, c.id))
+    cards.sort(key=lambda c: (c.date, c.order, c.id))
+    for index, card in enumerate(cards):
+        card.index = index
     return cards, order_questions(questions)
 
 
