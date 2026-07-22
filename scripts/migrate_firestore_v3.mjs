@@ -60,6 +60,19 @@ async function deleteCollection(uid, name) {
   return snap.size;
 }
 
+async function cleanupLegacyData(uid) {
+  for (const name of CLEANUP_COLLECTIONS) {
+    const deleted = await deleteCollection(uid, name);
+    console.log(`Deleted ${deleted} documents from ${name}.`);
+  }
+  await Promise.all([
+    deleteDoc(doc(db, 'users', uid, 'appState', 'reviewState')),
+    deleteDoc(doc(db, 'users', uid, 'meta', 'replaceCurrentAppData')),
+    deleteDoc(doc(db, 'users', uid, 'meta', 'contentSchemaV2')),
+  ]);
+  console.log('Legacy Firestore data removed.');
+}
+
 async function verifyV3(uid, expected) {
   const [settingsSnap, progressSnap, reviewDaysSnap] = await Promise.all([
     getDoc(doc(db, 'users', uid, 'settings', 'review')),
@@ -97,12 +110,8 @@ async function main() {
   const legacySnap = await getDoc(doc(db, 'users', uid, 'appState', 'reviewState'));
   const currentSettingsSnap = await getDoc(doc(db, 'users', uid, 'settings', 'review'));
   if (currentSettingsSnap.data()?.schemaVersion === SCHEMA_VERSION && !process.argv.includes('--force')) {
-    if (process.argv.includes('--cleanup') && legacySnap.exists()) {
-      await deleteDoc(doc(db, 'users', uid, 'appState', 'reviewState'));
-      console.log('Firestore is already using schema v3; removed the remaining legacy app state.');
-    } else {
-      console.log('Firestore is already using schema v3; migration skipped. Use --force only for intentional replacement.');
-    }
+    if (process.argv.includes('--cleanup')) await cleanupLegacyData(uid);
+    else console.log('Firestore is already using schema v3; migration skipped. Use --force only for intentional replacement.');
     return;
   }
   if (!legacySnap.exists()) {
@@ -157,16 +166,7 @@ async function main() {
     return;
   }
 
-  for (const name of CLEANUP_COLLECTIONS) {
-    const deleted = await deleteCollection(uid, name);
-    console.log(`Deleted ${deleted} documents from ${name}.`);
-  }
-  await Promise.all([
-    deleteDoc(doc(db, 'users', uid, 'appState', 'reviewState')),
-    deleteDoc(doc(db, 'users', uid, 'meta', 'replaceCurrentAppData')),
-    deleteDoc(doc(db, 'users', uid, 'meta', 'contentSchemaV2')),
-  ]);
-  console.log('Legacy Firestore data removed.');
+  await cleanupLegacyData(uid);
 }
 
 main().catch((error) => {

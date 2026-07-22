@@ -32,13 +32,13 @@ from urllib import error, parse, request
 
 API_KEY = "AIzaSyCfy63R72H6LDCb-bR7L7RwkKNnGCTHPgU"
 PROJECT_ID = "korean-review-web"
-APP_STATE_ID = "reviewState"
 FIRESTORE_SCHEMA_VERSION = 3
 PROGRESS_SHARD_COUNT = 16
 STUDY_DATE = "2026-07-05"
 REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90]
 DAILY_RECOGNITION_LIMIT = 50
 DAILY_RECOGNITION_MODE = "daily-recognition"
+REVIEW_COMPLETION_BACKFILL_DATES = ("2026-07-06", "2026-07-07")
 
 
 def utc_now_iso() -> str:
@@ -90,7 +90,6 @@ class FirebaseClient:
     def __init__(self, api_key: str, project_id: str) -> None:
         self.api_key = api_key
         self.project_id = project_id
-        self._legacy_state = False
         self._saved_state: Dict[str, Any] = empty_state()
 
     def sign_in(self, email: str, password: str) -> AuthSession:
@@ -123,56 +122,45 @@ class FirebaseClient:
                 raise
             settings = {}
 
-        if settings.get("schemaVersion") == FIRESTORE_SCHEMA_VERSION:
-            state = empty_state()
-            for document in self._list_documents(["users", session.uid, "progressShards"], session):
-                data = _parse_firestore_fields(document.get("fields", {}))
-                for question_id, entry in (data.get("entries") or {}).items():
-                    if entry.get("stats") is not None:
-                        state["stats"][question_id] = entry["stats"]
-                    if entry.get("progress") is not None:
-                        state["progress"][question_id] = entry["progress"]
-            attempts = []
+        if settings.get("schemaVersion") != FIRESTORE_SCHEMA_VERSION:
+            raise RuntimeError("Firestore schema v3 settings are missing; refusing to create legacy appState data")
+        state = empty_state()
+        for document in self._list_documents(["users", session.uid, "progressShards"], session):
+            data = _parse_firestore_fields(document.get("fields", {}))
+            for question_id, entry in (data.get("entries") or {}).items():
+                if entry.get("stats") is not None:
+                    state["stats"][question_id] = entry["stats"]
+                if entry.get("progress") is not None:
+                    state["progress"][question_id] = entry["progress"]
+        attempts = []
+        if settings.get("recognition"):
+            for date_key in dict.fromkeys((today_string(), *REVIEW_COMPLETION_BACKFILL_DATES)):
+                try:
+                    document = self._request_json(
+                        "GET", self._document_url(["users", session.uid, "reviewDays", date_key]), session=session,
+                    )
+                except RuntimeError as exc:
+                    if "NOT_FOUND" in str(exc) or "404" in str(exc):
+                        continue
+                    raise
+                attempts.extend((_parse_firestore_fields(document.get("fields", {})).get("attempts") or []))
+        else:
             for document in self._list_documents(["users", session.uid, "reviewDays"], session):
-                data = _parse_firestore_fields(document.get("fields", {}))
-                attempts.extend(data.get("attempts") or [])
-            state["attempts"] = sorted(attempts, key=lambda attempt: attempt.get("time", ""), reverse=True)[:5000]
-            state["completedReviewDates"] = settings.get("completedReviewDates") or []
-            state["starred"] = settings.get("starred") or []
-            self._legacy_state = False
-            self._saved_state = _clone_json(state)
-            return state
-
-        url = self._document_url(["users", session.uid, "appState", APP_STATE_ID])
-        try:
-            doc = self._request_json("GET", url, session=session)
-        except RuntimeError as exc:
-            if "NOT_FOUND" in str(exc) or "404" in str(exc):
-                state = empty_state()
-                self._legacy_state = True
-                self._saved_state = _clone_json(state)
-                return state
-            raise
-        state = _parse_firestore_fields(doc.get("fields", {}))
-        state = {**empty_state(), **state}
-        self._legacy_state = True
+                attempts.extend((_parse_firestore_fields(document.get("fields", {})).get("attempts") or []))
+        state["attempts"] = sorted(attempts, key=lambda attempt: attempt.get("time", ""), reverse=True)[:5000]
+        state["completedReviewDates"] = settings.get("completedReviewDates") or []
+        state["starred"] = settings.get("starred") or []
+        state["recognition"] = settings.get("recognition")
         self._saved_state = _clone_json(state)
         return state
 
     def save_app_state(self, session: AuthSession, state: Dict[str, Any]) -> None:
-        if not self._legacy_state:
-            self._save_v3_state_changes(session, self._saved_state, state)
-            self._saved_state = _clone_json(state)
-            return
-        persisted = {key: value for key, value in state.items() if key != "customRecords"}
-        persisted["updatedAt"] = utc_now_iso()
-        payload = {"fields": {key: _to_firestore_value(value) for key, value in persisted.items()}}
-        self._request_json("PATCH", self._document_url(["users", session.uid, "appState", APP_STATE_ID]), payload=payload, session=session)
+        self._save_v3_state_changes(session, self._saved_state, state)
         self._saved_state = _clone_json(state)
 
     def _save_v3_state_changes(self, session: AuthSession, previous: Dict[str, Any], state: Dict[str, Any]) -> None:
         question_ids = set(previous.get("stats") or {}) | set(previous.get("progress") or {}) | set(state.get("stats") or {}) | set(state.get("progress") or {})
-        changed_shards = set()
+        changed_shards: Dict[str, Dict[str, Any]] = {}
         for question_id in question_ids:
             old_value = {
                 "stats": (previous.get("stats") or {}).get(question_id),
@@ -184,44 +172,56 @@ class FirebaseClient:
             }
             if old_value == new_value:
                 continue
-            changed_shards.add(_progress_shard_id(question_id))
-        current_shards = _build_progress_shards(state)
-        for shard_id in changed_shards:
-            payload_data = {"entries": current_shards.get(shard_id, {}), "updatedAt": utc_now_iso()}
+            changed_shards.setdefault(_progress_shard_id(question_id), {})[question_id] = new_value if new_value["stats"] is not None or new_value["progress"] is not None else None
+        for shard_id, changed_entries in changed_shards.items():
+            active_entries = {question_id: entry for question_id, entry in changed_entries.items() if entry is not None}
+            payload_data = {"entries": active_entries, "updatedAt": utc_now_iso()}
             payload = {"fields": {key: _to_firestore_value(value) for key, value in payload_data.items()}}
+            field_paths = [f"entries.`{question_id.replace('`', r'\`')}`" for question_id in changed_entries]
+            field_paths.append("updatedAt")
+            query = parse.urlencode([("updateMask.fieldPaths", field_path) for field_path in field_paths])
             self._request_json(
                 "PATCH",
-                self._document_url(["users", session.uid, "progressShards", shard_id]),
+                f"{self._document_url(['users', session.uid, 'progressShards', shard_id])}?{query}",
                 payload=payload,
                 session=session,
             )
 
-        previous_days = _attempts_by_date(previous.get("attempts") or [])
-        current_days = _attempts_by_date(state.get("attempts") or [])
-        for date_key in set(previous_days) | set(current_days):
-            if previous_days.get(date_key) == current_days.get(date_key):
-                continue
-            payload_data = {"date": date_key, "attempts": current_days.get(date_key, []), "updatedAt": utc_now_iso()}
-            payload = {"fields": {key: _to_firestore_value(value) for key, value in payload_data.items()}}
-            self._request_json(
-                "PATCH",
-                self._document_url(["users", session.uid, "reviewDays", date_key]),
-                payload=payload,
-                session=session,
-            )
+        previous_attempt_ids = {attempt.get("id") for attempt in (previous.get("attempts") or [])}
+        added_attempts = [attempt for attempt in (state.get("attempts") or []) if attempt.get("id") not in previous_attempt_ids]
+        writes = []
+        for date_key, attempts in _attempts_by_date(added_attempts).items():
+            document_name = f"projects/{self.project_id}/databases/(default)/documents/users/{session.uid}/reviewDays/{date_key}"
+            writes.append({
+                "update": {"name": document_name, "fields": {"date": _to_firestore_value(date_key)}},
+                "updateMask": {"fieldPaths": ["date"]},
+                "updateTransforms": [
+                    {"fieldPath": "attempts", "appendMissingElements": {"values": [_to_firestore_value(attempt) for attempt in attempts]}},
+                    {"fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"},
+                ],
+            })
+        if writes:
+            commit_url = f"https://firestore.googleapis.com/v1/projects/{self.project_id}/databases/(default)/documents:commit"
+            self._request_json("POST", commit_url, payload={"writes": writes}, session=session)
 
-        settings_changed = previous.get("completedReviewDates") != state.get("completedReviewDates") or previous.get("starred") != state.get("starred")
+        settings_changed = previous.get("completedReviewDates") != state.get("completedReviewDates") or previous.get("starred") != state.get("starred") or previous.get("recognition") != state.get("recognition")
         if settings_changed:
-            payload_data = {
-                "schemaVersion": FIRESTORE_SCHEMA_VERSION,
-                "completedReviewDates": state.get("completedReviewDates") or [],
-                "starred": state.get("starred") or [],
-                "updatedAt": utc_now_iso(),
-            }
+            payload_data = {"schemaVersion": FIRESTORE_SCHEMA_VERSION, "updatedAt": utc_now_iso()}
+            field_paths = ["schemaVersion", "updatedAt"]
+            if previous.get("completedReviewDates") != state.get("completedReviewDates"):
+                payload_data["completedReviewDates"] = state.get("completedReviewDates") or []
+                field_paths.append("completedReviewDates")
+            if previous.get("starred") != state.get("starred"):
+                payload_data["starred"] = state.get("starred") or []
+                field_paths.append("starred")
+            if previous.get("recognition") != state.get("recognition"):
+                payload_data["recognition"] = state.get("recognition")
+                field_paths.append("recognition")
             payload = {"fields": {key: _to_firestore_value(value) for key, value in payload_data.items()}}
+            query = parse.urlencode([("updateMask.fieldPaths", field_path) for field_path in field_paths])
             self._request_json(
                 "PATCH",
-                self._document_url(["users", session.uid, "settings", "review"]),
+                f"{self._document_url(['users', session.uid, 'settings', 'review'])}?{query}",
                 payload=payload,
                 session=session,
             )
@@ -282,11 +282,10 @@ def empty_state() -> Dict[str, Any]:
     return {
         "stats": {},
         "progress": {},
-        "learning": {},
         "attempts": [],
-        "deletedRecordIds": [],
         "completedReviewDates": [],
         "starred": [],
+        "recognition": None,
     }
 
 
@@ -305,18 +304,6 @@ def _attempts_by_date(attempts: List[Dict[str, Any]]) -> Dict[str, List[Dict[str
 
 def _progress_shard_id(question_id: str) -> str:
     return str(sum(ord(character) for character in question_id) % PROGRESS_SHARD_COUNT).zfill(2)
-
-
-def _build_progress_shards(state: Dict[str, Any]) -> Dict[str, Dict[str, Dict[str, Any]]]:
-    shards: Dict[str, Dict[str, Dict[str, Any]]] = {}
-    question_ids = set(state.get("stats") or {}) | set(state.get("progress") or {})
-    for question_id in question_ids:
-        shard_id = _progress_shard_id(question_id)
-        shards.setdefault(shard_id, {})[question_id] = {
-            "stats": (state.get("stats") or {}).get(question_id),
-            "progress": (state.get("progress") or {}).get(question_id),
-        }
-    return shards
 
 
 def _extract_http_error_message(body: str) -> str:
@@ -437,8 +424,6 @@ def load_data(client: FirebaseClient, session: AuthSession) -> Tuple[Dict[str, A
         if record_id:
             record["id"] = record_id
             records_by_id[record_id] = record
-    for deleted_id in state.get("deletedRecordIds", []) or []:
-        records_by_id.pop(deleted_id, None)
     cards, questions = normalize_records(list(records_by_id.values()), state)
     return state, cards, questions
 
@@ -499,39 +484,74 @@ def daily_recognition_questions(
         attempt for attempt in (state.get("attempts") or [])
         if attempt.get("mode") == DAILY_RECOGNITION_MODE and attempt.get("questionId") in term_ids
     ]
-    previous_attempts = sorted(
-        (attempt for attempt in attempts if str(attempt.get("time") or "")[:10] < date_key),
-        key=lambda attempt: str(attempt.get("time") or ""),
-    )
-    round_correct: set[str] = set()
-    latest_result: Dict[str, bool] = {}
-    for attempt in previous_attempts:
-        question_id = str(attempt.get("questionId"))
-        correct = bool(attempt.get("correct"))
-        latest_result[question_id] = correct
-        if correct:
-            round_correct.add(question_id)
-        else:
-            round_correct.discard(question_id)
-        if len(round_correct) == len(term_ids):
-            round_correct.clear()
-            latest_result.clear()
+    recognition = state.get("recognition")
+    if not recognition:
+        correct_ids: set[str] = set()
+        pending_wrong_ids: set[str] = set()
+        round_completed_on = ""
+        for attempt in sorted(
+            (attempt for attempt in attempts if str(attempt.get("time") or "")[:10] < date_key),
+            key=lambda attempt: str(attempt.get("time") or ""),
+        ):
+            question_id = str(attempt.get("questionId"))
+            if attempt.get("correct"):
+                correct_ids.add(question_id)
+                pending_wrong_ids.discard(question_id)
+            else:
+                correct_ids.discard(question_id)
+                pending_wrong_ids.add(question_id)
+            if len(correct_ids) == len(term_ids):
+                round_completed_on = str(attempt.get("time") or "")[:10]
+        recognition = {
+            "correctIds": sorted(correct_ids), "pendingWrongIds": sorted(pending_wrong_ids),
+            "roundCompletedOn": round_completed_on, "dailyDate": "", "assignmentIds": [], "answeredIds": [],
+        }
 
-    wrong = shuffle_items(
-        (question for question in terms if latest_result.get(question.id) is False),
-        seed_from_string(f"{date_key}-wrong"),
-    )[:limit]
-    wrong_ids = {question.id for question in wrong}
-    unseen = [question for question in terms if question.id not in round_correct and question.id not in wrong_ids]
-    assignment = shuffle_items(
-        wrong + shuffle_items(unseen, seed_from_string(f"{date_key}-unseen"))[:max(0, limit - len(wrong))],
-        seed_from_string(f"{date_key}-assignment"),
-    )
-    answered_today = {
-        str(attempt.get("questionId")) for attempt in attempts
-        if str(attempt.get("time") or "")[:10] == date_key
+    correct_ids = {item for item in recognition.get("correctIds", []) if item in term_ids}
+    pending_wrong_ids = {item for item in recognition.get("pendingWrongIds", []) if item in term_ids}
+    round_completed_on = str(recognition.get("roundCompletedOn") or "")
+    if len(correct_ids) == len(term_ids) and not round_completed_on:
+        round_completed_on = str(recognition.get("dailyDate") or date_key)
+    if recognition.get("dailyDate") != date_key and round_completed_on and round_completed_on < date_key:
+        correct_ids.clear()
+        pending_wrong_ids.clear()
+        round_completed_on = ""
+
+    assignment_ids = list(recognition.get("assignmentIds") or [])
+    answered_ids = set(recognition.get("answeredIds") or [])
+    if recognition.get("dailyDate") != date_key:
+        wrong = shuffle_items(
+            (question for question in terms if question.id in pending_wrong_ids),
+            seed_from_string(f"{date_key}-wrong"),
+        )[:limit]
+        wrong_ids = {question.id for question in wrong}
+        unseen = [question for question in terms if question.id not in correct_ids and question.id not in wrong_ids]
+        assignment_ids = [question.id for question in shuffle_items(
+            wrong + shuffle_items(unseen, seed_from_string(f"{date_key}-unseen"))[:max(0, limit - len(wrong))],
+            seed_from_string(f"{date_key}-assignment"),
+        )]
+        answered_ids.clear()
+    for attempt in sorted(
+        (attempt for attempt in attempts if str(attempt.get("time") or "")[:10] == date_key and str(attempt.get("questionId")) not in answered_ids),
+        key=lambda attempt: str(attempt.get("time") or ""),
+    ):
+        question_id = str(attempt.get("questionId"))
+        answered_ids.add(question_id)
+        if attempt.get("correct"):
+            correct_ids.add(question_id)
+            pending_wrong_ids.discard(question_id)
+        else:
+            correct_ids.discard(question_id)
+            pending_wrong_ids.add(question_id)
+    if len(correct_ids) == len(term_ids):
+        round_completed_on = date_key
+    state["recognition"] = {
+        "correctIds": sorted(correct_ids), "pendingWrongIds": sorted(pending_wrong_ids),
+        "roundCompletedOn": round_completed_on, "dailyDate": date_key,
+        "assignmentIds": assignment_ids, "answeredIds": list(answered_ids),
     }
-    return [question for question in assignment if question.id not in answered_today]
+    by_id = {question.id: question for question in terms}
+    return [by_id[item] for item in assignment_ids if item not in answered_ids and item in by_id]
 
 
 def record_answer(state: Dict[str, Any], question: Question, correct: bool) -> None:
@@ -559,6 +579,21 @@ def record_answer(state: Dict[str, Any], question: Question, correct: bool) -> N
 
 
 def record_daily_recognition_answer(state: Dict[str, Any], question: Question, correct: bool) -> None:
+    recognition = state.setdefault("recognition", {
+        "correctIds": [], "pendingWrongIds": [], "roundCompletedOn": "", "dailyDate": today_string(),
+        "assignmentIds": [], "answeredIds": [],
+    })
+    correct_ids = set(recognition.get("correctIds") or [])
+    pending_wrong_ids = set(recognition.get("pendingWrongIds") or [])
+    if correct:
+        correct_ids.add(question.id)
+        pending_wrong_ids.discard(question.id)
+    else:
+        correct_ids.discard(question.id)
+        pending_wrong_ids.add(question.id)
+    recognition["correctIds"] = sorted(correct_ids)
+    recognition["pendingWrongIds"] = sorted(pending_wrong_ids)
+    recognition["answeredIds"] = list(dict.fromkeys([*(recognition.get("answeredIds") or []), question.id]))
     if not correct:
         record_answer(state, question, False)
         state["attempts"][0]["mode"] = DAILY_RECOGNITION_MODE
@@ -1302,12 +1337,16 @@ def run_collection(stdscr: curses.window, title: str, cards: List[Card], questio
 
 
 def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: AuthSession) -> None:
+    try:
+        state, cards, questions = load_data(client, session)
+    except RuntimeError as exc:
+        wait_message(stdscr, "載入失敗", str(exc))
+        return
     while True:
-        try:
-            state, cards, questions = load_data(client, session)
-        except RuntimeError as exc:
-            wait_message(stdscr, "載入失敗", str(exc))
-            return
+        previous_recognition = _clone_json(state.get("recognition"))
+        daily_recognition_questions(state, questions)
+        if previous_recognition != state.get("recognition"):
+            client.save_app_state(session, state)
         today = today_string()
         completed = state.setdefault("completedReviewDates", [])
         if today in completed and (daily_due_questions(state, questions) or daily_recognition_questions(state, questions)):
@@ -1322,6 +1361,10 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
         if choice in (None, "quit"):
             return
         if choice == "refresh":
+            try:
+                state, cards, questions = load_data(client, session)
+            except RuntimeError as exc:
+                wait_message(stdscr, "同步失敗", str(exc))
             continue
         if choice == "due":
             task = due_task_menu(stdscr, state, questions)

@@ -18,14 +18,19 @@ npm run dev
 - `users/{uid}/records/{recordId}`：單字卡唯一資料來源
 - `users/{uid}/progressShards/{00..15}`：分成 16 份的答題統計與 SRS 進度
 - `users/{uid}/reviewDays/{date}`：按日期分組的作答紀錄
-- `users/{uid}/settings/review`：星號、完成日期與 DB schema 版本
+- `users/{uid}/settings/review`：星號、完成日期、每日認字輪次與 DB schema 版本
+
+progress shard 只會原子更新變動題目；作答紀錄使用原子追加，避免網頁、手機與 terminal 同時使用時互相覆寫。每日認字輪次保存於 settings，不再依賴重播全部歷史紀錄。
 
 舊的 `days`、`items`、`questions` 與 `appState/reviewState` 不再由應用程式讀寫。遷移工具會先驗證 v3 資料，再視參數清理舊資料：
 
 ```bash
 npm run db:migrate
 npm run db:migrate -- --cleanup
+npm run db:optimize
 ```
+
+`db:optimize` 可安全重跑，會補齊 16 個 progress shard、初始化認字輪次、移除孤兒進度，並清除已停用的 legacy collections。
 
 內容 schema v2：
 

@@ -1,8 +1,26 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{uid}/{document=**} {
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    match /users/{uid}/records/{recordId} {
+      allow read, write: if isOwner(uid);
+    }
+    match /users/{uid}/progressShards/{shardId} {
+      allow read, write: if isOwner(uid);
+    }
+    match /users/{uid}/reviewDays/{date} {
+      allow read, write: if isOwner(uid);
+    }
+    match /users/{uid}/settings/{settingId} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /users/{uid}/{legacyCollection}/{documentId} {
+      allow read, delete: if isOwner(uid)
+        && legacyCollection in ['days', 'items', 'questions', 'cards', 'appState', 'meta'];
+      allow create, update: if false;
     }
   }
 }

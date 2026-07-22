@@ -30,7 +30,7 @@ import {
   X,
 } from 'lucide-react';
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
+import { arrayUnion, collection, deleteDoc, deleteField, doc, FieldPath, getDoc, getDocs, onSnapshot, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import { auth, db } from './firebase.js';
 import './styles.css';
 
@@ -61,7 +61,7 @@ const dateLabel = (date) => new Intl.DateTimeFormat('zh-TW', { month: 'long', da
 const monthTitle = (date) => new Intl.DateTimeFormat('zh-TW', { year: 'numeric', month: 'long' }).format(date);
 
 function emptyStore() {
-  return { stats: {}, progress: {}, learning: {}, attempts: [], customRecords: [], deletedRecordIds: [], completedReviewDates: [], starred: [] };
+  return { stats: {}, progress: {}, attempts: [], customRecords: [], completedReviewDates: [], starred: [], recognition: null };
 }
 
 function useAuthUser() {
@@ -70,8 +70,7 @@ function useAuthUser() {
   return authState;
 }
 
-async function fetchCustomRecords(uid) {
-  const snap = await getDocs(collection(db, 'users', uid, 'records'));
+function recordsFromSnapshot(snap) {
   return snap.docs.map((documentSnap) => documentSnap.data()).sort((a, b) => {
     if (a.date === b.date) return (a.createdAt || '').localeCompare(b.createdAt || '');
     return a.date.localeCompare(b.date);
@@ -132,9 +131,13 @@ async function readFirestoreStoreV3(uid) {
   const settingsSnap = await getDoc(reviewSettingsRef(uid));
   if (!settingsSnap.exists() || settingsSnap.data().schemaVersion !== FIRESTORE_SCHEMA_VERSION) return null;
 
-  const [progressSnap, reviewDaysSnap] = await Promise.all([
+  const settings = settingsSnap.data();
+  const reviewDates = [...new Set([todayString(), REVIEW_COMPLETION_BACKFILL_START, REVIEW_COMPLETION_BACKFILL_END])];
+  const [progressSnap, reviewDaySource] = await Promise.all([
     getDocs(collection(db, 'users', uid, 'progressShards')),
-    getDocs(collection(db, 'users', uid, 'reviewDays')),
+    settings.recognition
+      ? Promise.all(reviewDates.map((date) => getDoc(doc(db, 'users', uid, 'reviewDays', date))))
+      : getDocs(collection(db, 'users', uid, 'reviewDays')),
   ]);
   const stats = {};
   const progress = {};
@@ -145,11 +148,11 @@ async function readFirestoreStoreV3(uid) {
       if (data.progress) progress[questionId] = data.progress;
     });
   });
-  const attempts = reviewDaysSnap.docs
-    .flatMap((documentSnap) => documentSnap.data().attempts || [])
+  const reviewDaySnaps = Array.isArray(reviewDaySource) ? reviewDaySource : reviewDaySource.docs;
+  const attempts = reviewDaySnaps
+    .flatMap((documentSnap) => documentSnap.exists() ? documentSnap.data().attempts || [] : [])
     .sort((a, b) => (b.time || '').localeCompare(a.time || ''))
     .slice(0, 5000);
-  const settings = settingsSnap.data();
   return {
     ...emptyStore(),
     stats,
@@ -157,15 +160,17 @@ async function readFirestoreStoreV3(uid) {
     attempts,
     completedReviewDates: settings.completedReviewDates || [],
     starred: settings.starred || [],
+    recognition: settings.recognition || null,
   };
 }
 
 async function writeFullFirestoreStoreV3(uid, store) {
   const operations = [];
-  Object.entries(buildProgressShards(store)).forEach(([shardId, entries]) => {
+  const shards = buildProgressShards(store);
+  Array.from({ length: PROGRESS_SHARD_COUNT }, (_, index) => String(index).padStart(2, '0')).forEach((shardId) => {
     operations.push((batch) => batch.set(
       doc(db, 'users', uid, 'progressShards', shardId),
-      { entries, updatedAt: serverTimestamp() },
+      { entries: shards[shardId] || {}, updatedAt: serverTimestamp() },
     ));
   });
   Object.entries(attemptsByDate(store.attempts)).forEach(([date, attempts]) => {
@@ -179,13 +184,14 @@ async function writeFullFirestoreStoreV3(uid, store) {
     schemaVersion: FIRESTORE_SCHEMA_VERSION,
     completedReviewDates: store.completedReviewDates || [],
     starred: store.starred || [],
+    recognition: store.recognition || null,
     updatedAt: serverTimestamp(),
   });
 }
 
 async function persistFirestoreStoreChanges(uid, previous, next) {
   const operations = [];
-  const changedShardIds = new Set();
+  const changedEntriesByShard = new Map();
   const questionIds = new Set([
     ...Object.keys(previous.stats || {}),
     ...Object.keys(previous.progress || {}),
@@ -196,33 +202,36 @@ async function persistFirestoreStoreChanges(uid, previous, next) {
     const previousValue = { stats: previous.stats?.[questionId] || null, progress: previous.progress?.[questionId] || null };
     const nextValue = { stats: next.stats?.[questionId] || null, progress: next.progress?.[questionId] || null };
     if (JSON.stringify(previousValue) === JSON.stringify(nextValue)) return;
-    changedShardIds.add(progressShardId(questionId));
+    const shardId = progressShardId(questionId);
+    if (!changedEntriesByShard.has(shardId)) changedEntriesByShard.set(shardId, new Map());
+    changedEntriesByShard.get(shardId).set(questionId, nextValue.stats || nextValue.progress ? nextValue : null);
   });
-  const nextShards = buildProgressShards(next);
-  changedShardIds.forEach((shardId) => {
+  changedEntriesByShard.forEach((entries, shardId) => {
     const ref = doc(db, 'users', uid, 'progressShards', shardId);
-    if (!nextShards[shardId]) operations.push((batch) => batch.delete(ref));
-    else operations.push((batch) => batch.set(ref, { entries: nextShards[shardId], updatedAt: serverTimestamp() }));
+    const fieldValues = [];
+    entries.forEach((entry, questionId) => {
+      fieldValues.push(new FieldPath('entries', questionId), entry || deleteField());
+    });
+    fieldValues.push('updatedAt', serverTimestamp());
+    operations.push((batch) => batch.update(ref, ...fieldValues));
   });
 
-  const previousDays = attemptsByDate(previous.attempts);
-  const nextDays = attemptsByDate(next.attempts);
-  new Set([...Object.keys(previousDays), ...Object.keys(nextDays)]).forEach((date) => {
-    if (JSON.stringify(previousDays[date] || []) === JSON.stringify(nextDays[date] || [])) return;
+  const previousAttemptIds = new Set((previous.attempts || []).map((attempt) => attempt.id));
+  const addedAttempts = (next.attempts || []).filter((attempt) => !previousAttemptIds.has(attempt.id));
+  Object.entries(attemptsByDate(addedAttempts)).forEach(([date, attempts]) => {
     const ref = doc(db, 'users', uid, 'reviewDays', date);
-    if (!nextDays[date]?.length) operations.push((batch) => batch.delete(ref));
-    else operations.push((batch) => batch.set(ref, { date, attempts: nextDays[date], updatedAt: serverTimestamp() }));
+    operations.push((batch) => batch.set(ref, { date, attempts: arrayUnion(...attempts), updatedAt: serverTimestamp() }, { merge: true }));
   });
 
   const settingsChanged = JSON.stringify(previous.completedReviewDates || []) !== JSON.stringify(next.completedReviewDates || [])
-    || JSON.stringify(previous.starred || []) !== JSON.stringify(next.starred || []);
+    || JSON.stringify(previous.starred || []) !== JSON.stringify(next.starred || [])
+    || JSON.stringify(previous.recognition || null) !== JSON.stringify(next.recognition || null);
   if (settingsChanged) {
-    operations.push((batch) => batch.set(reviewSettingsRef(uid), {
-      schemaVersion: FIRESTORE_SCHEMA_VERSION,
-      completedReviewDates: next.completedReviewDates || [],
-      starred: next.starred || [],
-      updatedAt: serverTimestamp(),
-    }));
+    const settingsUpdate = { schemaVersion: FIRESTORE_SCHEMA_VERSION, updatedAt: serverTimestamp() };
+    if (JSON.stringify(previous.completedReviewDates || []) !== JSON.stringify(next.completedReviewDates || [])) settingsUpdate.completedReviewDates = next.completedReviewDates || [];
+    if (JSON.stringify(previous.starred || []) !== JSON.stringify(next.starred || [])) settingsUpdate.starred = next.starred || [];
+    if (JSON.stringify(previous.recognition || null) !== JSON.stringify(next.recognition || null)) settingsUpdate.recognition = next.recognition || null;
+    operations.push((batch) => batch.set(reviewSettingsRef(uid), settingsUpdate, { merge: true }));
   }
   await commitFirestoreOperations(operations);
 }
@@ -245,17 +254,28 @@ function useFirestoreStore(user) {
       if (!user) return;
       setState((current) => ({ ...current, loading: true, error: '' }));
       try {
-        const customRecords = await fetchCustomRecords(user.uid);
-        const staleRecords = customRecords.filter(recordHasObsoleteContent);
-        const normalizedRecords = staleRecords.length ? normalizeRecordSet(customRecords) : customRecords;
-        if (staleRecords.length) await writeLearningRecords(user.uid, normalizedRecords);
+        let initialRecordsResolved = false;
+        const normalizedRecords = await new Promise((resolve, reject) => {
+          unsubscribers.push(onSnapshot(collection(db, 'users', user.uid, 'records'), (snap) => {
+            const customRecords = recordsFromSnapshot(snap);
+            const staleRecords = customRecords.filter(recordHasObsoleteContent);
+            const normalized = staleRecords.length ? normalizeRecordSet(customRecords) : customRecords;
+            if (staleRecords.length) writeLearningRecords(user.uid, normalized).catch(() => {});
+            if (!initialRecordsResolved) {
+              initialRecordsResolved = true;
+              resolve(normalized);
+              return;
+            }
+            applyRemoteStore((current) => ({ ...current, customRecords: normalized }));
+          }, reject));
+        });
         let persistedStore = await readFirestoreStoreV3(user.uid);
         if (!persistedStore) {
           persistedStore = emptyStore();
           await writeFullFirestoreStoreV3(user.uid, persistedStore);
         }
         if (cancelled) return;
-        const loadedStore = { ...persistedStore, customRecords: normalizedRecords, deletedRecordIds: [], learning: {} };
+        const loadedStore = { ...persistedStore, customRecords: normalizedRecords };
         storeRef.current = loadedStore;
         setState({ loading: false, error: '', store: loadedStore });
 
@@ -266,6 +286,7 @@ function useFirestoreStore(user) {
             ...current,
             completedReviewDates: settings.completedReviewDates || [],
             starred: settings.starred || [],
+            recognition: settings.recognition || null,
           }));
         }));
         unsubscribers.push(onSnapshot(collection(db, 'users', user.uid, 'progressShards'), (snap) => {
@@ -279,12 +300,14 @@ function useFirestoreStore(user) {
           });
           applyRemoteStore((current) => ({ ...current, stats, progress }));
         }));
-        unsubscribers.push(onSnapshot(collection(db, 'users', user.uid, 'reviewDays'), (snap) => {
-          const attempts = snap.docs
-            .flatMap((documentSnap) => documentSnap.data().attempts || [])
-            .sort((a, b) => (b.time || '').localeCompare(a.time || ''))
-            .slice(0, 5000);
-          applyRemoteStore((current) => ({ ...current, attempts }));
+        const today = todayString();
+        unsubscribers.push(onSnapshot(doc(db, 'users', user.uid, 'reviewDays', today), (snap) => {
+          const todayAttempts = snap.exists() ? snap.data().attempts || [] : [];
+          applyRemoteStore((current) => {
+            const otherAttempts = (current.attempts || []).filter((attempt) => attempt.time?.slice(0, 10) !== today);
+            const attempts = [...todayAttempts, ...otherAttempts].sort((a, b) => (b.time || '').localeCompare(a.time || ''));
+            return { ...current, attempts };
+          });
         }));
       } catch (error) {
         if (!cancelled) setState({ loading: false, error: error.message, store: emptyStore() });
@@ -884,43 +907,100 @@ function seedFromString(text) {
   return [...text].reduce((seed, char) => ((seed * 31) + char.charCodeAt(0)) % 233280, 17);
 }
 
-function dailyRecognitionQuestions(store, questions, date = todayString(), limit = DAILY_RECOGNITION_LIMIT) {
+function replayRecognitionAttempts(attempts, termIds) {
+  const correctIds = new Set();
+  const pendingWrongIds = new Set();
+  let roundCompletedOn = '';
+  [...attempts].sort((a, b) => (a.time || '').localeCompare(b.time || '')).forEach((attempt) => {
+    if (!termIds.has(attempt.questionId)) return;
+    if (attempt.correct) {
+      correctIds.add(attempt.questionId);
+      pendingWrongIds.delete(attempt.questionId);
+    } else {
+      correctIds.delete(attempt.questionId);
+      pendingWrongIds.add(attempt.questionId);
+    }
+    if (correctIds.size === termIds.size) roundCompletedOn = attempt.time?.slice(0, 10) || '';
+  });
+  return { correctIds, pendingWrongIds, roundCompletedOn };
+}
+
+function dailyRecognitionSchedule(store, questions, date = todayString(), limit = DAILY_RECOGNITION_LIMIT) {
   const terms = orderReviewQuestions(questions.filter((question) => question.kind === 'term'));
-  if (!terms.length) return [];
+  if (!terms.length) return { state: null, questions: [] };
 
   const termIds = new Set(terms.map((question) => question.id));
-  const attempts = (store.attempts || [])
+  const recognitionAttempts = (store.attempts || [])
     .filter((attempt) => attempt.mode === DAILY_RECOGNITION_MODE && termIds.has(attempt.questionId));
-  const previousAttempts = attempts
-    .filter((attempt) => attempt.time?.slice(0, 10) < date)
-    .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
-  const roundCorrect = new Set();
-  const latestResult = new Map();
+  let state = store.recognition;
+  if (!state) {
+    const previous = replayRecognitionAttempts(
+      recognitionAttempts.filter((attempt) => attempt.time?.slice(0, 10) < date),
+      termIds,
+    );
+    state = {
+      correctIds: [...previous.correctIds],
+      pendingWrongIds: [...previous.pendingWrongIds],
+      roundCompletedOn: previous.roundCompletedOn,
+      dailyDate: '',
+      assignmentIds: [],
+      answeredIds: [],
+    };
+  }
 
-  previousAttempts.forEach((attempt) => {
-    latestResult.set(attempt.questionId, attempt.correct);
-    if (attempt.correct) roundCorrect.add(attempt.questionId);
-    else roundCorrect.delete(attempt.questionId);
-    if (roundCorrect.size === termIds.size) {
-      roundCorrect.clear();
-      latestResult.clear();
-    }
-  });
+  let correctIds = new Set((state.correctIds || []).filter((id) => termIds.has(id)));
+  let pendingWrongIds = new Set((state.pendingWrongIds || []).filter((id) => termIds.has(id)));
+  let roundCompletedOn = state.roundCompletedOn || '';
+  if (correctIds.size === termIds.size && !roundCompletedOn) roundCompletedOn = state.dailyDate || date;
+  if (state.dailyDate !== date && roundCompletedOn && roundCompletedOn < date) {
+    correctIds = new Set();
+    pendingWrongIds = new Set();
+    roundCompletedOn = '';
+  }
 
-  const wrong = shuffleItems(
-    terms.filter((question) => latestResult.get(question.id) === false),
-    seedFromString(`${date}-wrong`),
-  ).slice(0, limit);
-  const wrongIds = new Set(wrong.map((question) => question.id));
-  const unseen = terms.filter((question) => !roundCorrect.has(question.id) && !wrongIds.has(question.id));
-  const assignment = shuffleItems([
-    ...wrong,
-    ...shuffleItems(unseen, seedFromString(`${date}-unseen`)).slice(0, Math.max(0, limit - wrong.length)),
-  ], seedFromString(`${date}-assignment`));
-  const answeredToday = new Set(
-    attempts.filter((attempt) => attempt.time?.slice(0, 10) === date).map((attempt) => attempt.questionId),
-  );
-  return assignment.filter((question) => !answeredToday.has(question.id));
+  let assignmentIds = state.assignmentIds || [];
+  let answeredIds = new Set(state.answeredIds || []);
+  if (state.dailyDate !== date) {
+    const wrong = shuffleItems(
+      terms.filter((question) => pendingWrongIds.has(question.id)),
+      seedFromString(`${date}-wrong`),
+    ).slice(0, limit);
+    const wrongIds = new Set(wrong.map((question) => question.id));
+    const unseen = terms.filter((question) => !correctIds.has(question.id) && !wrongIds.has(question.id));
+    assignmentIds = shuffleItems([
+      ...wrong,
+      ...shuffleItems(unseen, seedFromString(`${date}-unseen`)).slice(0, Math.max(0, limit - wrong.length)),
+    ], seedFromString(`${date}-assignment`)).map((question) => question.id);
+    answeredIds = new Set();
+  }
+  recognitionAttempts
+    .filter((attempt) => attempt.time?.slice(0, 10) === date && !answeredIds.has(attempt.questionId))
+    .sort((a, b) => (a.time || '').localeCompare(b.time || ''))
+    .forEach((attempt) => {
+      answeredIds.add(attempt.questionId);
+      if (attempt.correct) {
+        correctIds.add(attempt.questionId);
+        pendingWrongIds.delete(attempt.questionId);
+      } else {
+        correctIds.delete(attempt.questionId);
+        pendingWrongIds.add(attempt.questionId);
+      }
+    });
+  if (correctIds.size === termIds.size) roundCompletedOn = date;
+
+  const nextState = {
+    correctIds: [...correctIds].sort(),
+    pendingWrongIds: [...pendingWrongIds].sort(),
+    roundCompletedOn,
+    dailyDate: date,
+    assignmentIds,
+    answeredIds: [...answeredIds],
+  };
+  const byId = new Map(terms.map((question) => [question.id, question]));
+  return {
+    state: nextState,
+    questions: assignmentIds.filter((id) => !answeredIds.has(id)).map((id) => byId.get(id)).filter(Boolean),
+  };
 }
 
 function groupTasks(store, questions, date = todayString()) {
@@ -1017,10 +1097,29 @@ function recordAnswer(store, question, correct) {
 }
 
 function recordDailyRecognitionAnswer(store, question, correct) {
+  const recognition = store.recognition || {
+    correctIds: [], pendingWrongIds: [], roundCompletedOn: '', dailyDate: todayString(), assignmentIds: [], answeredIds: [],
+  };
+  const correctIds = new Set(recognition.correctIds || []);
+  const pendingWrongIds = new Set(recognition.pendingWrongIds || []);
+  if (correct) {
+    correctIds.add(question.id);
+    pendingWrongIds.delete(question.id);
+  } else {
+    correctIds.delete(question.id);
+    pendingWrongIds.add(question.id);
+  }
+  const nextRecognition = {
+    ...recognition,
+    correctIds: [...correctIds].sort(),
+    pendingWrongIds: [...pendingWrongIds].sort(),
+    answeredIds: [...new Set([...(recognition.answeredIds || []), question.id])],
+  };
   if (!correct) {
     const next = recordAnswer(store, question, false);
     return {
       ...next,
+      recognition: nextRecognition,
       attempts: next.attempts.map((attempt, index) => (
         index === 0 ? { ...attempt, mode: DAILY_RECOGNITION_MODE } : attempt
       )),
@@ -1029,6 +1128,7 @@ function recordDailyRecognitionAnswer(store, question, correct) {
   const now = new Date().toISOString();
   return {
     ...store,
+    recognition: nextRecognition,
     attempts: [{
       id: crypto.randomUUID(),
       questionId: question.id,
@@ -1208,14 +1308,21 @@ function App() {
   const { items, questions } = useMemo(() => normalizeRecords(allRecords), [allRecords]);
   const dailyQuestions = useMemo(() => reviewQuestions(questions), [questions]);
   const todayDailyQuestions = useMemo(() => dailyReviewQuestions(store, dailyQuestions, todayString()), [store, dailyQuestions]);
-  const todayRecognitionQuestions = useMemo(
-    () => dailyRecognitionQuestions(store, dailyQuestions, todayString()),
-    [store.attempts, dailyQuestions],
+  const todayRecognitionSchedule = useMemo(
+    () => dailyRecognitionSchedule(store, dailyQuestions, todayString()),
+    [store.attempts, store.recognition, dailyQuestions],
   );
+  const todayRecognitionQuestions = todayRecognitionSchedule.questions;
   const completedAttemptDates = useMemo(
     () => [...new Set((store.attempts || []).map((attempt) => attempt.time?.slice(0, 10)).filter(Boolean))],
     [store.attempts],
   );
+
+  useEffect(() => {
+    if (!user || storeLoading) return;
+    if (JSON.stringify(store.recognition || null) === JSON.stringify(todayRecognitionSchedule.state || null)) return;
+    updateStore((current) => ({ ...current, recognition: todayRecognitionSchedule.state }));
+  }, [user, storeLoading, store.recognition, todayRecognitionSchedule.state, updateStore]);
 
   useEffect(() => {
     if (!user || storeLoading) return;
@@ -1294,8 +1401,6 @@ function App() {
       customRecords: (current.customRecords || []).filter((record) => record.id !== recordId),
       stats: Object.fromEntries(Object.entries(current.stats || {}).filter(([id]) => id !== recordId && !id.startsWith(`${recordId}-`))),
       progress: Object.fromEntries(Object.entries(current.progress || {}).filter(([id]) => id !== recordId && !id.startsWith(`${recordId}-`))),
-      learning: Object.fromEntries(Object.entries(current.learning || {}).filter(([id]) => id !== recordId)),
-      attempts: (current.attempts || []).filter((attempt) => attempt.questionId !== recordId && !attempt.questionId?.startsWith(`${recordId}-`)),
       starred: (current.starred || []).filter((id) => id !== recordId),
     }));
     await deleteLearningRecord(user.uid, recordId);
