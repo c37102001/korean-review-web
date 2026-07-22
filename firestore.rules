@@ -15,12 +15,7 @@ service cloud.firestore {
       allow read, write: if isOwner(uid);
     }
     match /users/{uid}/settings/{settingId} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
-    }
-    match /users/{uid}/{legacyCollection}/{documentId} {
-      allow read, delete: if isOwner(uid)
-        && legacyCollection in ['days', 'items', 'questions', 'cards', 'appState', 'meta'];
-      allow create, update: if false;
+      allow read, write: if isOwner(uid);
     }
   }
 }

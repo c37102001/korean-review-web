@@ -34,11 +34,9 @@ API_KEY = "AIzaSyCfy63R72H6LDCb-bR7L7RwkKNnGCTHPgU"
 PROJECT_ID = "korean-review-web"
 FIRESTORE_SCHEMA_VERSION = 3
 PROGRESS_SHARD_COUNT = 16
-STUDY_DATE = "2026-07-05"
 REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90]
 DAILY_RECOGNITION_LIMIT = 50
 DAILY_RECOGNITION_MODE = "daily-recognition"
-REVIEW_COMPLETION_BACKFILL_DATES = ("2026-07-06", "2026-07-07")
 
 
 def utc_now_iso() -> str:
@@ -109,7 +107,7 @@ class FirebaseClient:
             for doc in self._list_documents(["users", session.uid, "records"], session)
         ]
 
-    def get_app_state(self, session: AuthSession) -> Dict[str, Any]:
+    def load_review_state(self, session: AuthSession) -> Dict[str, Any]:
         try:
             settings_doc = self._request_json(
                 "GET",
@@ -123,7 +121,7 @@ class FirebaseClient:
             settings = {}
 
         if settings.get("schemaVersion") != FIRESTORE_SCHEMA_VERSION:
-            raise RuntimeError("Firestore schema v3 settings are missing; refusing to create legacy appState data")
+            raise RuntimeError("Firestore schema v3 settings are missing")
         state = empty_state()
         for document in self._list_documents(["users", session.uid, "progressShards"], session):
             data = _parse_firestore_fields(document.get("fields", {}))
@@ -133,20 +131,15 @@ class FirebaseClient:
                 if entry.get("progress") is not None:
                     state["progress"][question_id] = entry["progress"]
         attempts = []
-        if settings.get("recognition"):
-            for date_key in dict.fromkeys((today_string(), *REVIEW_COMPLETION_BACKFILL_DATES)):
-                try:
-                    document = self._request_json(
-                        "GET", self._document_url(["users", session.uid, "reviewDays", date_key]), session=session,
-                    )
-                except RuntimeError as exc:
-                    if "NOT_FOUND" in str(exc) or "404" in str(exc):
-                        continue
-                    raise
-                attempts.extend((_parse_firestore_fields(document.get("fields", {})).get("attempts") or []))
+        try:
+            document = self._request_json(
+                "GET", self._document_url(["users", session.uid, "reviewDays", today_string()]), session=session,
+            )
+        except RuntimeError as exc:
+            if "NOT_FOUND" not in str(exc) and "404" not in str(exc):
+                raise
         else:
-            for document in self._list_documents(["users", session.uid, "reviewDays"], session):
-                attempts.extend((_parse_firestore_fields(document.get("fields", {})).get("attempts") or []))
+            attempts.extend((_parse_firestore_fields(document.get("fields", {})).get("attempts") or []))
         state["attempts"] = sorted(attempts, key=lambda attempt: attempt.get("time", ""), reverse=True)[:5000]
         state["completedReviewDates"] = settings.get("completedReviewDates") or []
         state["starred"] = settings.get("starred") or []
@@ -154,11 +147,11 @@ class FirebaseClient:
         self._saved_state = _clone_json(state)
         return state
 
-    def save_app_state(self, session: AuthSession, state: Dict[str, Any]) -> None:
-        self._save_v3_state_changes(session, self._saved_state, state)
+    def save_review_state(self, session: AuthSession, state: Dict[str, Any]) -> None:
+        self._save_review_state_changes(session, self._saved_state, state)
         self._saved_state = _clone_json(state)
 
-    def _save_v3_state_changes(self, session: AuthSession, previous: Dict[str, Any], state: Dict[str, Any]) -> None:
+    def _save_review_state_changes(self, session: AuthSession, previous: Dict[str, Any], state: Dict[str, Any]) -> None:
         question_ids = set(previous.get("stats") or {}) | set(previous.get("progress") or {}) | set(state.get("stats") or {}) | set(state.get("progress") or {})
         changed_shards: Dict[str, Dict[str, Any]] = {}
         for question_id in question_ids:
@@ -371,13 +364,6 @@ def item_zh(item: Dict[str, Any]) -> str:
     return "；".join(str(meaning.get("zh", "")).strip() for meaning in item.get("meanings", []) if meaning.get("zh"))
 
 
-def item_examples(item: Dict[str, Any]) -> List[Dict[str, Any]]:
-    examples: List[Dict[str, Any]] = []
-    for meaning in item.get("meanings", []) or []:
-        examples.extend(meaning.get("examples", []) or [])
-    return examples
-
-
 def normalize_records(records: List[Dict[str, Any]], state: Dict[str, Any]) -> Tuple[List[Card], List[Question]]:
     starred = set(state.get("starred") or [])
     cards: List[Card] = []
@@ -385,10 +371,14 @@ def normalize_records(records: List[Dict[str, Any]], state: Dict[str, Any]) -> T
     seen_examples: set[Tuple[str, str]] = set()
     for index, record in enumerate(records):
         item = record.get("item", {}) or {}
+        record_id = record.get("id") or record.get("_docId")
+        record_date = record.get("date")
+        if not record_id or not record_date:
+            raise ValueError(f"Record {index + 1} is missing its required id or date")
         meanings = item.get("meanings", []) or []
         card = Card(
-            id=record.get("id") or record.get("_docId") or f"{record.get('date', STUDY_DATE)}-{index}",
-            date=record.get("date") or item.get("date") or STUDY_DATE,
+            id=record_id,
+            date=record_date,
             ko=str(item.get("ko", "")).strip(),
             zh=item_zh(item),
             pos=str(item.get("pos", "")).strip(),
@@ -417,7 +407,7 @@ def normalize_records(records: List[Dict[str, Any]], state: Dict[str, Any]) -> T
 
 
 def load_data(client: FirebaseClient, session: AuthSession) -> Tuple[Dict[str, Any], List[Card], List[Question]]:
-    state = client.get_app_state(session)
+    state = client.load_review_state(session)
     records_by_id: Dict[str, Dict[str, Any]] = {}
     for record in client.list_records(session):
         record_id = record.get("id") or record.get("_docId")
@@ -989,7 +979,7 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             return
         if key == "0":
             toggle_star(state, card)
-            client.save_app_state(session, state)
+            client.save_review_state(session, state)
             message = "已打星號" if card.is_starred else "已取消星號"
         elif key == "8":
             show_details = not show_details
@@ -1106,7 +1096,7 @@ def run_daily_recognition(
             continue
         if key == "0":
             toggle_star(state, card)
-            client.save_app_state(session, state)
+            client.save_review_state(session, state)
             message = "已打星號" if card.is_starred else "已取消星號"
         elif key == "8":
             if not graded:
@@ -1122,7 +1112,7 @@ def run_daily_recognition(
                 continue
             correct = key == "2"
             record_daily_recognition_answer(state, question, correct)
-            client.save_app_state(session, state)
+            client.save_review_state(session, state)
             results[question.id] = correct
             message = ""
         elif key == "4":
@@ -1239,7 +1229,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 continue
             if should_record_results:
                 record_answer(state, question, correct)
-                client.save_app_state(session, state)
+                client.save_review_state(session, state)
             show_hint = True
             partial = None
             graded = True
@@ -1272,7 +1262,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         if isinstance(key, str):
             if key == "0":
                 toggle_star(state, question.source)
-                client.save_app_state(session, state)
+                client.save_review_state(session, state)
                 message = "已打星號" if question.source.is_starred else "已取消星號"
             elif key == "8":
                 show_hint = not show_hint
@@ -1346,12 +1336,12 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
         previous_recognition = _clone_json(state.get("recognition"))
         daily_recognition_questions(state, questions)
         if previous_recognition != state.get("recognition"):
-            client.save_app_state(session, state)
+            client.save_review_state(session, state)
         today = today_string()
         completed = state.setdefault("completedReviewDates", [])
         if today in completed and (daily_due_questions(state, questions) or daily_recognition_questions(state, questions)):
             completed.remove(today)
-            client.save_app_state(session, state)
+            client.save_review_state(session, state)
         choice = menu(
             stdscr,
             f"韓文筆記 Terminal | {session.email}",
@@ -1388,7 +1378,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                     if today not in completed:
                         completed.append(today)
                         completed.sort()
-                        client.save_app_state(session, state)
+                        client.save_review_state(session, state)
         elif choice == "calendar":
             selected_date = date_menu(stdscr, cards)
             if selected_date:

@@ -712,32 +712,6 @@ main {
   background: #eff9f7;
 }
 
-.subblock {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid #edf0f2;
-}
-
-.subblock b {
-  display: block;
-  margin-bottom: 8px;
-}
-
-.subblock p {
-  margin-bottom: 10px;
-}
-
-.subblock span {
-  color: #71808b;
-}
-
-.tips {
-  padding: 12px;
-  border: 0;
-  border-radius: 14px;
-  background: #fff4df;
-}
-
 .tags {
   display: flex;
   flex-wrap: wrap;
@@ -973,14 +947,8 @@ main {
   margin-top: 0;
 }
 
-.study-details .subblock:first-child,
 .study-details .pattern:first-child {
   margin-top: 0;
-}
-
-.study-details .subblock:first-child {
-  padding-top: 0;
-  border-top: 0;
 }
 
 .rich-details {

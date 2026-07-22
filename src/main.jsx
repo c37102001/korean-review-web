@@ -37,13 +37,10 @@ import './styles.css';
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
 const DAILY_RECOGNITION_LIMIT = 50;
 const DAILY_RECOGNITION_MODE = 'daily-recognition';
-const STUDY_DATE = '2026-07-05';
 const CONTENT_SCHEMA_VERSION = 2;
 const FIRESTORE_SCHEMA_VERSION = 3;
 const PROGRESS_SHARD_COUNT = 16;
 const PUNCTUATION_RE = /[^\p{L}\p{N}\s]/gu;
-const REVIEW_COMPLETION_BACKFILL_START = '2026-07-06';
-const REVIEW_COMPLETION_BACKFILL_END = '2026-07-07';
 
 const toDateKey = (date) => {
   const year = date.getFullYear();
@@ -75,17 +72,6 @@ function recordsFromSnapshot(snap) {
     if (a.date === b.date) return (a.createdAt || '').localeCompare(b.createdAt || '');
     return a.date.localeCompare(b.date);
   });
-}
-
-function recordHasObsoleteContent(record) {
-  const item = record.item || {};
-  return Boolean(
-    item.schemaVersion ||
-    item.zh ||
-    item.examples ||
-    item.senses ||
-    (item.related || []).some((entry) => typeof entry !== 'string'),
-  );
 }
 
 const reviewSettingsRef = (uid) => doc(db, 'users', uid, 'settings', 'review');
@@ -132,12 +118,9 @@ async function readFirestoreStoreV3(uid) {
   if (!settingsSnap.exists() || settingsSnap.data().schemaVersion !== FIRESTORE_SCHEMA_VERSION) return null;
 
   const settings = settingsSnap.data();
-  const reviewDates = [...new Set([todayString(), REVIEW_COMPLETION_BACKFILL_START, REVIEW_COMPLETION_BACKFILL_END])];
-  const [progressSnap, reviewDaySource] = await Promise.all([
+  const [progressSnap, reviewDaySnaps] = await Promise.all([
     getDocs(collection(db, 'users', uid, 'progressShards')),
-    settings.recognition
-      ? Promise.all(reviewDates.map((date) => getDoc(doc(db, 'users', uid, 'reviewDays', date))))
-      : getDocs(collection(db, 'users', uid, 'reviewDays')),
+    Promise.all([getDoc(doc(db, 'users', uid, 'reviewDays', todayString()))]),
   ]);
   const stats = {};
   const progress = {};
@@ -148,7 +131,6 @@ async function readFirestoreStoreV3(uid) {
       if (data.progress) progress[questionId] = data.progress;
     });
   });
-  const reviewDaySnaps = Array.isArray(reviewDaySource) ? reviewDaySource : reviewDaySource.docs;
   const attempts = reviewDaySnaps
     .flatMap((documentSnap) => documentSnap.exists() ? documentSnap.data().attempts || [] : [])
     .sort((a, b) => (b.time || '').localeCompare(a.time || ''))
@@ -258,15 +240,12 @@ function useFirestoreStore(user) {
         const normalizedRecords = await new Promise((resolve, reject) => {
           unsubscribers.push(onSnapshot(collection(db, 'users', user.uid, 'records'), (snap) => {
             const customRecords = recordsFromSnapshot(snap);
-            const staleRecords = customRecords.filter(recordHasObsoleteContent);
-            const normalized = staleRecords.length ? normalizeRecordSet(customRecords) : customRecords;
-            if (staleRecords.length) writeLearningRecords(user.uid, normalized).catch(() => {});
             if (!initialRecordsResolved) {
               initialRecordsResolved = true;
-              resolve(normalized);
+              resolve(customRecords);
               return;
             }
-            applyRemoteStore((current) => ({ ...current, customRecords: normalized }));
+            applyRemoteStore((current) => ({ ...current, customRecords }));
           }, reject));
         });
         let persistedStore = await readFirestoreStoreV3(user.uid);
@@ -439,19 +418,16 @@ function normalizeRecords(records) {
     });
   };
   items.forEach((item) => {
-    const isComparisonCard = !!item.items?.length && !item.meanings?.length;
-    if (!isComparisonCard) {
-      questions.push({
-        id: item.id,
-        itemId: item.id,
-        date: item.date,
-        kind: 'term',
-        pos: item.pos || '比較',
-        ko: item.ko,
-        zh: item.zh,
-        source: item,
-      });
-    }
+    questions.push({
+      id: item.id,
+      itemId: item.id,
+      date: item.date,
+      kind: 'term',
+      pos: item.pos || '未分類',
+      ko: item.ko,
+      zh: item.zh,
+      source: item,
+    });
     (item.meanings || []).forEach((meaning) => {
       (meaning.examples || []).forEach((example) => {
         addExampleQuestion(item, example, example.id);
@@ -459,22 +435,6 @@ function normalizeRecords(records) {
     });
   });
   return { items, questions };
-}
-
-function parseJsonItems(text) {
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error('JSON 格式錯誤，請確認括號、逗號和引號是否正確');
-  }
-  if (!Array.isArray(parsed) && parsed?.schemaVersion !== undefined && parsed.schemaVersion !== CONTENT_SCHEMA_VERSION) {
-    throw new Error(`JSON schemaVersion 需要是 ${CONTENT_SCHEMA_VERSION}`);
-  }
-  const data = Array.isArray(parsed) ? parsed : parsed.data;
-  if (!Array.isArray(data)) throw new Error('JSON 需要是 { "data": [...] } 或陣列格式');
-  data.forEach(validateImportItem);
-  return data;
 }
 
 function readJsonImportDocument(text) {
@@ -1313,11 +1273,6 @@ function App() {
     [store.attempts, store.recognition, dailyQuestions],
   );
   const todayRecognitionQuestions = todayRecognitionSchedule.questions;
-  const completedAttemptDates = useMemo(
-    () => [...new Set((store.attempts || []).map((attempt) => attempt.time?.slice(0, 10)).filter(Boolean))],
-    [store.attempts],
-  );
-
   useEffect(() => {
     if (!user || storeLoading) return;
     if (JSON.stringify(store.recognition || null) === JSON.stringify(todayRecognitionSchedule.state || null)) return;
@@ -1327,9 +1282,6 @@ function App() {
   useEffect(() => {
     if (!user || storeLoading) return;
     const today = todayString();
-    const backfillDates = completedAttemptDates.filter(
-      (date) => date >= REVIEW_COMPLETION_BACKFILL_START && date <= REVIEW_COMPLETION_BACKFILL_END && dailyReviewQuestions(store, dailyQuestions, date).length === 0,
-    );
     const todayComplete = todayDailyQuestions.length === 0 && todayRecognitionQuestions.length === 0;
     const todayMarked = (store.completedReviewDates || []).includes(today);
     if (!todayComplete && todayMarked) {
@@ -1339,14 +1291,9 @@ function App() {
       }));
       return;
     }
-
-    const datesToMark = [...backfillDates];
-    if (todayComplete) datesToMark.push(today);
-
-    const missingDates = [...new Set(datesToMark)].filter((date) => !(store.completedReviewDates || []).includes(date));
-    if (!missingDates.length) return;
-    updateStore((current) => missingDates.reduce((nextStore, date) => markReviewDateComplete(nextStore, date), current));
-  }, [user, storeLoading, store.completedReviewDates, store.progress, store.attempts, completedAttemptDates, dailyQuestions, todayDailyQuestions, todayRecognitionQuestions, updateStore]);
+    if (!todayComplete || todayMarked) return;
+    updateStore((current) => markReviewDateComplete(current, today));
+  }, [user, storeLoading, store.completedReviewDates, todayDailyQuestions, todayRecognitionQuestions, updateStore]);
 
   const navTop = (next) => {
     setPageStack([]);
@@ -1792,10 +1739,6 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, onPra
 
 function NotePreview({ item }) {
   return <div className="mini"><strong>{item.ko}</strong><span>{item.zh}</span></div>;
-}
-
-function AddItemsPanel({ title, date, lockedDate = false, onAddRecords, allItems = [] }) {
-  return <AddItemsForm title={title} date={date} lockedDate={lockedDate} onAddRecords={onAddRecords} allItems={allItems} />;
 }
 
 function AddItemsModal({ title, date, lockedDate = false, onAddRecords, onUpdateRecord, onEditExisting, editItem, allItems = [], onClose }) {
@@ -2450,8 +2393,6 @@ function itemSearchText(item) {
     ...(item.notes || []),
     ...(item.meanings || []).flatMap((meaning) => [meaning.zh, meaning.pattern, ...(meaning.examples || []).flatMap((example) => [example.ko, example.zh])]),
     ...(item.related || []),
-    ...(item.components || []).flatMap((entry) => [entry.ko, entry.zh]),
-    ...(item.items || []).flatMap((entry) => [entry.ko, entry.zh]),
   ].filter(Boolean).join(' ').toLowerCase();
 }
 
@@ -2579,8 +2520,6 @@ function NoteCard({ item, allItems = [], onEdit, onDelete, compact = false, onOp
       )}
       {!compact && <>
       <CardRichDetails item={item} relatedItems={relatedItems} onOpenItem={onOpenItem} />
-      {!!item.components?.length && <div className="tags">{item.components.map((entry) => <span key={entry.ko}>{entry.ko} · {entry.zh}</span>)}</div>}
-      {!!item.items?.length && <div className="subblock">{item.items.map((entry) => <p key={entry.ko}>{entry.ko}<br /><span>{entry.zh}</span></p>)}</div>}
       </>}
     </article>
   );
@@ -2758,7 +2697,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
     const latestById = new Map(allItems.map((entry) => [entry.id, entry]));
     return set.items.map((entry) => latestById.get(entry.id) || entry);
   }, [set.items, allItems]);
-  const types = ['全部', ...new Set(currentItems.map((item) => item.pos || '比較'))];
+  const types = ['全部', ...new Set(currentItems.map((item) => item.pos || '未分類'))];
   const filtered = useMemo(() => {
     const starredSet = new Set(store.starred || []);
     return currentItems
@@ -2976,7 +2915,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
           <div className="flash-face front">
             <span>{index + 1} / {ordered.length}</span>
             <strong>{frontText}</strong>
-            <small>{frontSide === 'ko' ? item.pos || '比較' : '點擊看韓文'}</small>
+            <small>{frontSide === 'ko' ? item.pos || '未分類' : '點擊看韓文'}</small>
             <button className="card-speak-btn" onClick={(e) => { e.stopPropagation(); speakText(frontText, frontLang); }} aria-label="播放發音"><Volume2 size={18} /></button>
           </div>
           <div className="flash-face back">
@@ -3008,13 +2947,11 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
 
 function StudyDetails({ item, allItems, onOpenItem }) {
   const relatedItems = displayRelated(item, allItems);
-  const hasDetails = item.meanings?.length || item.notes?.length || relatedItems.length || item.components?.length || item.items?.length;
+  const hasDetails = item.meanings?.length || item.notes?.length || relatedItems.length;
   if (!hasDetails) return <div className="empty">這張卡片沒有額外例句或補充說明。</div>;
   return (
     <div className="study-details">
       <CardRichDetails item={item} relatedItems={relatedItems} onOpenItem={onOpenItem} />
-      {!!item.components?.length && <div className="tags">{item.components.map((entry) => <span key={entry.ko}>{entry.ko} · {entry.zh}</span>)}</div>}
-      {!!item.items?.length && <div className="subblock">{item.items.map((entry) => <p key={entry.ko}>{entry.ko}<br /><span>{entry.zh}</span></p>)}</div>}
     </div>
   );
 }
@@ -3408,18 +3345,6 @@ function DiffResult({ result }) {
   );
 }
 
-function AnswerPanel({ question, revealed, onCorrect, onWrong }) {
-  return (
-    <div className="answer-panel">
-      {revealed && <div><span>正確答案</span><strong>{question.ko}</strong><p>{question.zh}</p></div>}
-      <div className="actions">
-        <button className="success" onClick={onCorrect}><Check size={18} /> 答對</button>
-        <button className="danger-button" onClick={onWrong}><X size={18} /> 答錯</button>
-      </div>
-    </div>
-  );
-}
-
 function ExportJsonModal({ items, title = '匯出 JSON', onClose }) {
   const [copied, setCopied] = useState(false);
   const jsonText = useMemo(() => buildNotebookExport(items), [items]);
@@ -3555,7 +3480,7 @@ function NotebookPage({ store, updateStore, items, questions, onPractice, onStud
   const [editingItem, setEditingItem] = useState(null);
   const [viewingItem, setViewingItem] = useState(null);
   const starredSet = new Set(store.starred || []);
-  const types = ['全部', ...new Set(items.map((item) => item.pos || '比較'))];
+  const types = ['全部', ...new Set(items.map((item) => item.pos || '未分類'))];
   const itemQuestionIds = new Map(items.map((item) => [item.id, questions.filter((q) => q.itemId === item.id).map((q) => q.id)]));
   const enriched = items.map((item) => {
     const ids = itemQuestionIds.get(item.id) || [item.id];
@@ -3697,7 +3622,7 @@ function WordCard({ item, onEdit, onDelete, onOpen, isStarred = false, onToggleS
         </div>
       </div>
       <p>{item.zh}</p>
-      <div className="word-meta"><span>{item.pos || '比較'}</span><span>{item.date}</span><span>{item.total} 次</span><span>{item.rate}%</span></div>
+      <div className="word-meta"><span>{item.pos || '未分類'}</span><span>{item.date}</span><span>{item.total} 次</span><span>{item.rate}%</span></div>
     </article>
   );
 }

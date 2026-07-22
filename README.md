@@ -22,16 +22,6 @@ npm run dev
 
 progress shard 只會原子更新變動題目；作答紀錄使用原子追加，避免網頁、手機與 terminal 同時使用時互相覆寫。每日認字輪次保存於 settings，不再依賴重播全部歷史紀錄。
 
-舊的 `days`、`items`、`questions` 與 `appState/reviewState` 不再由應用程式讀寫。遷移工具會先驗證 v3 資料，再視參數清理舊資料：
-
-```bash
-npm run db:migrate
-npm run db:migrate -- --cleanup
-npm run db:optimize
-```
-
-`db:optimize` 可安全重跑，會補齊 16 個 progress shard、初始化認字輪次、移除孤兒進度，並清除已停用的 legacy collections。
-
 內容 schema v2：
 
 - 每張卡片保留穩定 `id`。
@@ -39,7 +29,7 @@ npm run db:optimize
 - 例句只放在 `meanings[].examples[]`。
 - 備註只放在頂層 `notes`。
 - 相關詞 `related` 使用卡片 id 陣列。
-- 不再使用頂層 `zh`、頂層 `examples` 或 `senses`。
+- 頂層不接受 `zh`、`examples` 或 `senses`。
 
 ## Firebase
 

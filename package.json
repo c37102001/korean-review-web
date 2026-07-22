@@ -6,9 +6,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0",
-    "db:migrate": "node scripts/migrate_firestore_v3.mjs",
-    "db:optimize": "node scripts/optimize_firestore_v3.mjs"
+    "preview": "vite preview --host 0.0.0.0"
   },
   "keywords": [],
   "author": "",
