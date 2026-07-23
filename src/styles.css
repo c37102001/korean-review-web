@@ -610,6 +610,300 @@ main {
   gap: 16px;
 }
 
+.grammar-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 18px;
+  padding: 12px 15px;
+  border: 1px solid #dfe8e7;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.grammar-search svg {
+  flex: 0 0 auto;
+  color: #2f8f80;
+}
+
+.grammar-search input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 16px;
+}
+
+.grammar-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.grammar-card {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-left: 5px solid #38b59f;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 14px 36px rgba(58, 73, 84, 0.1);
+}
+
+.grammar-card h2 {
+  margin: 0;
+  color: #26383f;
+  font-size: 21px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.grammar-card-notes {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 15px 0;
+  color: #59676f;
+  line-height: 1.65;
+  white-space: pre-line;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.grammar-card-example {
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px;
+  border-left: 3px solid #ffae58;
+  border-radius: 10px;
+  background: #fff7eb;
+}
+
+.grammar-card-example strong,
+.grammar-card-example span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.grammar-card-example strong {
+  color: #34464f;
+}
+
+.grammar-card-example span {
+  color: #6d777d;
+  font-size: 14px;
+}
+
+.grammar-card-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 15px;
+  color: #77838a;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.grammar-empty {
+  color: #69777f;
+  text-align: center;
+}
+
+.grammar-editor,
+.grammar-detail-panel {
+  width: min(880px, 100%);
+}
+
+.grammar-modal-head,
+.grammar-detail-head {
+  padding-right: 48px;
+}
+
+.grammar-modal-head h2,
+.grammar-detail-head h2 {
+  margin-bottom: 18px;
+  color: #26383f;
+  font-size: 30px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.grammar-field {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  color: #53616a;
+  font-weight: 900;
+}
+
+.grammar-field textarea,
+.grammar-example-editor-row textarea {
+  min-height: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.grammar-example-editor {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid #e4ebea;
+}
+
+.grammar-example-editor-head,
+.grammar-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.grammar-example-editor-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.grammar-example-editor-head span {
+  color: #77838a;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.grammar-example-editor-head button {
+  padding: 9px 12px;
+  border-radius: 10px;
+}
+
+.grammar-example-editor-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.grammar-example-editor-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr) 30px;
+  gap: 10px;
+  align-items: start;
+  padding: 14px;
+  border: 1px solid #e3eaea;
+  border-radius: 14px;
+  background: #f9fbfa;
+}
+
+.grammar-example-editor-row label {
+  display: grid;
+  gap: 6px;
+  color: #68757d;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.grammar-example-number {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #2fae98;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.grammar-example-delete {
+  margin-top: 22px;
+}
+
+.grammar-editor-actions {
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.grammar-created-at {
+  margin-top: -10px;
+  color: #7b878e;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.grammar-detail-section {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid #e5ebea;
+}
+
+.grammar-detail-section h3 {
+  margin-bottom: 12px;
+  color: #2c4047;
+  font-size: 17px;
+}
+
+.grammar-detail-section h3 span {
+  margin-left: 5px;
+  color: #78858c;
+  font-size: 13px;
+}
+
+.grammar-notes-content {
+  color: #4c5d65;
+  font-size: 17px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.grammar-example-list {
+  display: grid;
+  gap: 12px;
+}
+
+.grammar-example {
+  position: relative;
+  padding: 14px 16px 14px 54px;
+  border-left: 4px solid #ffad55;
+  border-radius: 12px;
+  background: #fff8ee;
+}
+
+.grammar-example .grammar-example-number {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  color: #945b24;
+  background: #ffe0b5;
+}
+
+.grammar-example p {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  line-height: 1.65;
+}
+
+.grammar-example p + p {
+  margin-top: 5px;
+}
+
+.grammar-example p > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.grammar-example-ko {
+  color: #32464f;
+  font-size: 18px;
+  font-weight: 850;
+}
+
+.grammar-example-zh {
+  color: #66747c;
+  font-size: 16px;
+}
+
 .note-card,
 .word-card {
   padding: 20px;
@@ -2553,11 +2847,38 @@ textarea:focus {
 
   .notes-grid,
   .word-grid,
+  .grammar-grid,
   .filters,
   .form-grid,
   .meaning-editor-card,
   .practice-layout {
     grid-template-columns: 1fr;
+  }
+
+  .grammar-example-editor-row {
+    grid-template-columns: 30px minmax(0, 1fr) 30px;
+  }
+
+  .grammar-example-editor-row label {
+    grid-column: 2;
+  }
+
+  .grammar-example-delete {
+    grid-column: 3;
+    grid-row: 1;
+    margin-top: 0;
+  }
+
+  .grammar-example-editor-head,
+  .grammar-detail-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .grammar-card-meta {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
   }
 
   .meanings-editor-head {

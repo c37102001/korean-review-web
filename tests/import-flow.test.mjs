@@ -196,3 +196,26 @@ test('completed review dates remain append-only in local state', () => {
   const completed = helpers.markReviewDateComplete({ completedReviewDates: ['2026-07-21'] }, '2026-07-22');
   assert.deepEqual(completed.completedReviewDates, ['2026-07-21', '2026-07-22']);
 });
+
+test('grammar notes normalize searchable content without review fields', () => {
+  const note = helpers.normalizeGrammarNote({
+    title: '  形容詞 + 다고 느끼다  ',
+    notes: '  覺得、感受到  ',
+    examples: [
+      { ko: ' 한국이 다르다고 느꼈어요. ', zh: ' 我覺得韓國不一樣。 ' },
+      { ko: ' ', zh: '' },
+    ],
+    createdAt: '2026-07-23T01:00:00.000Z',
+  }, 'grammar-1');
+
+  assert.deepEqual(note, {
+    id: 'grammar-1',
+    title: '形容詞 + 다고 느끼다',
+    notes: '覺得、感受到',
+    examples: [{ id: 'grammar-1-example-0', ko: '한국이 다르다고 느꼈어요.', zh: '我覺得韓國不一樣。' }],
+    createdAt: '2026-07-23T01:00:00.000Z',
+    updatedAt: '',
+  });
+  assert.equal('stats' in note, false);
+  assert.equal('progress' in note, false);
+});

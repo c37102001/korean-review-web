@@ -13,6 +13,7 @@ import {
   Flame,
   LibraryBig,
   LogOut,
+  NotebookPen,
   Pencil,
   Pause,
   Play,
@@ -66,6 +67,70 @@ function useAuthUser() {
   const [authState, setAuthState] = useState({ loading: true, user: null });
   useEffect(() => onAuthStateChanged(auth, (user) => setAuthState({ loading: false, user })), []);
   return authState;
+}
+
+function normalizeGrammarNote(note, fallbackId = '') {
+  const examples = Array.isArray(note?.examples)
+    ? note.examples.map((example, index) => ({
+      id: String(example?.id || `${fallbackId || 'grammar'}-example-${index}`),
+      ko: String(example?.ko || '').trim(),
+      zh: String(example?.zh || '').trim(),
+    })).filter((example) => example.ko || example.zh)
+    : [];
+  return {
+    id: String(note?.id || fallbackId),
+    title: String(note?.title || '').trim(),
+    notes: String(note?.notes || '').trim(),
+    examples,
+    createdAt: String(note?.createdAt || ''),
+    updatedAt: String(note?.updatedAt || ''),
+  };
+}
+
+function useGrammarNotes(user) {
+  const [state, setState] = useState({ notes: [], loading: false, error: '' });
+
+  useEffect(() => {
+    if (!user) {
+      setState({ notes: [], loading: false, error: '' });
+      return undefined;
+    }
+    setState((current) => ({ ...current, loading: true, error: '' }));
+    return onSnapshot(
+      collection(db, 'users', user.uid, 'grammarNotes'),
+      { includeMetadataChanges: true },
+      (snapshot) => {
+        if (snapshot.metadata.hasPendingWrites) return;
+        const notes = snapshot.docs
+          .map((documentSnap) => normalizeGrammarNote(documentSnap.data(), documentSnap.id))
+          .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '') || a.title.localeCompare(b.title));
+        setState({ notes, loading: false, error: '' });
+      },
+      (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
+    );
+  }, [user]);
+
+  const save = useCallback(async (input) => {
+    if (!user) throw new Error('尚未登入');
+    const id = input.id || crypto.randomUUID();
+    const now = new Date().toISOString();
+    const note = normalizeGrammarNote({
+      ...input,
+      id,
+      createdAt: input.createdAt || now,
+      updatedAt: now,
+    }, id);
+    if (!note.title) throw new Error('請輸入文法標題');
+    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'grammarNotes', id), note));
+    return note;
+  }, [user]);
+
+  const remove = useCallback(async (id) => {
+    if (!user) throw new Error('尚未登入');
+    await retryFirestoreWrite(() => deleteDoc(doc(db, 'users', user.uid, 'grammarNotes', id)));
+  }, [user]);
+
+  return { ...state, save, remove };
 }
 
 function recordsFromSnapshot(snap) {
@@ -1524,6 +1589,7 @@ function shuffleReviewQuestionsByKind(questions, seed = Date.now()) {
 function App() {
   const { loading: authLoading, user } = useAuthUser();
   const [store, updateStore, storeLoading, storeError, markDateComplete] = useFirestoreStore(user);
+  const grammar = useGrammarNotes(user);
   const [page, setPage] = useState('home');
   const [pageStack, setPageStack] = useState([]);
   const [selectedDate, setSelectedDate] = useState(() => todayString());
@@ -1621,6 +1687,7 @@ function App() {
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} />,
     practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} />,
     notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} />,
+    grammar: <GrammarNotebookPage notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} />,
   };
 
   return (
@@ -1629,6 +1696,7 @@ function App() {
         <button className={`brand brand-button ${page === 'home' ? 'active' : ''}`} onClick={() => navTop('home')}><Sparkles size={24} /> 韓文筆記</button>
         <button className={page === 'calendar' || page === 'notes' ? 'active' : ''} onClick={() => navTop('calendar')}><CalendarDays size={18} /> 日曆</button>
         <button className={page === 'notebook' ? 'active' : ''} onClick={() => navTop('notebook')}><LibraryBig size={18} /> 單字本</button>
+        <button className={page === 'grammar' ? 'active' : ''} onClick={() => navTop('grammar')}><NotebookPen size={18} /> 文法筆記</button>
         <button className="logout-button" onClick={() => signOut(auth)}><LogOut size={18} /> 登出</button>
       </aside>
       <main>
@@ -3817,6 +3885,293 @@ function EditJsonModal({ items, allItems, date, onSave, onClose }) {
   );
 }
 
+function grammarNoteSearchText(note) {
+  return [
+    note.title,
+    note.notes,
+    ...(note.examples || []).flatMap((example) => [example.ko, example.zh]),
+  ].filter(Boolean).join(' ').toLocaleLowerCase('zh-TW');
+}
+
+function grammarTimestamp(value) {
+  if (!value) return '建立時間未記錄';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Intl.DateTimeFormat('zh-TW', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(parsed);
+}
+
+function TextSpeakButton({ text, lang, label }) {
+  if (!text) return null;
+  return (
+    <button
+      type="button"
+      className="speak-icon-button"
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        speakText(text, lang);
+      }}
+      aria-label={label}
+      title={label}
+    >
+      <Volume2 size={15} />
+    </button>
+  );
+}
+
+function GrammarNotebookPage({ notes, loading, error, onSave, onDelete }) {
+  const [query, setQuery] = useState('');
+  const [editing, setEditing] = useState(null);
+  const [viewing, setViewing] = useState(null);
+  const [actionError, setActionError] = useState('');
+  const filtered = useMemo(() => {
+    const keyword = query.trim().toLocaleLowerCase('zh-TW');
+    if (!keyword) return notes;
+    return notes.filter((note) => grammarNoteSearchText(note).includes(keyword));
+  }, [notes, query]);
+
+  const deleteNote = async (note) => {
+    if (!window.confirm(`確定要刪除「${note.title}」嗎？`)) return;
+    setActionError('');
+    try {
+      await onDelete(note.id);
+      if (viewing?.id === note.id) setViewing(null);
+    } catch (deleteError) {
+      setActionError(deleteError.message || '刪除文法筆記失敗');
+    }
+  };
+
+  return (
+    <section className="page grammar-page">
+      <div className="topbar">
+        <div><span className="eyebrow">Grammar Notes</span><h1>文法筆記</h1></div>
+        <div className="actions notebook-actions">
+          <button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 新增文法</button>
+        </div>
+      </div>
+      <label className="search grammar-search">
+        <Search size={18} />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋標題、筆記或例句" />
+      </label>
+      {(error || actionError) && <div className="sync-error">Firebase 同步失敗：{actionError || error}</div>}
+      {loading ? (
+        <div className="panel grammar-empty">載入文法筆記中...</div>
+      ) : filtered.length ? (
+        <div className="grammar-grid">
+          {filtered.map((note) => (
+            <GrammarNoteCard
+              key={note.id}
+              note={note}
+              onOpen={setViewing}
+              onEdit={setEditing}
+              onDelete={deleteNote}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="panel grammar-empty">{query ? '找不到符合搜尋條件的文法筆記。' : '目前還沒有文法筆記。'}</div>
+      )}
+      {editing && (
+        <GrammarEditorModal
+          note={editing.id ? editing : null}
+          onSave={async (note) => {
+            await onSave(note);
+            setEditing(null);
+          }}
+          onClose={() => setEditing(null)}
+        />
+      )}
+      {viewing && (
+        <GrammarDetailModal
+          note={viewing}
+          onEdit={(note) => {
+            setViewing(null);
+            setEditing(note);
+          }}
+          onDelete={deleteNote}
+          onClose={() => setViewing(null)}
+        />
+      )}
+    </section>
+  );
+}
+
+function GrammarNoteCard({ note, onOpen, onEdit, onDelete }) {
+  return (
+    <article className="grammar-card clickable-card" onClick={() => onOpen(note)}>
+      <div className="card-head">
+        <h2>{note.title}</h2>
+        <div className="card-actions">
+          <EditIconButton onClick={() => onEdit(note)} label="編輯文法" />
+          <button
+            type="button"
+            className="edit-icon-button delete-icon-button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete(note);
+            }}
+            aria-label="刪除文法"
+            title="刪除文法"
+          >
+            <Trash2 size={15} />
+          </button>
+        </div>
+      </div>
+      {note.notes && <p className="grammar-card-notes">{note.notes}</p>}
+      {!!note.examples.length && (
+        <div className="grammar-card-example">
+          <strong>{note.examples[0].ko}</strong>
+          <span>{note.examples[0].zh}</span>
+        </div>
+      )}
+      <div className="grammar-card-meta">
+        <span>{grammarTimestamp(note.createdAt)}</span>
+        <span>{note.examples.length} 個例句</span>
+      </div>
+    </article>
+  );
+}
+
+function GrammarEditorModal({ note, onSave, onClose }) {
+  const [title, setTitle] = useState(note?.title || '');
+  const [notes, setNotes] = useState(note?.notes || '');
+  const [examples, setExamples] = useState(() => note?.examples?.length
+    ? note.examples.map((example) => ({ ...example }))
+    : [{ id: crypto.randomUUID(), ko: '', zh: '' }]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const updateExample = (index, field, value) => {
+    setExamples((current) => current.map((example, exampleIndex) => (
+      exampleIndex === index ? { ...example, [field]: value } : example
+    )));
+  };
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!title.trim()) {
+      setError('請輸入文法標題');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await onSave({
+        ...note,
+        title,
+        notes,
+        examples,
+      });
+    } catch (saveError) {
+      setError(saveError.message || '儲存文法筆記失敗');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <form className="modal-panel grammar-editor" onSubmit={submit}>
+        <button type="button" className="modal-close" disabled={saving} onClick={onClose} aria-label="關閉"><X size={18} /></button>
+        <div className="grammar-modal-head">
+          <span className="eyebrow">Grammar Note</span>
+          <h2>{note ? '編輯文法' : '新增文法'}</h2>
+        </div>
+        <label className="grammar-field">
+          <span>標題</span>
+          <textarea value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：覺得…、感受到…：形容詞 + 다고 느끼다" rows={2} />
+        </label>
+        <label className="grammar-field">
+          <span>筆記</span>
+          <textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder={'結構、使用時機、活用方式或補充說明\n可自由換行'} rows={6} />
+        </label>
+        <section className="grammar-example-editor">
+          <div className="grammar-example-editor-head">
+            <div><strong>例句</strong><span>韓文與中文可分別播放發音</span></div>
+            <button type="button" onClick={() => setExamples((current) => [...current, { id: crypto.randomUUID(), ko: '', zh: '' }])}><Plus size={16} /> 新增例句</button>
+          </div>
+          <div className="grammar-example-editor-list">
+            {examples.map((example, index) => (
+              <div className="grammar-example-editor-row" key={example.id}>
+                <div className="grammar-example-number">{index + 1}</div>
+                <label><span>韓文</span><textarea value={example.ko} onChange={(event) => updateExample(index, 'ko', event.target.value)} rows={2} /></label>
+                <label><span>中文</span><textarea value={example.zh} onChange={(event) => updateExample(index, 'zh', event.target.value)} rows={2} /></label>
+                <button
+                  type="button"
+                  className="edit-icon-button delete-icon-button grammar-example-delete"
+                  disabled={examples.length === 1}
+                  onClick={() => setExamples((current) => current.filter((_, exampleIndex) => exampleIndex !== index))}
+                  aria-label="刪除例句"
+                  title="刪除例句"
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+        {error && <div className="json-edit-error">{error}</div>}
+        <div className="actions grammar-editor-actions">
+          <button type="button" disabled={saving} onClick={onClose}>取消</button>
+          <button className="primary" disabled={saving} type="submit"><Check size={17} /> {saving ? '儲存中' : '儲存文法'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function GrammarDetailModal({ note, onEdit, onDelete, onClose }) {
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape' && !event.isComposing) onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <div className="modal-panel grammar-detail-panel">
+        <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
+        <div className="grammar-detail-head">
+          <div><span className="eyebrow">Grammar Note</span><h2>{note.title}</h2></div>
+          <div className="card-actions">
+            <EditIconButton onClick={() => onEdit(note)} label="編輯文法" />
+            <button className="edit-icon-button delete-icon-button" onClick={() => onDelete(note)} aria-label="刪除文法" title="刪除文法"><Trash2 size={15} /></button>
+          </div>
+        </div>
+        <div className="grammar-created-at">建立於 {grammarTimestamp(note.createdAt)}</div>
+        {note.notes && (
+          <section className="grammar-detail-section">
+            <h3>筆記</h3>
+            <div className="grammar-notes-content">{note.notes}</div>
+          </section>
+        )}
+        {!!note.examples.length && (
+          <section className="grammar-detail-section">
+            <h3>例句 <span>{note.examples.length}</span></h3>
+            <div className="grammar-example-list">
+              {note.examples.map((example, index) => (
+                <article className="grammar-example" key={example.id}>
+                  <div className="grammar-example-number">{index + 1}</div>
+                  {example.ko && <p className="grammar-example-ko"><span>{example.ko}</span><TextSpeakButton text={example.ko} lang="ko-KR" label="播放韓文例句" /></p>}
+                  {example.zh && <p className="grammar-example-zh"><span>{example.zh}</span><TextSpeakButton text={example.zh} lang="zh-TW" label="播放中文翻譯" /></p>}
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function NotebookPage({ store, updateStore, items, questions, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord }) {
   const [query, setQuery] = useState('');
   const [type, setType] = useState('全部');
@@ -3983,6 +4338,7 @@ export {
   findImportConflict,
   isTransientFirestoreError,
   markReviewDateComplete,
+  normalizeGrammarNote,
   normalizeKoreanKey,
   recordOrder,
   recordsFromSnapshot,

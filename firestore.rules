@@ -8,6 +8,9 @@ service cloud.firestore {
     match /users/{uid}/records/{recordId} {
       allow read, write: if isOwner(uid);
     }
+    match /users/{uid}/grammarNotes/{noteId} {
+      allow read, write: if isOwner(uid);
+    }
     match /users/{uid}/progressShards/{shardId} {
       allow read, write: if isOwner(uid);
     }
