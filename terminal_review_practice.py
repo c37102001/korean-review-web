@@ -22,6 +22,7 @@ import os
 import random
 import re
 import textwrap
+import time
 import unicodedata
 import uuid
 from dataclasses import dataclass, field
@@ -263,6 +264,7 @@ class FirebaseClient:
         payload: Optional[Dict[str, Any]] = None,
         session: Optional[AuthSession] = None,
         _retry: bool = True,
+        _transient_attempt: int = 0,
     ) -> Dict[str, Any]:
         headers = {"Content-Type": "application/json"}
         if session:
@@ -277,9 +279,24 @@ class FirebaseClient:
             if exc.code == 401 and session and _retry:
                 self._refresh_session_token(session)
                 return self._request_json(method, url, payload=payload, session=session, _retry=False)
+            if exc.code in (429, 500, 502, 503, 504) and _transient_attempt < 3:
+                retry_after = exc.headers.get("Retry-After")
+                delay = float(retry_after) if retry_after and retry_after.isdigit() else 0.5 * (2 ** _transient_attempt)
+                exc.read()
+                time.sleep(delay)
+                return self._request_json(
+                    method, url, payload=payload, session=session, _retry=_retry,
+                    _transient_attempt=_transient_attempt + 1,
+                )
             details = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"HTTP {exc.code}: {_extract_http_error_message(details)}") from exc
         except error.URLError as exc:
+            if _transient_attempt < 3:
+                time.sleep(0.5 * (2 ** _transient_attempt))
+                return self._request_json(
+                    method, url, payload=payload, session=session, _retry=_retry,
+                    _transient_attempt=_transient_attempt + 1,
+                )
             raise RuntimeError(f"Network error: {exc.reason}") from exc
 
 
@@ -301,10 +318,14 @@ def _clone_json(value: Any) -> Any:
 def _attempts_by_date(attempts: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for attempt in attempts:
-        date_key = str(attempt.get("time") or "")[:10]
+        date_key = attempt_date(attempt)
         if date_key:
             groups.setdefault(date_key, []).append(attempt)
     return groups
+
+
+def attempt_date(attempt: Dict[str, Any]) -> str:
+    return str(attempt.get("date") or str(attempt.get("time") or "")[:10])
 
 
 def _progress_shard_id(question_id: str) -> str:
@@ -506,7 +527,7 @@ def daily_recognition_questions(
         pending_wrong_ids: set[str] = set()
         round_completed_on = ""
         for attempt in sorted(
-            (attempt for attempt in attempts if str(attempt.get("time") or "")[:10] < date_key),
+            (attempt for attempt in attempts if attempt_date(attempt) < date_key),
             key=lambda attempt: str(attempt.get("time") or ""),
         ):
             question_id = str(attempt.get("questionId"))
@@ -517,7 +538,7 @@ def daily_recognition_questions(
                 correct_ids.discard(question_id)
                 pending_wrong_ids.add(question_id)
             if len(correct_ids) == len(term_ids):
-                round_completed_on = str(attempt.get("time") or "")[:10]
+                round_completed_on = attempt_date(attempt)
         recognition = {
             "correctIds": sorted(correct_ids), "pendingWrongIds": sorted(pending_wrong_ids),
             "roundCompletedOn": round_completed_on, "dailyDate": "", "assignmentIds": [], "answeredIds": [],
@@ -533,8 +554,12 @@ def daily_recognition_questions(
         pending_wrong_ids.clear()
         round_completed_on = ""
 
-    assignment_ids = list(recognition.get("assignmentIds") or [])
-    answered_ids = set(recognition.get("answeredIds") or [])
+    attempts_today = sorted(
+        (attempt for attempt in attempts if attempt_date(attempt) == date_key),
+        key=lambda attempt: str(attempt.get("time") or ""),
+    )
+    attempted_ids = list(dict.fromkeys(str(attempt.get("questionId")) for attempt in attempts_today))
+    assignment_ids = [item for item in (recognition.get("assignmentIds") or []) if item in term_ids]
     if recognition.get("dailyDate") != date_key:
         wrong = shuffle_items(
             (question for question in terms if question.id in pending_wrong_ids),
@@ -546,13 +571,11 @@ def daily_recognition_questions(
             wrong + shuffle_items(unseen, seed_from_string(f"{date_key}-unseen"))[:max(0, limit - len(wrong))],
             seed_from_string(f"{date_key}-assignment"),
         )]
-        answered_ids.clear()
-    for attempt in sorted(
-        (attempt for attempt in attempts if str(attempt.get("time") or "")[:10] == date_key and str(attempt.get("questionId")) not in answered_ids),
-        key=lambda attempt: str(attempt.get("time") or ""),
-    ):
+    assignment_limit = max(limit, len(attempted_ids))
+    assignment_ids = (attempted_ids + [item for item in assignment_ids if item not in attempted_ids])[:assignment_limit]
+    answered_ids = set(attempted_ids)
+    for attempt in attempts_today:
         question_id = str(attempt.get("questionId"))
-        answered_ids.add(question_id)
         if attempt.get("correct"):
             correct_ids.add(question_id)
             pending_wrong_ids.discard(question_id)
@@ -590,7 +613,7 @@ def record_answer(state: Dict[str, Any], question: Question, correct: bool) -> N
         "lastResult": "correct" if correct else "wrong",
     }
     attempts = state.setdefault("attempts", [])
-    attempts.insert(0, {"id": str(uuid.uuid4()), "questionId": question.id, "correct": correct, "time": now})
+    attempts.insert(0, {"id": str(uuid.uuid4()), "questionId": question.id, "correct": correct, "date": today_string(), "time": now})
     del attempts[5000:]
 
 
@@ -619,6 +642,7 @@ def record_daily_recognition_answer(state: Dict[str, Any], question: Question, c
         "id": str(uuid.uuid4()),
         "questionId": question.id,
         "correct": True,
+        "date": today_string(),
         "time": utc_now_iso(),
         "mode": DAILY_RECOGNITION_MODE,
     })

@@ -132,3 +132,47 @@ test('editing a replacement into another existing Korean word is rejected', () =
   draft.conflict.editText = JSON.stringify(item('대답', '新的回答'));
   assert.throws(() => helpers.resolveImportConflictDraft(draft, 'edit', [first, second]), /會和既有單字重複/);
 });
+
+test('daily recognition never adds more questions after the daily limit was answered', () => {
+  const questions = Array.from({ length: 100 }, (_, index) => ({
+    id: `term-${index}`,
+    itemId: `term-${index}`,
+    date: '2026-07-01',
+    kind: 'term',
+    source: { index },
+  }));
+  const attempts = Array.from({ length: 50 }, (_, index) => ({
+    id: `attempt-${index}`,
+    questionId: `term-${index}`,
+    correct: true,
+    date: '2026-07-22',
+    time: `2026-07-22T01:${String(index).padStart(2, '0')}:00.000Z`,
+    mode: 'daily-recognition',
+  }));
+  const store = {
+    attempts,
+    recognition: {
+      correctIds: [],
+      pendingWrongIds: [],
+      roundCompletedOn: '',
+      dailyDate: '2026-07-22',
+      assignmentIds: Array.from({ length: 50 }, (_, index) => `term-${index + 50}`),
+      answeredIds: [],
+    },
+  };
+
+  const schedule = helpers.dailyRecognitionSchedule(store, questions, '2026-07-22', 50);
+  assert.equal(schedule.questions.length, 0);
+  assert.deepEqual(new Set(schedule.state.assignmentIds), new Set(attempts.map((attempt) => attempt.questionId)));
+  const repeated = helpers.dailyRecognitionSchedule({ ...store, recognition: schedule.state }, questions, '2026-07-22', 50);
+  assert.deepEqual(repeated, schedule);
+});
+
+test('explicit local attempt date takes priority over the UTC timestamp date', () => {
+  assert.equal(helpers.attemptDate({ date: '2026-07-23', time: '2026-07-22T23:30:00.000Z' }), '2026-07-23');
+});
+
+test('completed review dates remain append-only in local state', () => {
+  const completed = helpers.markReviewDateComplete({ completedReviewDates: ['2026-07-21'] }, '2026-07-22');
+  assert.deepEqual(completed.completedReviewDates, ['2026-07-21', '2026-07-22']);
+});

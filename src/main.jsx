@@ -85,24 +85,53 @@ function recordOrder(record) {
   return Number.isFinite(createdAt) ? createdAt * 1000 : 0;
 }
 
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function isTransientFirestoreError(error) {
+  const code = String(error?.code || '').replace(/^firestore\//, '');
+  return ['aborted', 'deadline-exceeded', 'resource-exhausted', 'unavailable'].includes(code)
+    || /quota|too many requests|temporar|network|offline/i.test(error?.message || '');
+}
+
+async function retryFirestoreWrite(operation, maxAttempts = 4) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientFirestoreError(error) || attempt === maxAttempts) throw error;
+      await wait(500 * (2 ** (attempt - 1)));
+    }
+  }
+  throw lastError;
+}
+
 const reviewSettingsRef = (uid) => doc(db, 'users', uid, 'settings', 'review');
 
 async function commitFirestoreOperations(operations, chunkSize = 400) {
   for (let start = 0; start < operations.length; start += chunkSize) {
-    const batch = writeBatch(db);
-    operations.slice(start, start + chunkSize).forEach((operation) => operation(batch));
-    await batch.commit();
+    const chunk = operations.slice(start, start + chunkSize);
+    await retryFirestoreWrite(async () => {
+      const batch = writeBatch(db);
+      chunk.forEach((operation) => operation(batch));
+      await batch.commit();
+    });
   }
 }
 
 function attemptsByDate(attempts) {
   return (attempts || []).reduce((groups, attempt) => {
-    const date = attempt.time?.slice(0, 10);
+    const date = attemptDate(attempt);
     if (!date) return groups;
     if (!groups[date]) groups[date] = [];
     groups[date].push(attempt);
     return groups;
   }, {});
+}
+
+function attemptDate(attempt) {
+  return attempt?.date || attempt?.time?.slice(0, 10) || '';
 }
 
 function progressShardId(questionId) {
@@ -231,34 +260,62 @@ async function persistFirestoreStoreChanges(uid, previous, next) {
   await commitFirestoreOperations(operations);
 }
 
+async function persistCompletedReviewDate(uid, date) {
+  await retryFirestoreWrite(() => setDoc(reviewSettingsRef(uid), {
+    schemaVersion: FIRESTORE_SCHEMA_VERSION,
+    completedReviewDates: arrayUnion(date),
+    updatedAt: serverTimestamp(),
+  }, { merge: true }));
+}
+
 function useFirestoreStore(user) {
   const [state, setState] = useState({ loading: true, error: '', store: emptyStore() });
   const storeRef = useRef(emptyStore());
+  const persistedStoreRef = useRef(emptyStore());
   const writeQueueRef = useRef(Promise.resolve());
+  const pendingWritesRef = useRef(0);
+  const deferredRemoteRef = useRef(new Map());
+
+  const applyRemoteStore = useCallback((updater) => {
+    const next = updater(storeRef.current);
+    persistedStoreRef.current = updater(persistedStoreRef.current);
+    storeRef.current = next;
+    setState((current) => ({ ...current, store: next }));
+  }, []);
+
+  const applyOrDeferRemote = useCallback((key, updater) => {
+    if (pendingWritesRef.current > 0) {
+      deferredRemoteRef.current.set(key, updater);
+      return;
+    }
+    applyRemoteStore(updater);
+  }, [applyRemoteStore]);
+
+  const flushDeferredRemote = useCallback(() => {
+    if (pendingWritesRef.current > 0 || !deferredRemoteRef.current.size) return;
+    const updaters = [...deferredRemoteRef.current.values()];
+    deferredRemoteRef.current.clear();
+    updaters.forEach(applyRemoteStore);
+  }, [applyRemoteStore]);
 
   useEffect(() => {
     let cancelled = false;
     const unsubscribers = [];
-    const applyRemoteStore = (updater) => {
-      if (cancelled) return;
-      const next = updater(storeRef.current);
-      storeRef.current = next;
-      setState((current) => ({ ...current, store: next }));
-    };
     async function load() {
       if (!user) return;
       setState((current) => ({ ...current, loading: true, error: '' }));
       try {
         let initialRecordsResolved = false;
         const normalizedRecords = await new Promise((resolve, reject) => {
-          unsubscribers.push(onSnapshot(collection(db, 'users', user.uid, 'records'), (snap) => {
+          unsubscribers.push(onSnapshot(collection(db, 'users', user.uid, 'records'), { includeMetadataChanges: true }, (snap) => {
+            if (snap.metadata.hasPendingWrites) return;
             const customRecords = recordsFromSnapshot(snap);
             if (!initialRecordsResolved) {
               initialRecordsResolved = true;
               resolve(customRecords);
               return;
             }
-            applyRemoteStore((current) => ({ ...current, customRecords }));
+            if (!cancelled) applyOrDeferRemote('records', (current) => ({ ...current, customRecords }));
           }, reject));
         });
         let persistedStore = await readFirestoreStoreV3(user.uid);
@@ -269,19 +326,24 @@ function useFirestoreStore(user) {
         if (cancelled) return;
         const loadedStore = { ...persistedStore, customRecords: normalizedRecords };
         storeRef.current = loadedStore;
+        persistedStoreRef.current = loadedStore;
         setState({ loading: false, error: '', store: loadedStore });
 
-        unsubscribers.push(onSnapshot(reviewSettingsRef(user.uid), (snap) => {
-          if (!snap.exists()) return;
+        unsubscribers.push(onSnapshot(reviewSettingsRef(user.uid), { includeMetadataChanges: true }, (snap) => {
+          if (cancelled || !snap.exists() || snap.metadata.fromCache) return;
           const settings = snap.data();
-          applyRemoteStore((current) => ({
+          applyOrDeferRemote('settings', (current) => ({
             ...current,
-            completedReviewDates: settings.completedReviewDates || [],
+            completedReviewDates: [...new Set([
+              ...(current.completedReviewDates || []),
+              ...(settings.completedReviewDates || []),
+            ])].sort(),
             starred: settings.starred || [],
             recognition: settings.recognition || null,
           }));
         }));
-        unsubscribers.push(onSnapshot(collection(db, 'users', user.uid, 'progressShards'), (snap) => {
+        unsubscribers.push(onSnapshot(collection(db, 'users', user.uid, 'progressShards'), { includeMetadataChanges: true }, (snap) => {
+          if (cancelled || snap.metadata.fromCache) return;
           const stats = {};
           const progress = {};
           snap.docs.forEach((documentSnap) => {
@@ -290,13 +352,14 @@ function useFirestoreStore(user) {
               if (data.progress) progress[questionId] = data.progress;
             });
           });
-          applyRemoteStore((current) => ({ ...current, stats, progress }));
+          applyOrDeferRemote('progress', (current) => ({ ...current, stats, progress }));
         }));
         const today = todayString();
-        unsubscribers.push(onSnapshot(doc(db, 'users', user.uid, 'reviewDays', today), (snap) => {
+        unsubscribers.push(onSnapshot(doc(db, 'users', user.uid, 'reviewDays', today), { includeMetadataChanges: true }, (snap) => {
+          if (cancelled || snap.metadata.fromCache) return;
           const todayAttempts = snap.exists() ? snap.data().attempts || [] : [];
-          applyRemoteStore((current) => {
-            const otherAttempts = (current.attempts || []).filter((attempt) => attempt.time?.slice(0, 10) !== today);
+          applyOrDeferRemote('attempts', (current) => {
+            const otherAttempts = (current.attempts || []).filter((attempt) => attemptDate(attempt) !== today);
             const attempts = [...todayAttempts, ...otherAttempts].sort((a, b) => (b.time || '').localeCompare(a.time || ''));
             return { ...current, attempts };
           });
@@ -308,23 +371,60 @@ function useFirestoreStore(user) {
     load();
     return () => {
       cancelled = true;
+      deferredRemoteRef.current.clear();
       unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
-  }, [user]);
+  }, [user, applyOrDeferRemote]);
 
   const update = useCallback(async (updater) => {
     if (!user) return;
-    const previous = storeRef.current;
-    const next = updater(previous);
+    const next = updater(storeRef.current);
     storeRef.current = next;
     setState((current) => ({ ...current, store: next }));
+    pendingWritesRef.current += 1;
     writeQueueRef.current = writeQueueRef.current
       .catch(() => {})
-      .then(() => persistFirestoreStoreChanges(user.uid, previous, next));
-    await writeQueueRef.current;
-  }, [user]);
+      .then(async () => {
+        await persistFirestoreStoreChanges(user.uid, persistedStoreRef.current, next);
+        persistedStoreRef.current = next;
+      });
+    const pendingWrite = writeQueueRef.current;
+    try {
+      await pendingWrite;
+    } catch (error) {
+      setState((current) => ({ ...current, error: error.message || 'Firebase 寫入失敗' }));
+      throw error;
+    } finally {
+      pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
+      flushDeferredRemote();
+    }
+  }, [user, flushDeferredRemote]);
 
-  return [state.store, update, state.loading, state.error];
+  const markDateComplete = useCallback(async (date) => {
+    if (!user) return;
+    const next = markReviewDateComplete(storeRef.current, date);
+    storeRef.current = next;
+    setState((current) => ({ ...current, store: next }));
+    pendingWritesRef.current += 1;
+    writeQueueRef.current = writeQueueRef.current
+      .catch(() => {})
+      .then(async () => {
+        await persistCompletedReviewDate(user.uid, date);
+        persistedStoreRef.current = markReviewDateComplete(persistedStoreRef.current, date);
+      });
+    const pendingWrite = writeQueueRef.current;
+    try {
+      await pendingWrite;
+    } catch (error) {
+      setState((current) => ({ ...current, error: error.message || '完成紀錄寫入失敗' }));
+      throw error;
+    } finally {
+      pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
+      flushDeferredRemote();
+    }
+  }, [user, flushDeferredRemote]);
+
+  return [state.store, update, state.loading, state.error, markDateComplete];
 }
 
 function normalizeKoreanKey(value) {
@@ -891,6 +991,9 @@ function resolveImportConflictDraft(draft, choice, allItems = []) {
 
 async function writeLearningRecords(uid, records, onProgress) {
   if (!records.length) return;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    throw new Error('目前網路離線，尚未送出任何資料');
+  }
   if (records.length > MAX_ATOMIC_RECORD_WRITES) {
     throw new Error(`一次最多可以寫入 ${MAX_ATOMIC_RECORD_WRITES} 筆單字，請縮小匯入範圍`);
   }
@@ -911,11 +1014,6 @@ async function writeLearningRecords(uid, records, onProgress) {
   const recordIds = normalizedRecords.map((record) => record.id);
   if (recordIds.some((recordId) => !recordId)) throw new Error('寫入資料缺少必要的單字 ID');
   if (new Set(recordIds).size !== recordIds.length) throw new Error('寫入資料中含有重複的單字 ID');
-  const batch = writeBatch(db);
-  normalizedRecords.forEach((record) => batch.set(
-    doc(db, 'users', uid, 'records', record.id),
-    { ...record, updatedAt: serverTimestamp() },
-  ));
   onProgress?.({
     phase: 'uploading',
     current: records.length,
@@ -933,7 +1031,14 @@ async function writeLearningRecords(uid, records, onProgress) {
     });
   }, 5000) : null;
   try {
-    await batch.commit();
+    await retryFirestoreWrite(async () => {
+      const batch = writeBatch(db);
+      normalizedRecords.forEach((record) => batch.set(
+        doc(db, 'users', uid, 'records', record.id),
+        { ...record, updatedAt: serverTimestamp() },
+      ));
+      await batch.commit();
+    });
   } finally {
     if (waitingTimer) clearInterval(waitingTimer);
   }
@@ -945,8 +1050,8 @@ async function writeLearningRecords(uid, records, onProgress) {
   });
 }
 
-async function writeLearningRecord(uid, record) {
-  await writeLearningRecords(uid, [record]);
+async function writeLearningRecord(uid, record, onProgress) {
+  await writeLearningRecords(uid, [record], onProgress);
 }
 
 async function deleteLearningRecord(uid, recordId) {
@@ -1017,7 +1122,7 @@ function replayRecognitionAttempts(attempts, termIds) {
       correctIds.delete(attempt.questionId);
       pendingWrongIds.add(attempt.questionId);
     }
-    if (correctIds.size === termIds.size) roundCompletedOn = attempt.time?.slice(0, 10) || '';
+    if (correctIds.size === termIds.size) roundCompletedOn = attemptDate(attempt);
   });
   return { correctIds, pendingWrongIds, roundCompletedOn };
 }
@@ -1032,7 +1137,7 @@ function dailyRecognitionSchedule(store, questions, date = todayString(), limit 
   let state = store.recognition;
   if (!state) {
     const previous = replayRecognitionAttempts(
-      recognitionAttempts.filter((attempt) => attempt.time?.slice(0, 10) < date),
+      recognitionAttempts.filter((attempt) => attemptDate(attempt) < date),
       termIds,
     );
     state = {
@@ -1055,8 +1160,11 @@ function dailyRecognitionSchedule(store, questions, date = todayString(), limit 
     roundCompletedOn = '';
   }
 
-  let assignmentIds = state.assignmentIds || [];
-  let answeredIds = new Set(state.answeredIds || []);
+  const attemptsToday = recognitionAttempts
+    .filter((attempt) => attemptDate(attempt) === date)
+    .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+  const attemptedIds = [...new Set(attemptsToday.map((attempt) => attempt.questionId))];
+  let assignmentIds = (state.assignmentIds || []).filter((id) => termIds.has(id));
   if (state.dailyDate !== date) {
     const wrong = shuffleItems(
       terms.filter((question) => pendingWrongIds.has(question.id)),
@@ -1068,21 +1176,24 @@ function dailyRecognitionSchedule(store, questions, date = todayString(), limit 
       ...wrong,
       ...shuffleItems(unseen, seedFromString(`${date}-unseen`)).slice(0, Math.max(0, limit - wrong.length)),
     ], seedFromString(`${date}-assignment`)).map((question) => question.id);
-    answeredIds = new Set();
   }
-  recognitionAttempts
-    .filter((attempt) => attempt.time?.slice(0, 10) === date && !answeredIds.has(attempt.questionId))
-    .sort((a, b) => (a.time || '').localeCompare(b.time || ''))
-    .forEach((attempt) => {
-      answeredIds.add(attempt.questionId);
-      if (attempt.correct) {
-        correctIds.add(attempt.questionId);
-        pendingWrongIds.delete(attempt.questionId);
-      } else {
-        correctIds.delete(attempt.questionId);
-        pendingWrongIds.add(attempt.questionId);
-      }
-    });
+  // Today's attempt log is authoritative. It prevents a stale settings
+  // snapshot from replacing the assignment and creating more than the daily limit.
+  const assignmentLimit = Math.max(limit, attemptedIds.length);
+  assignmentIds = [
+    ...attemptedIds,
+    ...assignmentIds.filter((id) => !attemptedIds.includes(id)),
+  ].slice(0, assignmentLimit);
+  const answeredIds = new Set(attemptedIds);
+  attemptsToday.forEach((attempt) => {
+    if (attempt.correct) {
+      correctIds.add(attempt.questionId);
+      pendingWrongIds.delete(attempt.questionId);
+    } else {
+      correctIds.delete(attempt.questionId);
+      pendingWrongIds.add(attempt.questionId);
+    }
+  });
   if (correctIds.size === termIds.size) roundCompletedOn = date;
 
   const nextState = {
@@ -1189,7 +1300,7 @@ function recordAnswer(store, question, correct) {
         lastResult: correct ? 'correct' : 'wrong',
       },
     },
-    attempts: [{ id: crypto.randomUUID(), questionId: question.id, correct, time: now }, ...store.attempts].slice(0, 5000),
+    attempts: [{ id: crypto.randomUUID(), questionId: question.id, correct, date: todayString(), time: now }, ...store.attempts].slice(0, 5000),
   };
 }
 
@@ -1230,6 +1341,7 @@ function recordDailyRecognitionAnswer(store, question, correct) {
       id: crypto.randomUUID(),
       questionId: question.id,
       correct: true,
+      date: todayString(),
       time: now,
       mode: DAILY_RECOGNITION_MODE,
     }, ...store.attempts].slice(0, 5000),
@@ -1391,7 +1503,7 @@ function shuffleReviewQuestionsByKind(questions, seed = Date.now()) {
 
 function App() {
   const { loading: authLoading, user } = useAuthUser();
-  const [store, updateStore, storeLoading, storeError] = useFirestoreStore(user);
+  const [store, updateStore, storeLoading, storeError, markDateComplete] = useFirestoreStore(user);
   const [page, setPage] = useState('home');
   const [pageStack, setPageStack] = useState([]);
   const [selectedDate, setSelectedDate] = useState(() => todayString());
@@ -1422,8 +1534,8 @@ function App() {
     const todayComplete = todayDailyQuestions.length === 0 && todayRecognitionQuestions.length === 0;
     const todayMarked = (store.completedReviewDates || []).includes(today);
     if (!todayComplete || todayMarked) return;
-    updateStore((current) => markReviewDateComplete(current, today));
-  }, [user, storeLoading, store.completedReviewDates, todayDailyQuestions, todayRecognitionQuestions, updateStore]);
+    markDateComplete(today).catch(() => {});
+  }, [user, storeLoading, store.completedReviewDates, todayDailyQuestions, todayRecognitionQuestions, markDateComplete]);
 
   const navTop = (next) => {
     setPageStack([]);
@@ -1447,11 +1559,11 @@ function App() {
     setStudySet({ items: sourceItems, label });
     navChild('study');
   };
-  const addLearningRecords = async (records) => {
-    await writeLearningRecords(user.uid, records);
+  const addLearningRecords = async (records, onProgress) => {
+    await writeLearningRecords(user.uid, records, onProgress);
   };
-  const updateLearningRecord = async (record) => {
-    await writeLearningRecord(user.uid, record);
+  const updateLearningRecord = async (record, onProgress) => {
+    await writeLearningRecord(user.uid, record, onProgress);
   };
   const updateLearningRecords = async (updatedRecords, onProgress) => {
     await writeLearningRecords(user.uid, updatedRecords, onProgress);
@@ -1567,7 +1679,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
   const recognition = recognitionQuestions;
   const totalPending = due.length + recognition.length;
   const tasks = groupTasks(store, due, today);
-  const answeredToday = store.attempts.filter((attempt) => attempt.time.startsWith(today));
+  const answeredToday = store.attempts.filter((attempt) => attemptDate(attempt) === today);
   const correctToday = answeredToday.filter((attempt) => attempt.correct).length;
   const weak = questions.filter((question) => getStats(store, question.id).level === '不熟悉').slice(0, 6);
   const mastered = questions.filter((question) => getStats(store, question.id).level === '已熟練').length;
@@ -1861,16 +1973,18 @@ function describeImportError(error) {
   const code = String(error?.code || '').replace(/^firestore\//, '');
   const message = error?.message || '未知錯誤';
   if (code === 'permission-denied') return { code, message: 'Firebase 拒絕寫入，請確認登入狀態與 Firestore rules。' };
+  if (code === 'resource-exhausted' || /quota|too many requests/i.test(message)) return { code: code || 'quota-exceeded', message: 'Firebase 目前已超過寫入額度，這筆資料尚未儲存，請等額度恢復後重試。' };
   if (code === 'unavailable' || /network|offline|failed to fetch/i.test(message)) return { code: code || 'network', message: '目前無法連線到 Firebase，請確認網路後重試。' };
   if (code === 'unauthenticated') return { code, message: '登入狀態已失效，請重新登入後再試。' };
   return { code: code || error?.name || 'error', message };
 }
 
 function AddItemsModal({ title, date, lockedDate = false, onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], onClose }) {
+  const [busy, setBusy] = useState(false);
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <div className="modal-panel">
-        <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
+        <button className="modal-close" disabled={busy} title={busy ? '正在等待 Firebase 確認' : ''} onClick={onClose} aria-label="關閉"><X size={18} /></button>
         <AddItemsForm
           title={title}
           date={date}
@@ -1881,6 +1995,7 @@ function AddItemsModal({ title, date, lockedDate = false, onAddRecords, onUpdate
           onEditExisting={onEditExisting}
           editItem={editItem}
           allItems={allItems}
+          onBusyChange={setBusy}
           onSaved={onClose}
           compactPanel
         />
@@ -1889,7 +2004,7 @@ function AddItemsModal({ title, date, lockedDate = false, onAddRecords, onUpdate
   );
 }
 
-function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], onSaved, compactPanel = false }) {
+function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], onSaved, onBusyChange, compactPanel = false }) {
   const isEditing = Boolean(editItem);
   const [mode, setMode] = useState('manual');
   const [formDate, setFormDate] = useState(date);
@@ -1904,6 +2019,10 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
   const [importLog, setImportLog] = useState([]);
   const [importCompleted, setImportCompleted] = useState(null);
   const submissionLockRef = useRef(false);
+
+  useEffect(() => {
+    onBusyChange?.(saving);
+  }, [saving, onBusyChange]);
 
   const reportImportProgress = (progress) => {
     setImportProgress(progress);
@@ -2099,7 +2218,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
           createdAt: editItem.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
-        await onUpdateRecord(record);
+        await onUpdateRecord(record, reportImportProgress);
         setMessage('已更新單字');
       } else {
         if (mode === 'json') {
@@ -2137,7 +2256,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
           return;
         }
         const records = createRecordsForDate(targetDate, rawItems, allItems);
-        await onAddRecords(records);
+        await onAddRecords(records, reportImportProgress);
         setMessage(`已新增 ${records.length} 筆到 ${targetDate}`);
         setManual(itemToManual());
       }
@@ -2145,7 +2264,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
     } catch (submitError) {
       const failure = describeImportError(submitError);
       setError(`${failure.message} (${failure.code})`);
-      if (mode === 'json') reportImportProgress({ phase: 'error', current: importProgress?.current || 0, total: importProgress?.total || 0, detail: `匯入失敗：${failure.message} [${failure.code}]` });
+      reportImportProgress({ phase: 'error', current: importProgress?.current || 0, total: importProgress?.total || 0, detail: `儲存失敗：${failure.message} [${failure.code}]` });
     } finally {
       submissionLockRef.current = false;
       setSaving(false);
@@ -2244,7 +2363,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
         )}
       </div>}
 
-      {mode === 'json' && importProgress && <ImportProgressPanel progress={importProgress} log={importLog} />}
+      {importProgress && <ImportProgressPanel progress={importProgress} log={importLog} />}
       {message && !importCompleted && <div className="form-success">{message}</div>}
       {error && <div className="form-error">{error}</div>}
       {!!duplicates.length && (
@@ -3825,6 +3944,17 @@ function WordCard({ item, onEdit, onDelete, onOpen, isStarred = false, onToggleS
   );
 }
 
-export { buildJsonImportDraft, createRecordsFromImportEntries, findImportConflict, normalizeKoreanKey, recordOrder, recordsFromSnapshot, resolveImportConflictDraft };
+export {
+  attemptDate,
+  buildJsonImportDraft,
+  createRecordsFromImportEntries,
+  dailyRecognitionSchedule,
+  findImportConflict,
+  markReviewDateComplete,
+  normalizeKoreanKey,
+  recordOrder,
+  recordsFromSnapshot,
+  resolveImportConflictDraft,
+};
 
 if (typeof document !== 'undefined') createRoot(document.getElementById('root')).render(<App />);
