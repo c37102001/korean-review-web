@@ -91,6 +91,7 @@ class FirebaseClient:
         self.api_key = api_key
         self.project_id = project_id
         self._saved_state: Dict[str, Any] = empty_state()
+        self._writes_blocked_until = 0.0
 
     def sign_in(self, email: str, password: str) -> AuthSession:
         url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={self.api_key}"
@@ -150,8 +151,16 @@ class FirebaseClient:
         return state
 
     def save_review_state(self, session: AuthSession, state: Dict[str, Any]) -> None:
-        self._save_review_state_changes(session, self._saved_state, state)
+        if time.monotonic() < self._writes_blocked_until:
+            raise RuntimeError("HTTP 429: Quota exceeded.")
+        try:
+            self._save_review_state_changes(session, self._saved_state, state)
+        except RuntimeError as exc:
+            if _is_quota_exceeded_error(str(exc)):
+                self._writes_blocked_until = time.monotonic() + 60
+            raise
         self._saved_state = _clone_json(state)
+        self._writes_blocked_until = 0.0
 
     def _save_review_state_changes(self, session: AuthSession, previous: Dict[str, Any], state: Dict[str, Any]) -> None:
         question_ids = set(previous.get("stats") or {}) | set(previous.get("progress") or {}) | set(state.get("stats") or {}) | set(state.get("progress") or {})
@@ -264,40 +273,40 @@ class FirebaseClient:
         payload: Optional[Dict[str, Any]] = None,
         session: Optional[AuthSession] = None,
         _retry: bool = True,
-        _transient_attempt: int = 0,
     ) -> Dict[str, Any]:
-        headers = {"Content-Type": "application/json"}
-        if session:
-            headers["Authorization"] = f"Bearer {session.id_token}"
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
-        req = request.Request(url, method=method, headers=headers, data=body)
-        try:
-            with request.urlopen(req, timeout=25) as resp:
-                raw = resp.read().decode("utf-8")
-                return json.loads(raw) if raw else {}
-        except error.HTTPError as exc:
-            if exc.code == 401 and session and _retry:
-                self._refresh_session_token(session)
-                return self._request_json(method, url, payload=payload, session=session, _retry=False)
-            if exc.code in (429, 500, 502, 503, 504) and _transient_attempt < 3:
-                retry_after = exc.headers.get("Retry-After")
-                delay = float(retry_after) if retry_after and retry_after.isdigit() else 0.5 * (2 ** _transient_attempt)
-                exc.read()
-                time.sleep(delay)
-                return self._request_json(
-                    method, url, payload=payload, session=session, _retry=_retry,
-                    _transient_attempt=_transient_attempt + 1,
-                )
-            details = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"HTTP {exc.code}: {_extract_http_error_message(details)}") from exc
-        except error.URLError as exc:
-            if _transient_attempt < 3:
-                time.sleep(0.5 * (2 ** _transient_attempt))
-                return self._request_json(
-                    method, url, payload=payload, session=session, _retry=_retry,
-                    _transient_attempt=_transient_attempt + 1,
-                )
-            raise RuntimeError(f"Network error: {exc.reason}") from exc
+        transient_attempt = 0
+        can_refresh_token = bool(session and _retry)
+        while True:
+            headers = {"Content-Type": "application/json"}
+            if session:
+                headers["Authorization"] = f"Bearer {session.id_token}"
+            req = request.Request(url, method=method, headers=headers, data=body)
+            try:
+                with request.urlopen(req, timeout=25) as resp:
+                    raw = resp.read().decode("utf-8")
+                    return json.loads(raw) if raw else {}
+            except error.HTTPError as exc:
+                details = exc.read().decode("utf-8", errors="replace")
+                error_message = _extract_http_error_message(details)
+                if exc.code == 401 and can_refresh_token and session:
+                    can_refresh_token = False
+                    self._refresh_session_token(session)
+                    continue
+                quota_exceeded = exc.code == 429 and _is_quota_exceeded_error(error_message)
+                if not quota_exceeded and exc.code in (429, 500, 502, 503, 504) and transient_attempt < 3:
+                    retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                    delay = float(retry_after) if retry_after and retry_after.isdigit() else 0.5 * (2 ** transient_attempt)
+                    transient_attempt += 1
+                    time.sleep(delay)
+                    continue
+                raise RuntimeError(f"HTTP {exc.code}: {error_message}") from None
+            except error.URLError as exc:
+                if transient_attempt < 3:
+                    time.sleep(0.5 * (2 ** transient_attempt))
+                    transient_attempt += 1
+                    continue
+                raise RuntimeError(f"Network error: {exc.reason}") from None
 
 
 def empty_state() -> Dict[str, Any]:
@@ -339,6 +348,10 @@ def _extract_http_error_message(body: str) -> str:
         return body
     err = parsed.get("error")
     return str(err.get("message", body)) if isinstance(err, dict) else body
+
+
+def _is_quota_exceeded_error(message: str) -> bool:
+    return "quota exceeded" in message.casefold()
 
 
 def _doc_id(doc_name: str) -> str:
@@ -871,6 +884,40 @@ def wait_message(stdscr: curses.window, title: str, message: str) -> None:
     stdscr.getch()
 
 
+def friendly_firebase_error(exc: RuntimeError) -> str:
+    detail = str(exc)
+    if _is_quota_exceeded_error(detail):
+        return (
+            "Firebase 目前已超過免費額度（HTTP 429），這次操作沒有儲存。"
+            "請等 Firebase 額度恢復後再試；若經常發生，請至 Firebase Console 檢查用量與方案。"
+        )
+    if detail.startswith("Network error:"):
+        return f"無法連線到 Firebase，這次操作沒有儲存。{detail}"
+    return f"Firebase 儲存失敗，這次操作沒有儲存。{detail}"
+
+
+def restore_state(state: Dict[str, Any], snapshot: Dict[str, Any]) -> None:
+    state.clear()
+    state.update(_clone_json(snapshot))
+
+
+def save_review_state_or_restore(
+    stdscr: curses.window,
+    client: FirebaseClient,
+    session: AuthSession,
+    state: Dict[str, Any],
+    snapshot: Dict[str, Any],
+    title: str = "儲存失敗",
+) -> bool:
+    try:
+        client.save_review_state(session, state)
+    except RuntimeError as exc:
+        restore_state(state, snapshot)
+        wait_message(stdscr, title, friendly_firebase_error(exc))
+        return False
+    return True
+
+
 def menu(stdscr: curses.window, title: str, options: List[Tuple[str, str]], subtitle: str = "Arrows=move Enter=open Esc=back") -> Optional[str]:
     selected = 0
     curses.curs_set(0)
@@ -1028,8 +1075,12 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
         if key == "\x1b":
             return
         if key == "0":
+            snapshot = _clone_json(state)
             toggle_star(state, card)
-            client.save_review_state(session, state)
+            if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
+                card.is_starred = card.id in (state.get("starred") or [])
+                message = ""
+                continue
             message = "已打星號" if card.is_starred else "已取消星號"
         elif key == "8":
             show_details = not show_details
@@ -1145,8 +1196,12 @@ def run_daily_recognition(
         if not isinstance(key, str):
             continue
         if key == "0":
+            snapshot = _clone_json(state)
             toggle_star(state, card)
-            client.save_review_state(session, state)
+            if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
+                card.is_starred = card.id in (state.get("starred") or [])
+                message = ""
+                continue
             message = "已打星號" if card.is_starred else "已取消星號"
         elif key == "8":
             if not graded:
@@ -1161,8 +1216,11 @@ def run_daily_recognition(
                 message = "這題已完成評分。"
                 continue
             correct = key == "2"
+            snapshot = _clone_json(state)
             record_daily_recognition_answer(state, question, correct)
-            client.save_review_state(session, state)
+            if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
+                message = ""
+                continue
             results[question.id] = correct
             message = ""
         elif key == "4":
@@ -1278,8 +1336,11 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 message = "例句第一次答錯：先看提示再試一次，第二次答錯才會記錄。"
                 continue
             if should_record_results:
+                snapshot = _clone_json(state)
                 record_answer(state, question, correct)
-                client.save_review_state(session, state)
+                if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
+                    message = ""
+                    continue
             show_hint = True
             partial = None
             graded = True
@@ -1311,8 +1372,12 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             continue
         if isinstance(key, str):
             if key == "0":
+                snapshot = _clone_json(state)
                 toggle_star(state, question.source)
-                client.save_review_state(session, state)
+                if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
+                    question.source.is_starred = question.source.id in (state.get("starred") or [])
+                    message = ""
+                    continue
                 message = "已打星號" if question.source.is_starred else "已取消星號"
             elif key == "8":
                 show_hint = not show_hint
@@ -1382,11 +1447,21 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
     except RuntimeError as exc:
         wait_message(stdscr, "載入失敗", str(exc))
         return
+    skip_recognition_initialization = False
     while True:
-        previous_recognition = _clone_json(state.get("recognition"))
-        daily_recognition_questions(state, questions)
-        if previous_recognition != state.get("recognition"):
-            client.save_review_state(session, state)
+        if not skip_recognition_initialization:
+            snapshot = _clone_json(state)
+            previous_recognition = _clone_json(state.get("recognition"))
+            daily_recognition_questions(state, questions)
+            if previous_recognition != state.get("recognition") and not save_review_state_or_restore(
+                stdscr,
+                client,
+                session,
+                state,
+                snapshot,
+                "今日題目暫時無法同步",
+            ):
+                skip_recognition_initialization = True
         today = today_string()
         completed = state.setdefault("completedReviewDates", [])
         choice = menu(
@@ -1400,6 +1475,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
         if choice == "refresh":
             try:
                 state, cards, questions = load_data(client, session)
+                skip_recognition_initialization = False
             except RuntimeError as exc:
                 wait_message(stdscr, "同步失敗", str(exc))
             continue
@@ -1423,9 +1499,17 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                     completed = state.setdefault("completedReviewDates", [])
                     today = today_string()
                     if today not in completed:
+                        snapshot = _clone_json(state)
                         completed.append(today)
                         completed.sort()
-                        client.save_review_state(session, state)
+                        save_review_state_or_restore(
+                            stdscr,
+                            client,
+                            session,
+                            state,
+                            snapshot,
+                            "完成紀錄儲存失敗",
+                        )
         elif choice == "calendar":
             selected_date = date_menu(stdscr, cards)
             if selected_date:

@@ -168,6 +168,26 @@ test('daily recognition never adds more questions after the daily limit was answ
   assert.deepEqual(repeated, schedule);
 });
 
+test('daily recognition initialization runs only when the persisted date changes', () => {
+  assert.equal(helpers.shouldInitializeDailyRecognition(null, '2026-07-23'), true);
+  assert.equal(helpers.shouldInitializeDailyRecognition({ dailyDate: '2026-07-22' }, '2026-07-23'), true);
+  assert.equal(helpers.shouldInitializeDailyRecognition({
+    dailyDate: '2026-07-23',
+    assignmentIds: ['stale-or-different-client-value'],
+  }, '2026-07-23'), false);
+});
+
+test('exhausted daily quota is not retried as a transient Firestore error', () => {
+  assert.equal(helpers.isTransientFirestoreError({
+    code: 'resource-exhausted',
+    message: 'Quota exceeded.',
+  }), false);
+  assert.equal(helpers.isTransientFirestoreError({
+    code: 'resource-exhausted',
+    message: 'Temporarily rate limited.',
+  }), true);
+});
+
 test('explicit local attempt date takes priority over the UTC timestamp date', () => {
   assert.equal(helpers.attemptDate({ date: '2026-07-23', time: '2026-07-22T23:30:00.000Z' }), '2026-07-23');
 });

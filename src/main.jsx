@@ -86,20 +86,36 @@ function recordOrder(record) {
 }
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+let firestoreWritesBlockedUntil = 0;
+let firestoreQuotaError = null;
+
+function isFirestoreQuotaExceeded(error) {
+  return /quota exceeded/i.test(error?.message || '');
+}
 
 function isTransientFirestoreError(error) {
+  if (isFirestoreQuotaExceeded(error)) return false;
   const code = String(error?.code || '').replace(/^firestore\//, '');
   return ['aborted', 'deadline-exceeded', 'resource-exhausted', 'unavailable'].includes(code)
     || /quota|too many requests|temporar|network|offline/i.test(error?.message || '');
 }
 
 async function retryFirestoreWrite(operation, maxAttempts = 4) {
+  if (Date.now() < firestoreWritesBlockedUntil && firestoreQuotaError) throw firestoreQuotaError;
   let lastError;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      return await operation();
+      const result = await operation();
+      firestoreWritesBlockedUntil = 0;
+      firestoreQuotaError = null;
+      return result;
     } catch (error) {
       lastError = error;
+      if (isFirestoreQuotaExceeded(error)) {
+        firestoreWritesBlockedUntil = Date.now() + 60_000;
+        firestoreQuotaError = error;
+        throw error;
+      }
       if (!isTransientFirestoreError(error) || attempt === maxAttempts) throw error;
       await wait(500 * (2 ** (attempt - 1)));
     }
@@ -1211,6 +1227,10 @@ function dailyRecognitionSchedule(store, questions, date = todayString(), limit 
   };
 }
 
+function shouldInitializeDailyRecognition(recognition, date = todayString()) {
+  return !recognition || recognition.dailyDate !== date;
+}
+
 function groupTasks(store, questions, date = todayString()) {
   const groups = new Map();
   questions.forEach((question) => {
@@ -1509,6 +1529,7 @@ function App() {
   const [selectedDate, setSelectedDate] = useState(() => todayString());
   const [practiceSet, setPracticeSet] = useState(null);
   const [studySet, setStudySet] = useState(null);
+  const recognitionInitializationRef = useRef(new Set());
   const allRecords = useMemo(() => {
     const byId = new Map();
     (store.customRecords || []).forEach((record) => byId.set(record.id, record));
@@ -1524,9 +1545,19 @@ function App() {
   const todayRecognitionQuestions = todayRecognitionSchedule.questions;
   useEffect(() => {
     if (!user || storeLoading) return;
-    if (JSON.stringify(store.recognition || null) === JSON.stringify(todayRecognitionSchedule.state || null)) return;
-    updateStore((current) => ({ ...current, recognition: todayRecognitionSchedule.state }));
-  }, [user, storeLoading, store.recognition, todayRecognitionSchedule.state, updateStore]);
+    const date = todayString();
+    if (!shouldInitializeDailyRecognition(store.recognition, date)) return;
+    const initializationKey = `${user.uid}:${date}`;
+    if (recognitionInitializationRef.current.has(initializationKey)) return;
+    recognitionInitializationRef.current.add(initializationKey);
+    updateStore((current) => {
+      if (!shouldInitializeDailyRecognition(current.recognition, date)) return current;
+      const schedule = dailyRecognitionSchedule(current, dailyQuestions, date);
+      return { ...current, recognition: schedule.state };
+    }).catch(() => {
+      recognitionInitializationRef.current.delete(initializationKey);
+    });
+  }, [user, storeLoading, store.recognition?.dailyDate, dailyQuestions, updateStore]);
 
   useEffect(() => {
     if (!user || storeLoading) return;
@@ -3950,11 +3981,13 @@ export {
   createRecordsFromImportEntries,
   dailyRecognitionSchedule,
   findImportConflict,
+  isTransientFirestoreError,
   markReviewDateComplete,
   normalizeKoreanKey,
   recordOrder,
   recordsFromSnapshot,
   resolveImportConflictDraft,
+  shouldInitializeDailyRecognition,
 };
 
 if (typeof document !== 'undefined') createRoot(document.getElementById('root')).render(<App />);
