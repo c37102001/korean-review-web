@@ -38,6 +38,7 @@ import './styles.css';
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
 const DAILY_RECOGNITION_LIMIT = 50;
 const DAILY_RECOGNITION_MODE = 'daily-recognition';
+const DAILY_GRAMMAR_MODE = 'daily-grammar';
 const CONTENT_SCHEMA_VERSION = 2;
 const FIRESTORE_SCHEMA_VERSION = 3;
 const PROGRESS_SHARD_COUNT = 16;
@@ -88,11 +89,17 @@ function normalizeGrammarNote(note, fallbackId = '') {
 }
 
 function useGrammarNotes(user) {
-  const [state, setState] = useState({ notes: [], loading: false, error: '' });
+  const [state, setState] = useState({
+    notes: [],
+    review: null,
+    loading: false,
+    reviewLoading: false,
+    error: '',
+  });
 
   useEffect(() => {
     if (!user) {
-      setState({ notes: [], loading: false, error: '' });
+      setState({ notes: [], review: null, loading: false, reviewLoading: false, error: '' });
       return undefined;
     }
     setState((current) => ({ ...current, loading: true, error: '' }));
@@ -104,9 +111,27 @@ function useGrammarNotes(user) {
         const notes = snapshot.docs
           .map((documentSnap) => normalizeGrammarNote(documentSnap.data(), documentSnap.id))
           .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '') || a.title.localeCompare(b.title));
-        setState({ notes, loading: false, error: '' });
+        setState((current) => ({ ...current, notes, loading: false, error: '' }));
       },
       (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
+    );
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    setState((current) => ({ ...current, reviewLoading: true }));
+    return onSnapshot(
+      doc(db, 'users', user.uid, 'settings', 'grammarReview'),
+      { includeMetadataChanges: true },
+      (snapshot) => {
+        if (snapshot.metadata.hasPendingWrites) return;
+        setState((current) => ({
+          ...current,
+          review: snapshot.exists() ? snapshot.data() : null,
+          reviewLoading: false,
+        }));
+      },
+      (error) => setState((current) => ({ ...current, reviewLoading: false, error: error.message })),
     );
   }, [user]);
 
@@ -130,7 +155,23 @@ function useGrammarNotes(user) {
     await retryFirestoreWrite(() => deleteDoc(doc(db, 'users', user.uid, 'grammarNotes', id)));
   }, [user]);
 
-  return { ...state, save, remove };
+  const completeReview = useCallback(async (note, date = todayString()) => {
+    if (!user) throw new Error('尚未登入');
+    const review = {
+      lastCompletedGrammarId: note.id,
+      lastCompletedCreatedAt: note.createdAt || '',
+      completedDate: date,
+      updatedAt: new Date().toISOString(),
+    };
+    await retryFirestoreWrite(() => setDoc(
+      doc(db, 'users', user.uid, 'settings', 'grammarReview'),
+      review,
+      { merge: true },
+    ));
+    return review;
+  }, [user]);
+
+  return { ...state, save, remove, completeReview };
 }
 
 function recordsFromSnapshot(snap) {
@@ -1296,6 +1337,43 @@ function shouldInitializeDailyRecognition(recognition, date = todayString()) {
   return !recognition || recognition.dailyDate !== date;
 }
 
+function dailyGrammarSchedule(notes, review, date = todayString()) {
+  if (review?.completedDate === date) return { note: null, questions: [] };
+  const eligible = notes
+    .map((note) => ({
+      ...note,
+      examples: (note.examples || []).filter((example) => example.ko && example.zh),
+    }))
+    .filter((note) => note.examples.length)
+    .sort((a, b) => (
+      (a.createdAt || '').localeCompare(b.createdAt || '')
+      || a.id.localeCompare(b.id)
+    ));
+  if (!eligible.length) return { note: null, questions: [] };
+
+  const lastIndex = eligible.findIndex((note) => note.id === review?.lastCompletedGrammarId);
+  let note;
+  if (lastIndex >= 0) {
+    note = eligible[(lastIndex + 1) % eligible.length];
+  } else if (review?.lastCompletedCreatedAt) {
+    note = eligible.find((candidate) => candidate.createdAt > review.lastCompletedCreatedAt) || eligible[0];
+  } else {
+    note = eligible[0];
+  }
+
+  return {
+    note,
+    questions: note.examples.map((example, index) => ({
+      id: `grammar:${note.id}:${example.id || index}`,
+      itemId: note.id,
+      kind: 'grammar-example',
+      ko: example.ko,
+      zh: example.zh,
+      source: note,
+    })),
+  };
+}
+
 function groupTasks(store, questions, date = todayString()) {
   const groups = new Map();
   questions.forEach((question) => {
@@ -1609,6 +1687,11 @@ function App() {
     [store.attempts, store.recognition, dailyQuestions],
   );
   const todayRecognitionQuestions = todayRecognitionSchedule.questions;
+  const todayGrammarSchedule = useMemo(
+    () => dailyGrammarSchedule(grammar.notes, grammar.review, todayString()),
+    [grammar.notes, grammar.review],
+  );
+  const todayGrammarQuestions = todayGrammarSchedule.questions;
   useEffect(() => {
     if (!user || storeLoading) return;
     const date = todayString();
@@ -1626,13 +1709,27 @@ function App() {
   }, [user, storeLoading, store.recognition?.dailyDate, dailyQuestions, updateStore]);
 
   useEffect(() => {
-    if (!user || storeLoading) return;
+    if (!user || storeLoading || grammar.loading || grammar.reviewLoading) return;
     const today = todayString();
-    const todayComplete = todayDailyQuestions.length === 0 && todayRecognitionQuestions.length === 0;
+    const todayComplete = (
+      todayDailyQuestions.length === 0
+      && todayRecognitionQuestions.length === 0
+      && todayGrammarQuestions.length === 0
+    );
     const todayMarked = (store.completedReviewDates || []).includes(today);
     if (!todayComplete || todayMarked) return;
     markDateComplete(today).catch(() => {});
-  }, [user, storeLoading, store.completedReviewDates, todayDailyQuestions, todayRecognitionQuestions, markDateComplete]);
+  }, [
+    user,
+    storeLoading,
+    grammar.loading,
+    grammar.reviewLoading,
+    store.completedReviewDates,
+    todayDailyQuestions,
+    todayRecognitionQuestions,
+    todayGrammarQuestions,
+    markDateComplete,
+  ]);
 
   const navTop = (next) => {
     setPageStack([]);
@@ -1649,7 +1746,15 @@ function App() {
     setPageStack(pageStack.slice(0, -1));
   };
   const startPractice = (sourceQuestions, label, options = {}) => {
-    setPracticeSet({ questions: sourceQuestions, label, dueOnly: !!options.dueOnly, recordResults: options.recordResults ?? true, mode: options.mode || '' });
+    setPracticeSet({
+      questions: sourceQuestions,
+      label,
+      dueOnly: !!options.dueOnly,
+      recordResults: options.recordResults ?? true,
+      mode: options.mode || '',
+      grammarNote: options.grammarNote || null,
+      onComplete: options.onComplete || null,
+    });
     navChild('practice');
   };
   const startStudy = (sourceItems, label) => {
@@ -1681,7 +1786,7 @@ function App() {
   if (storeLoading) return <LoadingScreen text="載入資料中" />;
 
   const views = {
-    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} recognitionQuestions={todayRecognitionQuestions} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} />,
+    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} recognitionQuestions={todayRecognitionQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} />,
     notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} />,
@@ -1770,13 +1875,14 @@ function LoginPage() {
   );
 }
 
-function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQuestions, onPractice, onAddRecords, onUpdateRecord, onWriteRecords }) {
+function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQuestions, grammarSchedule, onCompleteGrammar, onPractice, onAddRecords, onUpdateRecord, onWriteRecords }) {
   const [addOpen, setAddOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const today = todayString();
   const due = dueQuestionsForToday;
   const recognition = recognitionQuestions;
-  const totalPending = due.length + recognition.length;
+  const grammarQuestions = grammarSchedule.questions;
+  const totalPending = due.length + recognition.length + grammarQuestions.length;
   const tasks = groupTasks(store, due, today);
   const answeredToday = store.attempts.filter((attempt) => attemptDate(attempt) === today);
   const correctToday = answeredToday.filter((attempt) => attempt.correct).length;
@@ -1785,7 +1891,14 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
   const progress = totalPending ? Math.max(0, Math.round((answeredToday.length / (answeredToday.length + totalPending)) * 100)) : 100;
   const startNextDailyTask = () => {
     if (due.length) onPractice(due, '今日測驗', { dueOnly: true });
-    else onPractice(recognition, '每日韓文認字測驗', { dueOnly: true, mode: DAILY_RECOGNITION_MODE });
+    else if (recognition.length) onPractice(recognition, '每日韓文認字測驗', { dueOnly: true, mode: DAILY_RECOGNITION_MODE });
+    else onPractice(grammarQuestions, `每日文法測驗 · ${grammarSchedule.note.title}`, {
+      dueOnly: true,
+      recordResults: false,
+      mode: DAILY_GRAMMAR_MODE,
+      grammarNote: grammarSchedule.note,
+      onComplete: () => onCompleteGrammar(grammarSchedule.note, today),
+    });
   };
 
   return (
@@ -1794,7 +1907,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
         <div>
           <span className="eyebrow">Today · {dateLabel(today)}</span>
           <h1>今天也來練一點韓文</h1>
-          <p>目前有 {totalPending} 題等待完成，包含到期單字與每日韓文認字測驗。</p>
+          <p>目前有 {totalPending} 題等待完成，包含到期單字、每日認字與文法測驗。</p>
           <div className="actions">
             <button className="primary" disabled={!totalPending} onClick={startNextDailyTask}><Dumbbell size={18} /> 開始今日測驗</button>
             <button onClick={() => setAddOpen(true)}><Plus size={18} /> 快速新增單字</button>
@@ -1843,7 +1956,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
 
       <div className="split">
         <div className="panel">
-          <div className="panel-title"><h2>測驗任務</h2><span>{tasks.length || recognition.length ? '未完成任務會保留' : '目前沒有待完成任務'}</span></div>
+          <div className="panel-title"><h2>測驗任務</h2><span>{tasks.length || recognition.length || grammarQuestions.length ? '未完成任務會保留' : '目前沒有待完成任務'}</span></div>
           <div className="task-list">
             {!!recognition.length && (
               <div className="task-card recognition-task-card">
@@ -1853,6 +1966,22 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
                   <p>從全部單字隨機抽題 · 剩餘 {recognition.length} 題</p>
                 </div>
                 <button className="primary small" onClick={() => onPractice(recognition, '每日韓文認字測驗', { dueOnly: true, mode: DAILY_RECOGNITION_MODE })}>開始</button>
+              </div>
+            )}
+            {!!grammarQuestions.length && (
+              <div className="task-card grammar-task-card">
+                <div>
+                  <span className="badge">每日</span>
+                  <h3>文法測驗</h3>
+                  <p>{grammarSchedule.note.title} · {grammarQuestions.length} 個例句</p>
+                </div>
+                <button className="primary small" onClick={() => onPractice(grammarQuestions, `每日文法測驗 · ${grammarSchedule.note.title}`, {
+                  dueOnly: true,
+                  recordResults: false,
+                  mode: DAILY_GRAMMAR_MODE,
+                  grammarNote: grammarSchedule.note,
+                  onComplete: () => onCompleteGrammar(grammarSchedule.note, today),
+                })}>開始</button>
               </div>
             )}
             {tasks.map((task) => (
@@ -1865,7 +1994,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
                 <button className="primary small" onClick={() => onPractice(task.questions, `${task.studyDate} 測驗`, { dueOnly: true })}>開始</button>
               </div>
             ))}
-            {!tasks.length && !recognition.length && <div className="empty">今天的測驗已完成。你可以從日曆或單字本主動測驗。</div>}
+            {!tasks.length && !recognition.length && !grammarQuestions.length && <div className="empty">今天的測驗已完成。你可以從日曆或單字本主動測驗。</div>}
           </div>
         </div>
         <div className="panel">
@@ -3379,9 +3508,10 @@ function PracticePage({ store, updateStore, set }) {
   const [starredOnly, setStarredOnly] = useState(false);
   const [recordResults, setRecordResults] = useState(set.recordResults ?? true);
   const recognitionMode = set.mode === DAILY_RECOGNITION_MODE;
+  const grammarMode = set.mode === DAILY_GRAMMAR_MODE;
   const fixedSource = set.termOnly || set.dueOnly;
   const activeDirection = recognitionMode ? 'ko-zh' : set.dueOnly ? 'zh-ko' : direction;
-  const shouldRecordResults = set.dueOnly || recordResults;
+  const shouldRecordResults = !grammarMode && (set.dueOnly || recordResults);
   const [started, setStarted] = useState(!!set.dueOnly);
   const [questionQueue, setQuestionQueue] = useState([]);
   const [index, setIndex] = useState(0);
@@ -3392,19 +3522,22 @@ function PracticePage({ store, updateStore, set }) {
   const [lastCorrect, setLastCorrect] = useState(null);
   const [typedAttempts, setTypedAttempts] = useState(0);
   const [sessionFinished, setSessionFinished] = useState(false);
+  const [completionError, setCompletionError] = useState('');
+  const [completionSaving, setCompletionSaving] = useState(false);
+  const completionStartedRef = useRef(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [autoPronounce, setAutoPronounce] = useState(true);
   const sourceQuestions = useMemo(() => {
     const starredSet = new Set(store.starred || []);
     const applyStarFilter = (list) => (starredOnly ? list.filter((q) => starredSet.has(q.itemId)) : list);
-    if (recognitionMode) return set.questions;
+    if (recognitionMode || grammarMode) return set.questions;
     if (set.dueOnly) return orderReviewQuestions(set.questions);
     if (direction === 'ko-zh') return applyStarFilter(set.questions.filter((q) => q.kind === 'term'));
     const activeSource = set.termOnly ? 'term' : source;
     const filtered = set.questions.filter((q) => activeSource === 'all' || q.kind === activeSource);
     const orderedFiltered = activeSource === 'all' ? orderReviewQuestions(filtered) : filtered;
     return applyStarFilter(orderedFiltered);
-  }, [set.questions, source, direction, set.termOnly, set.dueOnly, recognitionMode, store, starredOnly]);
+  }, [set.questions, source, direction, set.termOnly, set.dueOnly, recognitionMode, grammarMode, store, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
   const resetSession = () => {
@@ -3418,9 +3551,12 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
+    setCompletionError('');
+    setCompletionSaving(false);
+    completionStartedRef.current = false;
   };
   const startSession = () => {
-    const nextQuestions = recognitionMode
+    const nextQuestions = recognitionMode || grammarMode
       ? sourceQuestions
       : set.dueOnly ? shuffleReviewQuestionsByKind(sourceQuestions) : shuffleItems(sourceQuestions, Date.now());
     if (!nextQuestions.length) {
@@ -3442,7 +3578,7 @@ function PracticePage({ store, updateStore, set }) {
   useEffect(() => {
     if (!set.dueOnly) return;
     if (questionQueue.length) return;
-    const nextQuestions = recognitionMode ? sourceQuestions : shuffleReviewQuestionsByKind(sourceQuestions);
+    const nextQuestions = recognitionMode || grammarMode ? sourceQuestions : shuffleReviewQuestionsByKind(sourceQuestions);
     setQuestionQueue(nextQuestions);
     setStarted(!!nextQuestions.length);
     setIndex(0);
@@ -3452,7 +3588,7 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
-  }, [set.dueOnly, recognitionMode, sourceQuestions, questionQueue.length]);
+  }, [set.dueOnly, recognitionMode, grammarMode, sourceQuestions, questionQueue.length]);
 
   useEffect(() => {
     if (direction === 'ko-zh') setSource('term');
@@ -3462,6 +3598,19 @@ function PracticePage({ store, updateStore, set }) {
     setRecordResults(set.recordResults ?? true);
   }, [set.label, set.recordResults]);
 
+  const finishSession = () => {
+    setSessionFinished(true);
+    if (!set.onComplete || completionStartedRef.current) return;
+    completionStartedRef.current = true;
+    setCompletionSaving(true);
+    setCompletionError('');
+    Promise.resolve(set.onComplete())
+      .catch((error) => {
+        completionStartedRef.current = false;
+        setCompletionError(error.message || '文法測驗進度儲存失敗');
+      })
+      .finally(() => setCompletionSaving(false));
+  };
   const goNext = () => {
     setInput('');
     setResult(null);
@@ -3470,7 +3619,7 @@ function PracticePage({ store, updateStore, set }) {
     setLastCorrect(null);
     setTypedAttempts(0);
     if (index + 1 < queue.length) setIndex(index + 1);
-    else if (set.dueOnly) setSessionFinished(true);
+    else if (set.dueOnly) finishSession();
     else resetSession();
   };
   // Korean-to-Chinese correct answers are intentionally lightweight: they do
@@ -3506,7 +3655,7 @@ function PracticePage({ store, updateStore, set }) {
     setTypedAttempts(nextAttempt);
     if (checkResult.isCorrect) {
       gradeAndRecord(true);
-    } else if (question.kind === 'example' && nextAttempt < 2) {
+    } else if ((question.kind === 'example' || question.kind === 'grammar-example') && nextAttempt < 2) {
       setRevealed(false);
       if (soundEnabled) playResultSound(false);
     } else {
@@ -3589,6 +3738,13 @@ function PracticePage({ store, updateStore, set }) {
           <span className="eyebrow">Test complete</span>
           <h1>{`${set.label} 已完成`}</h1>
           <p>這一組的 {questionQueue.length} 題已全部作答。</p>
+          {completionSaving && <p>正在儲存今日文法進度...</p>}
+          {completionError && (
+            <>
+              <div className="form-error">{completionError}</div>
+              <button className="primary" onClick={finishSession}>重新儲存進度</button>
+            </>
+          )}
         </div>
       </section>
     );
@@ -3688,7 +3844,7 @@ function PracticePage({ store, updateStore, set }) {
           onWrong={() => submit(false)}
           onNext={goNext}
           isStarred={(store.starred || []).includes(question.source?.id)}
-          onToggleStar={() => toggleStarredItem(updateStore, question.source.id)}
+          onToggleStar={grammarMode ? null : () => toggleStarredItem(updateStore, question.source.id)}
         />
       </div>
     </section>
@@ -3696,7 +3852,8 @@ function PracticePage({ store, updateStore, set }) {
 }
 
 function QuestionKindBadge({ kind }) {
-  return <small className={`question-kind-badge ${kind === 'example' ? 'example' : 'term'}`}>{kind === 'example' ? '例句' : '單字'}</small>;
+  const isExample = kind === 'example' || kind === 'grammar-example';
+  return <small className={`question-kind-badge ${isExample ? 'example' : 'term'}`}>{kind === 'grammar-example' ? '文法例句' : isExample ? '例句' : '單字'}</small>;
 }
 
 function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, onWrong, onNext, isStarred = false, onToggleStar }) {
@@ -3706,17 +3863,28 @@ function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, on
         {!visible ? (
           <div className="answer-placeholder">
             <span>答案卡片</span>
-            <strong>答題後會顯示完整單字卡</strong>
+            <strong>{question.kind === 'grammar-example' ? '答題後會顯示文法與完整例句' : '答題後會顯示完整單字卡'}</strong>
           </div>
         ) : (
           <>
             <div className="answer-review-head">
               <span>{graded ? (correct ? '答對' : '答錯') : '公布答案'}</span>
-              {question.kind === 'example' && <strong>例句來自這張卡片</strong>}
+              {(question.kind === 'example' || question.kind === 'grammar-example') && <strong>{question.kind === 'grammar-example' ? question.source.title : '例句來自這張卡片'}</strong>}
               {graded && <small>再按 Enter 進入下一題</small>}
             </div>
             <div className="answer-card-stage">
-              <NoteCard item={question.source} isStarred={isStarred} onToggleStar={onToggleStar} />
+              {question.kind === 'grammar-example' ? (
+                <div className="grammar-practice-answer">
+                  <h3>{question.source.title}</h3>
+                  {question.source.notes && <p>{question.source.notes}</p>}
+                  <div className="grammar-example">
+                    <p className="grammar-example-ko"><span>{question.ko}</span><TextSpeakButton text={question.ko} lang="ko-KR" label="播放韓文例句" /></p>
+                    <p className="grammar-example-zh"><span>{question.zh}</span><TextSpeakButton text={question.zh} lang="zh-TW" label="播放中文翻譯" /></p>
+                  </div>
+                </div>
+              ) : (
+                <NoteCard item={question.source} isStarred={isStarred} onToggleStar={onToggleStar} />
+              )}
             </div>
             {!graded && (
               <div className="answer-review-actions">
@@ -4334,6 +4502,7 @@ export {
   attemptDate,
   buildJsonImportDraft,
   createRecordsFromImportEntries,
+  dailyGrammarSchedule,
   dailyRecognitionSchedule,
   findImportConflict,
   isTransientFirestoreError,

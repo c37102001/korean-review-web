@@ -17,11 +17,15 @@ service cloud.firestore {
     match /users/{uid}/reviewDays/{date} {
       allow read, write: if isOwner(uid);
     }
-    match /users/{uid}/settings/{settingId} {
+    match /users/{uid}/settings/review {
       allow read, create: if isOwner(uid);
       allow update: if isOwner(uid)
         && request.resource.data.completedReviewDates is list
         && request.resource.data.completedReviewDates.hasAll(resource.data.completedReviewDates);
+      allow delete: if false;
+    }
+    match /users/{uid}/settings/grammarReview {
+      allow read, create, update: if isOwner(uid);
       allow delete: if false;
     }
   }

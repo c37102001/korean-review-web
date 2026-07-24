@@ -219,3 +219,50 @@ test('grammar notes normalize searchable content without review fields', () => {
   assert.equal('stats' in note, false);
   assert.equal('progress' in note, false);
 });
+
+test('daily grammar review continues into newly added notes before wrapping', () => {
+  const grammarNotes = Array.from({ length: 13 }, (_, index) => ({
+    id: `grammar-${index + 1}`,
+    title: `文法 ${index + 1}`,
+    notes: '',
+    createdAt: `2026-07-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
+    examples: [
+      { id: `example-${index + 1}-a`, ko: `문장 ${index + 1}가`, zh: `句子 ${index + 1}A` },
+      { id: `example-${index + 1}-b`, ko: `문장 ${index + 1}나`, zh: `句子 ${index + 1}B` },
+    ],
+  }));
+  const review = {
+    lastCompletedGrammarId: 'grammar-10',
+    lastCompletedCreatedAt: grammarNotes[9].createdAt,
+    completedDate: '2026-07-23',
+  };
+
+  const schedule = helpers.dailyGrammarSchedule(grammarNotes, review, '2026-07-24');
+  assert.equal(schedule.note.id, 'grammar-11');
+  assert.deepEqual(schedule.questions.map((question) => question.zh), ['句子 11A', '句子 11B']);
+
+  const wrapped = helpers.dailyGrammarSchedule(grammarNotes, {
+    ...review,
+    lastCompletedGrammarId: 'grammar-13',
+    lastCompletedCreatedAt: grammarNotes[12].createdAt,
+  }, '2026-07-24');
+  assert.equal(wrapped.note.id, 'grammar-1');
+});
+
+test('daily grammar review stays completed for the day and skips incomplete examples', () => {
+  const notes = [{
+    id: 'grammar-1',
+    title: '測試文法',
+    createdAt: '2026-07-01T00:00:00.000Z',
+    examples: [
+      { id: 'complete', ko: '한국어 문장', zh: '中文句子' },
+      { id: 'missing-zh', ko: '한국어만', zh: '' },
+    ],
+  }];
+  const active = helpers.dailyGrammarSchedule(notes, null, '2026-07-24');
+  assert.deepEqual(active.questions.map((question) => question.id), ['grammar:grammar-1:complete']);
+
+  const completed = helpers.dailyGrammarSchedule(notes, { completedDate: '2026-07-24' }, '2026-07-24');
+  assert.equal(completed.note, null);
+  assert.deepEqual(completed.questions, []);
+});

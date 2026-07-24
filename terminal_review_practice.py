@@ -38,6 +38,7 @@ PROGRESS_SHARD_COUNT = 16
 REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90]
 DAILY_RECOGNITION_LIMIT = 50
 DAILY_RECOGNITION_MODE = "daily-recognition"
+DAILY_GRAMMAR_MODE = "daily-grammar"
 
 
 def utc_now_iso() -> str:
@@ -80,6 +81,15 @@ class Question:
 
 
 @dataclass
+class GrammarNote:
+    id: str
+    title: str
+    notes: str
+    examples: List[Dict[str, str]]
+    created_at: str = ""
+
+
+@dataclass
 class PartialCheckResult:
     all_correct_prefix: bool
     wrong_raw_indices: set[int]
@@ -109,6 +119,48 @@ class FirebaseClient:
             _parse_firestore_fields(doc.get("fields", {})) | {"_docId": _doc_id(doc.get("name", ""))}
             for doc in self._list_documents(["users", session.uid, "records"], session)
         ]
+
+    def list_grammar_notes(self, session: AuthSession) -> List[Dict[str, Any]]:
+        return [
+            _parse_firestore_fields(document.get("fields", {}))
+            | {"_docId": _doc_id(document.get("name", ""))}
+            for document in self._list_documents(["users", session.uid, "grammarNotes"], session)
+        ]
+
+    def load_grammar_review(self, session: AuthSession) -> Dict[str, Any]:
+        try:
+            document = self._request_json(
+                "GET",
+                self._document_url(["users", session.uid, "settings", "grammarReview"]),
+                session=session,
+            )
+        except RuntimeError as exc:
+            if "NOT_FOUND" in str(exc) or "404" in str(exc):
+                return {}
+            raise
+        return _parse_firestore_fields(document.get("fields", {}))
+
+    def save_grammar_review(
+        self,
+        session: AuthSession,
+        note: GrammarNote,
+        date_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        date_key = date_key or today_string()
+        review = {
+            "lastCompletedGrammarId": note.id,
+            "lastCompletedCreatedAt": note.created_at,
+            "completedDate": date_key,
+            "updatedAt": utc_now_iso(),
+        }
+        payload = {"fields": {key: _to_firestore_value(value) for key, value in review.items()}}
+        self._request_json(
+            "PATCH",
+            self._document_url(["users", session.uid, "settings", "grammarReview"]),
+            payload=payload,
+            session=session,
+        )
+        return review
 
     def load_review_state(self, session: AuthSession) -> Dict[str, Any]:
         try:
@@ -466,7 +518,37 @@ def normalize_records(records: List[Dict[str, Any]], state: Dict[str, Any]) -> T
     return cards, order_questions(questions)
 
 
-def load_data(client: FirebaseClient, session: AuthSession) -> Tuple[Dict[str, Any], List[Card], List[Question]]:
+def normalize_grammar_notes(records: List[Dict[str, Any]]) -> List[GrammarNote]:
+    notes: List[GrammarNote] = []
+    for record in records:
+        note_id = str(record.get("id") or record.get("_docId") or "")
+        title = str(record.get("title") or "").strip()
+        if not note_id or not title:
+            continue
+        examples = []
+        for example in record.get("examples") or []:
+            ko = str(example.get("ko") or "").strip()
+            zh = str(example.get("zh") or "").strip()
+            if ko and zh:
+                examples.append({
+                    "id": str(example.get("id") or f"{note_id}-example-{len(examples)}"),
+                    "ko": ko,
+                    "zh": zh,
+                })
+        notes.append(GrammarNote(
+            id=note_id,
+            title=title,
+            notes=str(record.get("notes") or "").strip(),
+            examples=examples,
+            created_at=str(record.get("createdAt") or ""),
+        ))
+    return sorted(notes, key=lambda note: (note.created_at, note.id))
+
+
+def load_data(
+    client: FirebaseClient,
+    session: AuthSession,
+) -> Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any]]:
     state = client.load_review_state(session)
     records_by_id: Dict[str, Dict[str, Any]] = {}
     for record in client.list_records(session):
@@ -475,7 +557,9 @@ def load_data(client: FirebaseClient, session: AuthSession) -> Tuple[Dict[str, A
             record["id"] = record_id
             records_by_id[record_id] = record
     cards, questions = normalize_records(list(records_by_id.values()), state)
-    return state, cards, questions
+    grammar_notes = normalize_grammar_notes(client.list_grammar_notes(session))
+    grammar_review = client.load_grammar_review(session)
+    return state, cards, questions, grammar_notes, grammar_review
 
 
 def get_progress(state: Dict[str, Any], question: Question) -> Dict[str, Any]:
@@ -499,6 +583,51 @@ def daily_due_questions(state: Dict[str, Any], questions: List[Question], date_k
     date_key = date_key or today_string()
     terms = [question for question in questions if question.kind == "term"]
     return order_questions(due_questions(state, terms, date_key))
+
+
+def daily_grammar_questions(
+    notes: List[GrammarNote],
+    review: Dict[str, Any],
+    date_key: Optional[str] = None,
+) -> Tuple[Optional[GrammarNote], List[Question]]:
+    date_key = date_key or today_string()
+    if review.get("completedDate") == date_key:
+        return None, []
+    eligible = [note for note in notes if note.examples]
+    if not eligible:
+        return None, []
+
+    last_id = str(review.get("lastCompletedGrammarId") or "")
+    last_index = next((index for index, note in enumerate(eligible) if note.id == last_id), -1)
+    if last_index >= 0:
+        note = eligible[(last_index + 1) % len(eligible)]
+    else:
+        last_created_at = str(review.get("lastCompletedCreatedAt") or "")
+        note = next(
+            (candidate for candidate in eligible if last_created_at and candidate.created_at > last_created_at),
+            eligible[0],
+        )
+
+    source = Card(
+        id=note.id,
+        date="",
+        ko=note.title,
+        zh=note.notes,
+        pos="文法",
+    )
+    questions = [
+        Question(
+            id=f"grammar:{note.id}:{example['id']}",
+            item_id=note.id,
+            date="",
+            kind="example",
+            ko=example["ko"],
+            zh=example["zh"],
+            source=source,
+        )
+        for example in note.examples
+    ]
+    return note, questions
 
 
 def seed_from_string(text: str) -> int:
@@ -960,24 +1089,34 @@ def date_menu(stdscr: curses.window, cards: List[Card]) -> Optional[str]:
     return menu(stdscr, "月曆 | 選擇日期", options)
 
 
-def due_task_menu(stdscr: curses.window, state: Dict[str, Any], questions: List[Question]) -> Optional[Tuple[str, List[Question]]]:
+def due_task_menu(
+    stdscr: curses.window,
+    state: Dict[str, Any],
+    questions: List[Question],
+    grammar_task: Tuple[Optional[GrammarNote], List[Question]],
+) -> Optional[Tuple[str, List[Question]]]:
     due = daily_due_questions(state, questions)
     recognition = daily_recognition_questions(state, questions)
+    grammar_note, grammar_questions = grammar_task
     grouped: Dict[str, List[Question]] = {}
     for question in due:
         grouped.setdefault(question.date, []).append(question)
-    if not grouped and not recognition:
+    if not grouped and not recognition and not grammar_questions:
         wait_message(stdscr, "今日複習題", "今天的測驗已全部完成。")
         return None
     options = []
     if recognition:
         options.append((DAILY_RECOGNITION_MODE, f"每日韓文認字測驗 · 剩餘 {len(recognition)} 題"))
+    if grammar_note and grammar_questions:
+        options.append((DAILY_GRAMMAR_MODE, f"每日文法測驗 · {grammar_note.title} · {len(grammar_questions)} 題"))
     options.extend((date_key, f"{date_key} · {len(items)} 題") for date_key, items in sorted(grouped.items()))
     selected = menu(stdscr, "今日複習題 | 選擇任務", options)
     if not selected:
         return None
     if selected == DAILY_RECOGNITION_MODE:
         return selected, recognition
+    if selected == DAILY_GRAMMAR_MODE:
+        return selected, grammar_questions
     return selected, order_questions(grouped[selected])
 
 
@@ -1249,7 +1388,7 @@ def run_daily_recognition(
             scroll_offset = 0
 
 
-def run_practice(stdscr: curses.window, title: str, questions: List[Question], config: Dict[str, Any], state: Dict[str, Any], client: FirebaseClient, session: AuthSession) -> None:
+def run_practice(stdscr: curses.window, title: str, questions: List[Question], config: Dict[str, Any], state: Dict[str, Any], client: FirebaseClient, session: AuthSession) -> bool:
     idx = 0
     user_input = ""
     input_cursor = 0
@@ -1266,6 +1405,8 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
     stdscr.keypad(True)
     should_record_results = config.get("record_results", True)
     enforce_answer_length = config.get("enforce_answer_length", False)
+    allow_star = config.get("allow_star", True)
+    require_answer_before_next = config.get("require_answer_before_next", False)
     if curses.has_colors():
         curses.start_color()
         try:
@@ -1280,16 +1421,18 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         if not questions:
             wait_message(stdscr, "測驗", "沒有可測驗的題目。")
             curses.curs_set(0)
-            return
+            return False
         question = questions[idx]
         prompt = question.zh if config["direction"] == "zh-ko" else question.ko
         answer = question.ko if config["direction"] == "zh-ko" else question.zh
         stdscr.erase()
         height, width = stdscr.getmaxyx()
         record_label = "" if should_record_results else " 不紀錄"
-        draw_line(stdscr, 1, 2, f"測驗{record_label} | {title} | {idx + 1}/{len(questions)}  Esc=返回 0=星號 8=答案 4/6=上下題 +=檢查 Enter=送出", curses.A_BOLD)
+        star_help = " 0=星號" if allow_star else ""
+        draw_line(stdscr, 1, 2, f"測驗{record_label} | {title} | {idx + 1}/{len(questions)}  Esc=返回{star_help} 8=答案 4/6=上下題 +=檢查 Enter=送出", curses.A_BOLD)
         length_hint = f"  ({count_korean_letters(answer)} 個韓文字)" if config["direction"] == "zh-ko" else ""
-        y = draw_wrapped(stdscr, 2, 2, width - 4, f"{'★' if question.source.is_starred else '☆'} 題目: {prompt}{length_hint}")
+        star_prefix = f"{'★' if question.source.is_starred else '☆'} " if allow_star else ""
+        y = draw_wrapped(stdscr, 2, 2, width - 4, f"{star_prefix}題目: {prompt}{length_hint}")
         draw_line(stdscr, y, 2, f"答案: {answer}" if show_hint else "答案: hidden (press 8)")
         input_y = y + 1
         answered_attr = ok_attr if graded and last_correct is True else 0
@@ -1316,13 +1459,13 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         key = stdscr.get_wch()
         if key == "\x1b":
             curses.curs_set(0)
-            return
+            return False
         if key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13):
             if graded:
                 if idx == len(questions) - 1:
                     wait_message(stdscr, "完成", "這組題目已完成。")
                     curses.curs_set(0)
-                    return
+                    return True
                 idx += 1
                 user_input = ""
                 input_cursor = 0
@@ -1349,7 +1492,11 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 retry_diff = True
                 partial = None
                 show_hint = False
-                message = "例句第一次答錯：先看提示再試一次，第二次答錯才會記錄。"
+                message = (
+                    "例句第一次答錯：先看提示再試一次，第二次答錯才會記錄。"
+                    if should_record_results
+                    else "例句第一次答錯：先看提示再試一次，第二次答錯才會公佈答案。"
+                )
                 continue
             if should_record_results:
                 snapshot = _clone_json(state)
@@ -1387,7 +1534,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             input_cursor = min(len(user_input), input_cursor + 1)
             continue
         if isinstance(key, str):
-            if key == "0":
+            if key == "0" and allow_star:
                 snapshot = _clone_json(state)
                 toggle_star(state, question.source)
                 if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
@@ -1416,10 +1563,13 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 retry_diff = False
                 message = ""
             elif key == "6":
+                if require_answer_before_next and not graded:
+                    message = "請先送出這一題的答案。"
+                    continue
                 if idx == len(questions) - 1 and graded:
                     wait_message(stdscr, "完成", "這組題目已完成。")
                     curses.curs_set(0)
-                    return
+                    return True
                 idx = min(len(questions) - 1, idx + 1)
                 user_input = ""
                 input_cursor = 0
@@ -1459,7 +1609,7 @@ def run_collection(stdscr: curses.window, title: str, cards: List[Card], questio
 
 def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: AuthSession) -> None:
     try:
-        state, cards, questions = load_data(client, session)
+        state, cards, questions, grammar_notes, grammar_review = load_data(client, session)
     except RuntimeError as exc:
         wait_message(stdscr, "載入失敗", str(exc))
         return
@@ -1490,17 +1640,42 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
             return
         if choice == "refresh":
             try:
-                state, cards, questions = load_data(client, session)
+                state, cards, questions, grammar_notes, grammar_review = load_data(client, session)
                 skip_recognition_initialization = False
             except RuntimeError as exc:
                 wait_message(stdscr, "同步失敗", str(exc))
             continue
         if choice == "due":
-            task = due_task_menu(stdscr, state, questions)
+            grammar_task = daily_grammar_questions(grammar_notes, grammar_review)
+            task = due_task_menu(stdscr, state, questions, grammar_task)
             if task:
                 task_type, selected = task
                 if task_type == DAILY_RECOGNITION_MODE:
                     run_daily_recognition(stdscr, selected, cards, state, client, session)
+                elif task_type == DAILY_GRAMMAR_MODE:
+                    grammar_note, _ = grammar_task
+                    completed = run_practice(
+                        stdscr,
+                        f"每日文法測驗 · {grammar_note.title}",
+                        selected,
+                        {
+                            "direction": "zh-ko",
+                            "source": "all",
+                            "starred": False,
+                            "random": False,
+                            "record_results": False,
+                            "allow_star": False,
+                            "require_answer_before_next": True,
+                        },
+                        state,
+                        client,
+                        session,
+                    )
+                    if completed and grammar_note:
+                        try:
+                            grammar_review = client.save_grammar_review(session, grammar_note)
+                        except RuntimeError as exc:
+                            wait_message(stdscr, "文法進度儲存失敗", friendly_firebase_error(exc))
                 else:
                     run_practice(
                         stdscr,
@@ -1518,7 +1693,11 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                         client,
                         session,
                     )
-                if not daily_due_questions(state, questions) and not daily_recognition_questions(state, questions):
+                if (
+                    not daily_due_questions(state, questions)
+                    and not daily_recognition_questions(state, questions)
+                    and not daily_grammar_questions(grammar_notes, grammar_review)[1]
+                ):
                     completed = state.setdefault("completedReviewDates", [])
                     today = today_string()
                     if today not in completed:
