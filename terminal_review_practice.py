@@ -680,6 +680,14 @@ def count_korean_letters(text: str) -> int:
     return sum(1 for ch in text if "\uac00" <= ch <= "\ud7af" or "\u1100" <= ch <= "\u11ff" or "\u3130" <= ch <= "\u318f")
 
 
+def korean_length_warning(user_input: str, answer: str) -> str:
+    actual = count_korean_letters(user_input)
+    expected = count_korean_letters(answer)
+    if actual == expected:
+        return ""
+    return f"字數不符：目前 {actual} 個韓文字，答案需要 {expected} 個。請修改後再送出。"
+
+
 def card_examples(card: Card) -> List[Dict[str, str]]:
     examples: List[Dict[str, str]] = []
     for meaning in card.meanings:
@@ -1257,6 +1265,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
     curses.curs_set(1)
     stdscr.keypad(True)
     should_record_results = config.get("record_results", True)
+    enforce_answer_length = config.get("enforce_answer_length", False)
     if curses.has_colors():
         curses.start_color()
         try:
@@ -1327,6 +1336,13 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 continue
             user_input = user_input.strip()
             input_cursor = min(input_cursor, len(user_input))
+            if enforce_answer_length:
+                length_warning = korean_length_warning(user_input, answer)
+                if length_warning:
+                    partial = None
+                    retry_diff = False
+                    message = length_warning
+                    continue
             correct = normalize_text(user_input) == normalize_text(answer)
             if not correct and question.kind == "example" and config["direction"] == "zh-ko" and typed_attempts == 0:
                 typed_attempts = 1
@@ -1490,7 +1506,14 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                         stdscr,
                         "今日複習題",
                         selected,
-                        {"direction": "zh-ko", "source": "all", "starred": False, "random": True, "record_results": True},
+                        {
+                            "direction": "zh-ko",
+                            "source": "all",
+                            "starred": False,
+                            "random": True,
+                            "record_results": True,
+                            "enforce_answer_length": True,
+                        },
                         state,
                         client,
                         session,
