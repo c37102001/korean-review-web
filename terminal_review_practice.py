@@ -39,6 +39,7 @@ REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90]
 DAILY_RECOGNITION_LIMIT = 50
 DAILY_RECOGNITION_MODE = "daily-recognition"
 DAILY_GRAMMAR_MODE = "daily-grammar"
+DAILY_MIXED_MODE = "daily-mixed"
 
 
 def utc_now_iso() -> str:
@@ -1105,6 +1106,8 @@ def due_task_menu(
         wait_message(stdscr, "今日複習題", "今天的測驗已全部完成。")
         return None
     options = []
+    if due:
+        options.append((DAILY_MIXED_MODE, f"全部到期單字（混合隨機） · {len(due)} 題"))
     if recognition:
         options.append((DAILY_RECOGNITION_MODE, f"每日韓文認字測驗 · 剩餘 {len(recognition)} 題"))
     if grammar_note and grammar_questions:
@@ -1117,7 +1120,13 @@ def due_task_menu(
         return selected, recognition
     if selected == DAILY_GRAMMAR_MODE:
         return selected, grammar_questions
-    return selected, order_questions(grouped[selected])
+    if selected == DAILY_MIXED_MODE:
+        shuffled = list(due)
+        random.shuffle(shuffled)
+        return selected, shuffled
+    shuffled = list(grouped[selected])
+    random.shuffle(shuffled)
+    return selected, shuffled
 
 
 def setup_menu(stdscr: curses.window, title: str, allow_examples: bool = True) -> Optional[Dict[str, Any]]:
@@ -1679,7 +1688,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 else:
                     run_practice(
                         stdscr,
-                        "今日複習題",
+                        "今日全部複習" if task_type == DAILY_MIXED_MODE else f"{task_type} 複習",
                         selected,
                         {
                             "direction": "zh-ko",
