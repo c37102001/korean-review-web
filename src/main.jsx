@@ -99,6 +99,57 @@ function normalizeGrammarNote(note, fallbackId = '') {
   };
 }
 
+function formatGrammarExamplesText(examples = []) {
+  return examples
+    .filter((example) => example.ko || example.zh)
+    .map((example) => `${example.ko || ''}\n${example.zh || ''}`)
+    .join('\n\n');
+}
+
+function parseGrammarExamplesText(text, existingExamples = []) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return [];
+  if (lines.length % 2 !== 0) {
+    const incompleteNumber = Math.floor(lines.length / 2) + 1;
+    throw new Error(`第 ${incompleteNumber} 個例句缺少中文翻譯`);
+  }
+
+  const parsed = [];
+  for (let index = 0; index < lines.length; index += 2) {
+    parsed.push({ ko: lines[index], zh: lines[index + 1] });
+  }
+
+  const usedIds = new Set();
+  const resolved = parsed.map((example) => {
+    const exact = existingExamples.find((current) => (
+      !usedIds.has(current.id)
+      && String(current.ko || '').trim() === example.ko
+      && String(current.zh || '').trim() === example.zh
+    ));
+    if (!exact) return example;
+    usedIds.add(exact.id);
+    return { ...example, id: exact.id };
+  });
+
+  return resolved.map((example, index) => {
+    if (example.id) return example;
+    const samePosition = existingExamples[index];
+    if (samePosition?.id && !usedIds.has(samePosition.id)) {
+      usedIds.add(samePosition.id);
+      return { ...example, id: samePosition.id };
+    }
+    const unused = existingExamples.find((current) => current.id && !usedIds.has(current.id));
+    if (unused) {
+      usedIds.add(unused.id);
+      return { ...example, id: unused.id };
+    }
+    return { ...example, id: crypto.randomUUID() };
+  });
+}
+
 function useGrammarNotes(user) {
   const [state, setState] = useState({
     notes: [],
@@ -4459,17 +4510,9 @@ function GrammarNoteCard({ note, onOpen, onEdit, onDelete }) {
 function GrammarEditorModal({ note, onSave, onClose }) {
   const [title, setTitle] = useState(note?.title || '');
   const [notes, setNotes] = useState(note?.notes || '');
-  const [examples, setExamples] = useState(() => note?.examples?.length
-    ? note.examples.map((example) => ({ ...example }))
-    : [{ id: crypto.randomUUID(), ko: '', zh: '' }]);
+  const [examplesText, setExamplesText] = useState(() => formatGrammarExamplesText(note?.examples));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-
-  const updateExample = (index, field, value) => {
-    setExamples((current) => current.map((example, exampleIndex) => (
-      exampleIndex === index ? { ...example, [field]: value } : example
-    )));
-  };
 
   const submit = async (event) => {
     event.preventDefault();
@@ -4480,6 +4523,7 @@ function GrammarEditorModal({ note, onSave, onClose }) {
     setSaving(true);
     setError('');
     try {
+      const examples = parseGrammarExamplesText(examplesText, note?.examples || []);
       await onSave({
         ...note,
         title,
@@ -4511,28 +4555,15 @@ function GrammarEditorModal({ note, onSave, onClose }) {
         </label>
         <section className="grammar-example-editor">
           <div className="grammar-example-editor-head">
-            <div><strong>例句</strong><span>韓文與中文可分別播放發音</span></div>
-            <button type="button" onClick={() => setExamples((current) => [...current, { id: crypto.randomUUID(), ko: '', zh: '' }])}><Plus size={16} /> 新增例句</button>
+            <div><strong>例句</strong><span>韓文一行、中文一行，例句之間空一行</span></div>
           </div>
-          <div className="grammar-example-editor-list">
-            {examples.map((example, index) => (
-              <div className="grammar-example-editor-row" key={example.id}>
-                <div className="grammar-example-number">{index + 1}</div>
-                <label><span>韓文</span><textarea value={example.ko} onChange={(event) => updateExample(index, 'ko', event.target.value)} rows={2} /></label>
-                <label><span>中文</span><textarea value={example.zh} onChange={(event) => updateExample(index, 'zh', event.target.value)} rows={2} /></label>
-                <button
-                  type="button"
-                  className="edit-icon-button delete-icon-button grammar-example-delete"
-                  disabled={examples.length === 1}
-                  onClick={() => setExamples((current) => current.filter((_, exampleIndex) => exampleIndex !== index))}
-                  aria-label="刪除例句"
-                  title="刪除例句"
-                >
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            ))}
-          </div>
+          <textarea
+            className="grammar-examples-textarea"
+            value={examplesText}
+            onChange={(event) => setExamplesText(event.target.value)}
+            rows={14}
+            placeholder={'오늘은 휴일이라서 회사에 안 가요.\n今天是假日，所以不用去公司。\n\n저는 학생이라서 돈이 별로 없어요.\n因為我是學生，所以沒什麼錢。'}
+          />
         </section>
         {error && <div className="json-edit-error">{error}</div>}
         <div className="actions grammar-editor-actions">
@@ -4759,8 +4790,10 @@ export {
   isTransientFirestoreError,
   markReviewDateComplete,
   grammarListeningQuestions,
+  formatGrammarExamplesText,
   normalizeGrammarNote,
   normalizeKoreanKey,
+  parseGrammarExamplesText,
   nextRecognitionExampleIndex,
   nextRecognitionRevealState,
   recordOrder,

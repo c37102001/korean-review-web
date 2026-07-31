@@ -311,6 +311,45 @@ test('grammar notes normalize searchable content without review fields', () => {
   assert.equal('progress' in note, false);
 });
 
+test('grammar examples parse Korean and Chinese lines into separate examples', () => {
+  const text = `오늘은 휴일이라서 회사에 안 가요.
+今天是假日，所以不用去公司。
+
+저는 학생이라서 돈이 별로 없어요.
+因為我是學生，所以沒什麼錢。
+
+주말이라서 사람이 정말 많아요.
+因為是週末，所以人真的很多。`;
+  const examples = helpers.parseGrammarExamplesText(text);
+  assert.equal(examples.length, 3);
+  assert.deepEqual(
+    examples.map(({ ko, zh }) => ({ ko, zh })),
+    [
+      { ko: '오늘은 휴일이라서 회사에 안 가요.', zh: '今天是假日，所以不用去公司。' },
+      { ko: '저는 학생이라서 돈이 별로 없어요.', zh: '因為我是學生，所以沒什麼錢。' },
+      { ko: '주말이라서 사람이 정말 많아요.', zh: '因為是週末，所以人真的很多。' },
+    ],
+  );
+  assert.equal(helpers.formatGrammarExamplesText(examples), text);
+});
+
+test('grammar example parser preserves ids and rejects an incomplete pair', () => {
+  const existing = [
+    { id: 'example-a', ko: '첫 문장입니다.', zh: '第一句。' },
+    { id: 'example-b', ko: '둘째 문장입니다.', zh: '第二句。' },
+  ];
+  const edited = helpers.parseGrammarExamplesText(
+    '새 문장입니다.\n新的句子。\n첫 문장입니다.\n第一句。',
+    existing,
+  );
+  assert.equal(edited[0].id, 'example-b');
+  assert.equal(edited[1].id, 'example-a');
+  assert.throws(
+    () => helpers.parseGrammarExamplesText('한국어 문장입니다.'),
+    /第 1 個例句缺少中文翻譯/,
+  );
+});
+
 test('daily grammar review continues into newly added notes before wrapping', () => {
   const grammarNotes = Array.from({ length: 13 }, (_, index) => ({
     id: `grammar-${index + 1}`,

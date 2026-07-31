@@ -746,7 +746,7 @@ main {
 }
 
 .grammar-field textarea,
-.grammar-example-editor-row textarea {
+.grammar-examples-textarea {
   min-height: 0;
   padding: 12px 14px;
   border-radius: 12px;
@@ -779,51 +779,11 @@ main {
   font-weight: 700;
 }
 
-.grammar-example-editor-head button {
-  padding: 9px 12px;
-  border-radius: 10px;
-}
-
-.grammar-example-editor-list {
-  display: grid;
-  gap: 12px;
+.grammar-examples-textarea {
+  width: 100%;
   margin-top: 14px;
-}
-
-.grammar-example-editor-row {
-  position: relative;
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr) 30px;
-  gap: 10px;
-  align-items: start;
-  padding: 14px;
-  border: 1px solid #e3eaea;
-  border-radius: 14px;
-  background: #f9fbfa;
-}
-
-.grammar-example-editor-row label {
-  display: grid;
-  gap: 6px;
-  color: #68757d;
-  font-size: 13px;
-  font-weight: 850;
-}
-
-.grammar-example-number {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: 999px;
-  color: #ffffff;
-  background: #2fae98;
-  font-size: 13px;
-  font-weight: 900;
-}
-
-.grammar-example-delete {
-  margin-top: 22px;
+  resize: vertical;
+  white-space: pre-wrap;
 }
 
 .grammar-editor-actions {
@@ -2911,20 +2871,6 @@ textarea:focus {
   .meaning-editor-card,
   .practice-layout {
     grid-template-columns: 1fr;
-  }
-
-  .grammar-example-editor-row {
-    grid-template-columns: 30px minmax(0, 1fr) 30px;
-  }
-
-  .grammar-example-editor-row label {
-    grid-column: 2;
-  }
-
-  .grammar-example-delete {
-    grid-column: 3;
-    grid-row: 1;
-    margin-top: 0;
   }
 
   .grammar-example-editor-head,
