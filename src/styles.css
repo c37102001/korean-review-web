@@ -376,6 +376,10 @@ main {
   background: #eef9f5;
 }
 
+.grammar-listening-task-card {
+  background: #eef6ff;
+}
+
 .task-card h3 {
   margin: 8px 0 4px;
 }
@@ -1588,6 +1592,33 @@ main {
 .segmented button {
   flex: 1;
   box-shadow: none;
+}
+
+.recognition-mode-picker button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.recognition-listening-prompt {
+  min-height: 210px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  color: #1d7467;
+  background: #e9f8f4;
+}
+
+.recognition-listening-prompt span {
+  color: #1d7467;
+  font-size: 18px;
+}
+
+.recognition-listening-prompt small {
+  color: #66777d;
+  font-weight: 800;
 }
 
 .fixed-source-note {

@@ -38,6 +38,8 @@ import './styles.css';
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
 const DAILY_RECOGNITION_LIMIT = 50;
 const DAILY_RECOGNITION_MODE = 'daily-recognition';
+const DAILY_GRAMMAR_LISTENING_LIMIT = 20;
+const DAILY_GRAMMAR_LISTENING_MODE = 'daily-grammar-listening';
 const DAILY_GRAMMAR_MODE = 'daily-grammar';
 const CONTENT_SCHEMA_VERSION = 2;
 const FIRESTORE_SCHEMA_VERSION = 3;
@@ -61,7 +63,16 @@ const dateLabel = (date) => new Intl.DateTimeFormat('zh-TW', { month: 'long', da
 const monthTitle = (date) => new Intl.DateTimeFormat('zh-TW', { year: 'numeric', month: 'long' }).format(date);
 
 function emptyStore() {
-  return { stats: {}, progress: {}, attempts: [], customRecords: [], completedReviewDates: [], starred: [], recognition: null };
+  return {
+    stats: {},
+    progress: {},
+    attempts: [],
+    customRecords: [],
+    completedReviewDates: [],
+    starred: [],
+    recognition: null,
+    grammarListening: null,
+  };
 }
 
 function useAuthUser() {
@@ -305,6 +316,7 @@ async function readFirestoreStoreV3(uid) {
     completedReviewDates: settings.completedReviewDates || [],
     starred: settings.starred || [],
     recognition: settings.recognition || null,
+    grammarListening: settings.grammarListening || null,
   };
 }
 
@@ -329,6 +341,7 @@ async function writeFullFirestoreStoreV3(uid, store) {
     completedReviewDates: store.completedReviewDates || [],
     starred: store.starred || [],
     recognition: store.recognition || null,
+    grammarListening: store.grammarListening || null,
     updatedAt: serverTimestamp(),
   });
 }
@@ -371,12 +384,16 @@ async function persistFirestoreStoreChanges(uid, previous, next) {
   const addedCompletedDates = (next.completedReviewDates || []).filter((date) => !previousCompletedDates.has(date));
   const settingsChanged = addedCompletedDates.length
     || JSON.stringify(previous.starred || []) !== JSON.stringify(next.starred || [])
-    || JSON.stringify(previous.recognition || null) !== JSON.stringify(next.recognition || null);
+    || JSON.stringify(previous.recognition || null) !== JSON.stringify(next.recognition || null)
+    || JSON.stringify(previous.grammarListening || null) !== JSON.stringify(next.grammarListening || null);
   if (settingsChanged) {
     const settingsUpdate = { schemaVersion: FIRESTORE_SCHEMA_VERSION, updatedAt: serverTimestamp() };
     if (addedCompletedDates.length) settingsUpdate.completedReviewDates = arrayUnion(...addedCompletedDates);
     if (JSON.stringify(previous.starred || []) !== JSON.stringify(next.starred || [])) settingsUpdate.starred = next.starred || [];
     if (JSON.stringify(previous.recognition || null) !== JSON.stringify(next.recognition || null)) settingsUpdate.recognition = next.recognition || null;
+    if (JSON.stringify(previous.grammarListening || null) !== JSON.stringify(next.grammarListening || null)) {
+      settingsUpdate.grammarListening = next.grammarListening || null;
+    }
     operations.push((batch) => batch.set(reviewSettingsRef(uid), settingsUpdate, { merge: true }));
   }
   await commitFirestoreOperations(operations);
@@ -462,6 +479,7 @@ function useFirestoreStore(user) {
             ])].sort(),
             starred: settings.starred || [],
             recognition: settings.recognition || null,
+            grammarListening: settings.grammarListening || null,
           }));
         }));
         unsubscribers.push(onSnapshot(collection(db, 'users', user.uid, 'progressShards'), { includeMetadataChanges: true }, (snap) => {
@@ -620,6 +638,17 @@ function itemZh(item) {
 
 function itemExamples(item) {
   return (item.meanings || []).flatMap((meaning) => meaning.examples || []);
+}
+
+function recognitionKoreanExamples(item) {
+  return itemExamples(item)
+    .map((example) => String(example.ko || '').trim())
+    .filter(Boolean);
+}
+
+function nextRecognitionExampleIndex(currentIndex, exampleCount) {
+  if (exampleCount <= 0) return 0;
+  return (currentIndex + 1) % exampleCount;
 }
 
 function displayRelated(item, allItems = []) {
@@ -1231,12 +1260,12 @@ function seedFromString(text) {
   return [...text].reduce((seed, char) => ((seed * 31) + char.charCodeAt(0)) % 233280, 17);
 }
 
-function replayRecognitionAttempts(attempts, termIds) {
+function replayRoundAttempts(attempts, questionIds) {
   const correctIds = new Set();
   const pendingWrongIds = new Set();
   let roundCompletedOn = '';
   [...attempts].sort((a, b) => (a.time || '').localeCompare(b.time || '')).forEach((attempt) => {
-    if (!termIds.has(attempt.questionId)) return;
+    if (!questionIds.has(attempt.questionId)) return;
     if (attempt.correct) {
       correctIds.add(attempt.questionId);
       pendingWrongIds.delete(attempt.questionId);
@@ -1244,23 +1273,26 @@ function replayRecognitionAttempts(attempts, termIds) {
       correctIds.delete(attempt.questionId);
       pendingWrongIds.add(attempt.questionId);
     }
-    if (correctIds.size === termIds.size) roundCompletedOn = attemptDate(attempt);
+    if (correctIds.size === questionIds.size) roundCompletedOn = attemptDate(attempt);
   });
   return { correctIds, pendingWrongIds, roundCompletedOn };
 }
 
-function dailyRecognitionSchedule(store, questions, date = todayString(), limit = DAILY_RECOGNITION_LIMIT) {
-  const terms = orderReviewQuestions(questions.filter((question) => question.kind === 'term'));
-  if (!terms.length) return { state: null, questions: [] };
-
-  const termIds = new Set(terms.map((question) => question.id));
-  const recognitionAttempts = (store.attempts || [])
-    .filter((attempt) => attempt.mode === DAILY_RECOGNITION_MODE && termIds.has(attempt.questionId));
-  let state = store.recognition;
+function dailyRoundSchedule(store, questions, {
+  stateKey,
+  mode,
+  date = todayString(),
+  limit,
+}) {
+  if (!questions.length) return { state: null, questions: [] };
+  const questionIds = new Set(questions.map((question) => question.id));
+  const roundAttempts = (store.attempts || [])
+    .filter((attempt) => attempt.mode === mode && questionIds.has(attempt.questionId));
+  let state = store[stateKey];
   if (!state) {
-    const previous = replayRecognitionAttempts(
-      recognitionAttempts.filter((attempt) => attemptDate(attempt) < date),
-      termIds,
+    const previous = replayRoundAttempts(
+      roundAttempts.filter((attempt) => attemptDate(attempt) < date),
+      questionIds,
     );
     state = {
       correctIds: [...previous.correctIds],
@@ -1272,32 +1304,32 @@ function dailyRecognitionSchedule(store, questions, date = todayString(), limit 
     };
   }
 
-  let correctIds = new Set((state.correctIds || []).filter((id) => termIds.has(id)));
-  let pendingWrongIds = new Set((state.pendingWrongIds || []).filter((id) => termIds.has(id)));
+  let correctIds = new Set((state.correctIds || []).filter((id) => questionIds.has(id)));
+  let pendingWrongIds = new Set((state.pendingWrongIds || []).filter((id) => questionIds.has(id)));
   let roundCompletedOn = state.roundCompletedOn || '';
-  if (correctIds.size === termIds.size && !roundCompletedOn) roundCompletedOn = state.dailyDate || date;
+  if (correctIds.size === questionIds.size && !roundCompletedOn) roundCompletedOn = state.dailyDate || date;
   if (state.dailyDate !== date && roundCompletedOn && roundCompletedOn < date) {
     correctIds = new Set();
     pendingWrongIds = new Set();
     roundCompletedOn = '';
   }
 
-  const attemptsToday = recognitionAttempts
+  const attemptsToday = roundAttempts
     .filter((attempt) => attemptDate(attempt) === date)
     .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
   const attemptedIds = [...new Set(attemptsToday.map((attempt) => attempt.questionId))];
-  let assignmentIds = (state.assignmentIds || []).filter((id) => termIds.has(id));
+  let assignmentIds = (state.assignmentIds || []).filter((id) => questionIds.has(id));
   if (state.dailyDate !== date) {
     const wrong = shuffleItems(
-      terms.filter((question) => pendingWrongIds.has(question.id)),
-      seedFromString(`${date}-wrong`),
+      questions.filter((question) => pendingWrongIds.has(question.id)),
+      seedFromString(`${date}-${mode}-wrong`),
     ).slice(0, limit);
     const wrongIds = new Set(wrong.map((question) => question.id));
-    const unseen = terms.filter((question) => !correctIds.has(question.id) && !wrongIds.has(question.id));
+    const unseen = questions.filter((question) => !correctIds.has(question.id) && !wrongIds.has(question.id));
     assignmentIds = shuffleItems([
       ...wrong,
-      ...shuffleItems(unseen, seedFromString(`${date}-unseen`)).slice(0, Math.max(0, limit - wrong.length)),
-    ], seedFromString(`${date}-assignment`)).map((question) => question.id);
+      ...shuffleItems(unseen, seedFromString(`${date}-${mode}-unseen`)).slice(0, Math.max(0, limit - wrong.length)),
+    ], seedFromString(`${date}-${mode}-assignment`)).map((question) => question.id);
   }
   // Today's attempt log is authoritative. It prevents a stale settings
   // snapshot from replacing the assignment and creating more than the daily limit.
@@ -1316,7 +1348,7 @@ function dailyRecognitionSchedule(store, questions, date = todayString(), limit 
       pendingWrongIds.add(attempt.questionId);
     }
   });
-  if (correctIds.size === termIds.size) roundCompletedOn = date;
+  if (correctIds.size === questionIds.size) roundCompletedOn = date;
 
   const nextState = {
     correctIds: [...correctIds].sort(),
@@ -1326,15 +1358,60 @@ function dailyRecognitionSchedule(store, questions, date = todayString(), limit 
     assignmentIds,
     answeredIds: [...answeredIds],
   };
-  const byId = new Map(terms.map((question) => [question.id, question]));
+  const byId = new Map(questions.map((question) => [question.id, question]));
   return {
     state: nextState,
     questions: assignmentIds.filter((id) => !answeredIds.has(id)).map((id) => byId.get(id)).filter(Boolean),
   };
 }
 
+function dailyRecognitionSchedule(store, questions, date = todayString(), limit = DAILY_RECOGNITION_LIMIT) {
+  const terms = orderReviewQuestions(questions.filter((question) => question.kind === 'term'));
+  return dailyRoundSchedule(store, terms, {
+    stateKey: 'recognition',
+    mode: DAILY_RECOGNITION_MODE,
+    date,
+    limit,
+  });
+}
+
 function shouldInitializeDailyRecognition(recognition, date = todayString()) {
   return !recognition || recognition.dailyDate !== date;
+}
+
+function grammarListeningQuestions(notes) {
+  return [...notes]
+    .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '') || a.id.localeCompare(b.id))
+    .flatMap((note) => (note.examples || [])
+      .filter((example) => example.ko && example.zh)
+      .map((example, index) => ({
+        id: `grammar-listening:${note.id}:${example.id || index}`,
+        itemId: note.id,
+        kind: 'grammar-listening',
+        ko: example.ko,
+        zh: example.zh,
+        source: note,
+      })));
+}
+
+function dailyGrammarListeningSchedule(
+  store,
+  questions,
+  date = todayString(),
+  limit = DAILY_GRAMMAR_LISTENING_LIMIT,
+) {
+  return dailyRoundSchedule(store, questions, {
+    stateKey: 'grammarListening',
+    mode: DAILY_GRAMMAR_LISTENING_MODE,
+    date,
+    limit,
+  });
+}
+
+function nextRecognitionRevealState(listeningMode, wordVisible, revealed) {
+  if (revealed) return { wordVisible: true, revealed: true };
+  if (listeningMode && !wordVisible) return { wordVisible: true, revealed: false };
+  return { wordVisible: true, revealed: true };
 }
 
 function dailyGrammarSchedule(notes, review, date = todayString()) {
@@ -1467,12 +1544,16 @@ function recordAnswer(store, question, correct) {
   };
 }
 
-function recordDailyRecognitionAnswer(store, question, correct) {
-  const recognition = store.recognition || {
+function recordDailyRoundAnswer(store, question, correct, {
+  stateKey,
+  mode,
+  recordWrongStats = false,
+}) {
+  const round = store[stateKey] || {
     correctIds: [], pendingWrongIds: [], roundCompletedOn: '', dailyDate: todayString(), assignmentIds: [], answeredIds: [],
   };
-  const correctIds = new Set(recognition.correctIds || []);
-  const pendingWrongIds = new Set(recognition.pendingWrongIds || []);
+  const correctIds = new Set(round.correctIds || []);
+  const pendingWrongIds = new Set(round.pendingWrongIds || []);
   if (correct) {
     correctIds.add(question.id);
     pendingWrongIds.delete(question.id);
@@ -1480,35 +1561,50 @@ function recordDailyRecognitionAnswer(store, question, correct) {
     correctIds.delete(question.id);
     pendingWrongIds.add(question.id);
   }
-  const nextRecognition = {
-    ...recognition,
+  const nextRound = {
+    ...round,
     correctIds: [...correctIds].sort(),
     pendingWrongIds: [...pendingWrongIds].sort(),
-    answeredIds: [...new Set([...(recognition.answeredIds || []), question.id])],
+    answeredIds: [...new Set([...(round.answeredIds || []), question.id])],
   };
-  if (!correct) {
+  if (!correct && recordWrongStats) {
     const next = recordAnswer(store, question, false);
     return {
       ...next,
-      recognition: nextRecognition,
+      [stateKey]: nextRound,
       attempts: next.attempts.map((attempt, index) => (
-        index === 0 ? { ...attempt, mode: DAILY_RECOGNITION_MODE } : attempt
+        index === 0 ? { ...attempt, mode } : attempt
       )),
     };
   }
   const now = new Date().toISOString();
   return {
     ...store,
-    recognition: nextRecognition,
+    [stateKey]: nextRound,
     attempts: [{
       id: crypto.randomUUID(),
       questionId: question.id,
-      correct: true,
+      correct,
       date: todayString(),
       time: now,
-      mode: DAILY_RECOGNITION_MODE,
+      mode,
     }, ...store.attempts].slice(0, 5000),
   };
+}
+
+function recordDailyRecognitionAnswer(store, question, correct) {
+  return recordDailyRoundAnswer(store, question, correct, {
+    stateKey: 'recognition',
+    mode: DAILY_RECOGNITION_MODE,
+    recordWrongStats: true,
+  });
+}
+
+function recordDailyGrammarListeningAnswer(store, question, correct) {
+  return recordDailyRoundAnswer(store, question, correct, {
+    stateKey: 'grammarListening',
+    mode: DAILY_GRAMMAR_LISTENING_MODE,
+  });
 }
 
 function normalizeAnswer(text) {
@@ -1687,6 +1783,15 @@ function App() {
     [store.attempts, store.recognition, dailyQuestions],
   );
   const todayRecognitionQuestions = todayRecognitionSchedule.questions;
+  const grammarListeningPool = useMemo(
+    () => grammarListeningQuestions(grammar.notes),
+    [grammar.notes],
+  );
+  const todayGrammarListeningSchedule = useMemo(
+    () => dailyGrammarListeningSchedule(store, grammarListeningPool, todayString()),
+    [store.attempts, store.grammarListening, grammarListeningPool],
+  );
+  const todayGrammarListeningQuestions = todayGrammarListeningSchedule.questions;
   const todayGrammarSchedule = useMemo(
     () => dailyGrammarSchedule(grammar.notes, grammar.review, todayString()),
     [grammar.notes, grammar.review],
@@ -1709,11 +1814,35 @@ function App() {
   }, [user, storeLoading, store.recognition?.dailyDate, dailyQuestions, updateStore]);
 
   useEffect(() => {
+    if (!user || storeLoading || grammar.loading) return;
+    const date = todayString();
+    if (!shouldInitializeDailyRecognition(store.grammarListening, date)) return;
+    const initializationKey = `${user.uid}:${date}:grammar-listening`;
+    if (recognitionInitializationRef.current.has(initializationKey)) return;
+    recognitionInitializationRef.current.add(initializationKey);
+    updateStore((current) => {
+      if (!shouldInitializeDailyRecognition(current.grammarListening, date)) return current;
+      const schedule = dailyGrammarListeningSchedule(current, grammarListeningPool, date);
+      return { ...current, grammarListening: schedule.state };
+    }).catch(() => {
+      recognitionInitializationRef.current.delete(initializationKey);
+    });
+  }, [
+    user,
+    storeLoading,
+    grammar.loading,
+    store.grammarListening?.dailyDate,
+    grammarListeningPool,
+    updateStore,
+  ]);
+
+  useEffect(() => {
     if (!user || storeLoading || grammar.loading || grammar.reviewLoading) return;
     const today = todayString();
     const todayComplete = (
       todayDailyQuestions.length === 0
       && todayRecognitionQuestions.length === 0
+      && todayGrammarListeningQuestions.length === 0
       && todayGrammarQuestions.length === 0
     );
     const todayMarked = (store.completedReviewDates || []).includes(today);
@@ -1727,6 +1856,7 @@ function App() {
     store.completedReviewDates,
     todayDailyQuestions,
     todayRecognitionQuestions,
+    todayGrammarListeningQuestions,
     todayGrammarQuestions,
     markDateComplete,
   ]);
@@ -1786,7 +1916,7 @@ function App() {
   if (storeLoading) return <LoadingScreen text="載入資料中" />;
 
   const views = {
-    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} recognitionQuestions={todayRecognitionQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} />,
+    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} recognitionQuestions={todayRecognitionQuestions} grammarListeningQuestions={todayGrammarListeningQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} />,
     notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} />,
@@ -1875,14 +2005,14 @@ function LoginPage() {
   );
 }
 
-function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQuestions, grammarSchedule, onCompleteGrammar, onPractice, onAddRecords, onUpdateRecord, onWriteRecords }) {
+function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQuestions, grammarListeningQuestions: grammarListening, grammarSchedule, onCompleteGrammar, onPractice, onAddRecords, onUpdateRecord, onWriteRecords }) {
   const [addOpen, setAddOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const today = todayString();
   const due = dueQuestionsForToday;
   const recognition = recognitionQuestions;
   const grammarQuestions = grammarSchedule.questions;
-  const totalPending = due.length + recognition.length + grammarQuestions.length;
+  const totalPending = due.length + recognition.length + grammarListening.length + grammarQuestions.length;
   const tasks = groupTasks(store, due, today);
   const answeredToday = store.attempts.filter((attempt) => attemptDate(attempt) === today);
   const correctToday = answeredToday.filter((attempt) => attempt.correct).length;
@@ -1892,6 +2022,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
   const startNextDailyTask = () => {
     if (due.length) onPractice(due, '今日測驗', { dueOnly: true });
     else if (recognition.length) onPractice(recognition, '每日韓文認字測驗', { dueOnly: true, mode: DAILY_RECOGNITION_MODE });
+    else if (grammarListening.length) onPractice(grammarListening, '每日文法例句聽力', { dueOnly: true, mode: DAILY_GRAMMAR_LISTENING_MODE });
     else onPractice(grammarQuestions, `每日文法測驗 · ${grammarSchedule.note.title}`, {
       dueOnly: true,
       recordResults: false,
@@ -1907,7 +2038,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
         <div>
           <span className="eyebrow">Today · {dateLabel(today)}</span>
           <h1>今天也來練一點韓文</h1>
-          <p>目前有 {totalPending} 題等待完成，包含到期單字、每日認字與文法測驗。</p>
+          <p>目前有 {totalPending} 題等待完成，包含到期單字、每日認字、文法聽力與文法測驗。</p>
           <div className="actions">
             <button className="primary" disabled={!totalPending} onClick={startNextDailyTask}><Dumbbell size={18} /> 開始今日測驗</button>
             <button onClick={() => setAddOpen(true)}><Plus size={18} /> 快速新增單字</button>
@@ -1956,7 +2087,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
 
       <div className="split">
         <div className="panel">
-          <div className="panel-title"><h2>測驗任務</h2><span>{tasks.length || recognition.length || grammarQuestions.length ? '未完成任務會保留' : '目前沒有待完成任務'}</span></div>
+          <div className="panel-title"><h2>測驗任務</h2><span>{tasks.length || recognition.length || grammarListening.length || grammarQuestions.length ? '未完成任務會保留' : '目前沒有待完成任務'}</span></div>
           <div className="task-list">
             {!!recognition.length && (
               <div className="task-card recognition-task-card">
@@ -1966,6 +2097,20 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
                   <p>從全部單字隨機抽題 · 剩餘 {recognition.length} 題</p>
                 </div>
                 <button className="primary small" onClick={() => onPractice(recognition, '每日韓文認字測驗', { dueOnly: true, mode: DAILY_RECOGNITION_MODE })}>開始</button>
+              </div>
+            )}
+            {!!grammarListening.length && (
+              <div className="task-card grammar-listening-task-card">
+                <div>
+                  <span className="badge">每日</span>
+                  <h3>文法例句聽力</h3>
+                  <p>從全部文法例句抽題 · 剩餘 {grammarListening.length} 題</p>
+                </div>
+                <button className="primary small" onClick={() => onPractice(
+                  grammarListening,
+                  '每日文法例句聽力',
+                  { dueOnly: true, mode: DAILY_GRAMMAR_LISTENING_MODE },
+                )}>開始</button>
               </div>
             )}
             {!!grammarQuestions.length && (
@@ -1994,7 +2139,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
                 <button className="primary small" onClick={() => onPractice(task.questions, `${task.studyDate} 測驗`, { dueOnly: true })}>開始</button>
               </div>
             ))}
-            {!tasks.length && !recognition.length && !grammarQuestions.length && <div className="empty">今天的測驗已完成。你可以從日曆或單字本主動測驗。</div>}
+            {!tasks.length && !recognition.length && !grammarListening.length && !grammarQuestions.length && <div className="empty">今天的測驗已完成。你可以從日曆或單字本主動測驗。</div>}
           </div>
         </div>
         <div className="panel">
@@ -3508,11 +3653,15 @@ function PracticePage({ store, updateStore, set }) {
   const [starredOnly, setStarredOnly] = useState(false);
   const [recordResults, setRecordResults] = useState(set.recordResults ?? true);
   const recognitionMode = set.mode === DAILY_RECOGNITION_MODE;
+  const grammarListeningMode = set.mode === DAILY_GRAMMAR_LISTENING_MODE;
   const grammarMode = set.mode === DAILY_GRAMMAR_MODE;
   const fixedSource = set.termOnly || set.dueOnly;
-  const activeDirection = recognitionMode ? 'ko-zh' : set.dueOnly ? 'zh-ko' : direction;
-  const shouldRecordResults = !grammarMode && (set.dueOnly || recordResults);
-  const [started, setStarted] = useState(!!set.dueOnly);
+  const activeDirection = recognitionMode || grammarListeningMode ? 'ko-zh' : set.dueOnly ? 'zh-ko' : direction;
+  const shouldRecordResults = !grammarMode && !grammarListeningMode && (set.dueOnly || recordResults);
+  const [recognitionListening, setRecognitionListening] = useState(false);
+  const [recognitionWordVisible, setRecognitionWordVisible] = useState(!grammarListeningMode);
+  const [recognitionExampleIndex, setRecognitionExampleIndex] = useState(0);
+  const [started, setStarted] = useState(!!set.dueOnly && !recognitionMode);
   const [questionQueue, setQuestionQueue] = useState([]);
   const [index, setIndex] = useState(0);
   const [input, setInput] = useState('');
@@ -3530,16 +3679,24 @@ function PracticePage({ store, updateStore, set }) {
   const sourceQuestions = useMemo(() => {
     const starredSet = new Set(store.starred || []);
     const applyStarFilter = (list) => (starredOnly ? list.filter((q) => starredSet.has(q.itemId)) : list);
-    if (recognitionMode || grammarMode) return set.questions;
+    if (recognitionMode || grammarListeningMode || grammarMode) return set.questions;
     if (set.dueOnly) return orderReviewQuestions(set.questions);
     if (direction === 'ko-zh') return applyStarFilter(set.questions.filter((q) => q.kind === 'term'));
     const activeSource = set.termOnly ? 'term' : source;
     const filtered = set.questions.filter((q) => activeSource === 'all' || q.kind === activeSource);
     const orderedFiltered = activeSource === 'all' ? orderReviewQuestions(filtered) : filtered;
     return applyStarFilter(orderedFiltered);
-  }, [set.questions, source, direction, set.termOnly, set.dueOnly, recognitionMode, grammarMode, store, starredOnly]);
+  }, [set.questions, source, direction, set.termOnly, set.dueOnly, recognitionMode, grammarListeningMode, grammarMode, store, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
+  const recognitionExamples = useMemo(
+    () => (recognitionMode && question ? recognitionKoreanExamples(question.source) : []),
+    [recognitionMode, question?.id],
+  );
+  const activeRecognitionExampleIndex = recognitionExamples.length
+    ? recognitionExampleIndex % recognitionExamples.length
+    : 0;
+  const currentRecognitionExample = recognitionExamples[activeRecognitionExampleIndex] || '';
   const resetSession = () => {
     setSessionFinished(false);
     setStarted(false);
@@ -3551,12 +3708,13 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
+    setRecognitionWordVisible(!(recognitionListening || grammarListeningMode));
     setCompletionError('');
     setCompletionSaving(false);
     completionStartedRef.current = false;
   };
   const startSession = () => {
-    const nextQuestions = recognitionMode || grammarMode
+    const nextQuestions = recognitionMode || grammarListeningMode || grammarMode
       ? sourceQuestions
       : set.dueOnly ? shuffleReviewQuestionsByKind(sourceQuestions) : shuffleItems(sourceQuestions, Date.now());
     if (!nextQuestions.length) {
@@ -3573,12 +3731,13 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
+    setRecognitionWordVisible(!(recognitionListening || grammarListeningMode));
   };
 
   useEffect(() => {
-    if (!set.dueOnly) return;
+    if (!set.dueOnly || recognitionMode) return;
     if (questionQueue.length) return;
-    const nextQuestions = recognitionMode || grammarMode ? sourceQuestions : shuffleReviewQuestionsByKind(sourceQuestions);
+    const nextQuestions = recognitionMode || grammarListeningMode || grammarMode ? sourceQuestions : shuffleReviewQuestionsByKind(sourceQuestions);
     setQuestionQueue(nextQuestions);
     setStarted(!!nextQuestions.length);
     setIndex(0);
@@ -3588,7 +3747,21 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
-  }, [set.dueOnly, recognitionMode, grammarMode, sourceQuestions, questionQueue.length]);
+    setRecognitionWordVisible(!grammarListeningMode);
+  }, [set.dueOnly, recognitionMode, grammarListeningMode, grammarMode, sourceQuestions, questionQueue.length]);
+
+  useEffect(() => {
+    const audioFirst = (recognitionMode && recognitionListening) || grammarListeningMode;
+    if (!started || !audioFirst || recognitionWordVisible || !question) return undefined;
+    const timer = window.setTimeout(() => speakAnswer(question), 180);
+    return () => window.clearTimeout(timer);
+  }, [started, recognitionMode, recognitionListening, grammarListeningMode, recognitionWordVisible, question?.id]);
+
+  useEffect(() => {
+    setRecognitionExampleIndex(
+      recognitionExamples.length ? Math.floor(Math.random() * recognitionExamples.length) : 0,
+    );
+  }, [question?.id, recognitionExamples.length]);
 
   useEffect(() => {
     if (direction === 'ko-zh') setSource('term');
@@ -3618,6 +3791,7 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
+    setRecognitionWordVisible(!(recognitionListening || grammarListeningMode));
     if (index + 1 < queue.length) setIndex(index + 1);
     else if (set.dueOnly) finishSession();
     else resetSession();
@@ -3627,6 +3801,8 @@ function PracticePage({ store, updateStore, set }) {
   const submit = (correct) => {
     if (recognitionMode) {
       updateStore((current) => recordDailyRecognitionAnswer(current, question, correct));
+    } else if (grammarListeningMode) {
+      updateStore((current) => recordDailyGrammarListeningAnswer(current, question, correct));
     } else if (shouldRecordResults && (!correct || activeDirection !== 'ko-zh')) {
       updateStore((current) => recordAnswer(current, question, correct));
     }
@@ -3675,10 +3851,33 @@ function PracticePage({ store, updateStore, set }) {
     setRevealed(true);
     if (autoPronounce) speakAnswer(question);
   };
+  const advanceRecognitionStage = () => {
+    const next = nextRecognitionRevealState(
+      (recognitionMode && recognitionListening) || grammarListeningMode,
+      recognitionWordVisible,
+      revealed,
+    );
+    setRecognitionWordVisible(next.wordVisible);
+    if (next.revealed) revealAnswerForSelfGrade();
+  };
+  const playRecognitionExample = () => {
+    if (currentRecognitionExample) speakText(currentRecognitionExample, 'ko-KR');
+  };
+  const playNextRecognitionExample = () => {
+    if (!recognitionExamples.length) return;
+    const nextIndex = nextRecognitionExampleIndex(activeRecognitionExampleIndex, recognitionExamples.length);
+    setRecognitionExampleIndex(nextIndex);
+    speakText(recognitionExamples[nextIndex], 'ko-KR');
+  };
 
   useEffect(() => {
     if (!started) return undefined;
     const onKeyDown = (event) => {
+      if (event.key === ' ' && ((recognitionMode && recognitionListening) || grammarListeningMode) && !event.isComposing) {
+        event.preventDefault();
+        speakAnswer(question);
+        return;
+      }
       if (event.key === ' ' && (revealed || graded) && !event.isComposing) {
         event.preventDefault();
         speakAnswer(question);
@@ -3691,7 +3890,33 @@ function PracticePage({ store, updateStore, set }) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [started, revealed, graded, question, index, queue.length]);
+  }, [started, revealed, graded, question, index, queue.length, recognitionMode, recognitionListening, grammarListeningMode]);
+
+  if (!started && recognitionMode) {
+    return (
+      <section className="page practice-start">
+        <div className="panel start-panel recognition-start-panel">
+          <span className="eyebrow">Recognition · {set.label}</span>
+          <h1>選擇認字測驗方式</h1>
+          <div className="segmented recognition-mode-picker">
+            <button className={!recognitionListening ? 'active' : ''} onClick={() => setRecognitionListening(false)}>
+              顯示韓文
+            </button>
+            <button className={recognitionListening ? 'active' : ''} onClick={() => setRecognitionListening(true)}>
+              <Volume2 size={17} /> 純聽力
+            </button>
+          </div>
+          <div className="fixed-source-note">
+            {recognitionListening
+              ? '每題會先只播放韓文發音；第一次揭露顯示韓文，第二次才顯示完整答案卡。'
+              : '題目會直接顯示韓文，揭露後查看完整答案卡並自行判斷答對或答錯。'}
+          </div>
+          <p>{sourceQuestions.length} 題等待測驗。</p>
+          <button className="primary wide" disabled={!sourceQuestions.length} onClick={startSession}>開始</button>
+        </div>
+      </section>
+    );
+  }
 
   if (!started && !set.dueOnly) {
     return (
@@ -3768,11 +3993,19 @@ function PracticePage({ store, updateStore, set }) {
         <div className="practice-shell">
           <div className="progress-line"><span style={{ width: `${((index + 1) / queue.length) * 100}%` }} /></div>
           <div className="quiz-meta quiz-meta-row">
-            <span>{index + 1} / {queue.length} · {activeDirection === 'zh-ko' ? '中翻韓' : '韓翻中'}</span>
+            <span>{index + 1} / {queue.length} · {grammarListeningMode ? '文法例句聽力' : recognitionMode ? (recognitionListening ? '純聽力認字' : '韓文認字') : activeDirection === 'zh-ko' ? '中翻韓' : '韓翻中'}</span>
             <div className="quiz-options">
               <button className={soundEnabled ? 'selected-soft' : ''} onClick={() => setSoundEnabled((enabled) => !enabled)}>{soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />} 音效</button>
-              <button className={autoPronounce ? 'selected-soft' : ''} onClick={() => setAutoPronounce((enabled) => !enabled)}>{autoPronounce ? <Volume2 size={16} /> : <VolumeX size={16} />} 自動發音</button>
-              <button disabled={!revealed && !graded} onClick={() => speakAnswer(question)}><Volume2 size={16} /> 發音</button>
+              {!recognitionListening && !grammarListeningMode && <button className={autoPronounce ? 'selected-soft' : ''} onClick={() => setAutoPronounce((enabled) => !enabled)}>{autoPronounce ? <Volume2 size={16} /> : <VolumeX size={16} />} 自動發音</button>}
+              <button disabled={!recognitionMode && !grammarListeningMode && !revealed && !graded} onClick={() => speakAnswer(question)}><Volume2 size={16} /> {recognitionListening || grammarListeningMode ? '重播' : '發音'}</button>
+              {recognitionMode && !!recognitionExamples.length && (
+                <button onClick={playRecognitionExample}>
+                  <Volume2 size={16} /> {recognitionExamples.length > 1 ? `例句 ${activeRecognitionExampleIndex + 1}/${recognitionExamples.length}` : '播放例句'}
+                </button>
+              )}
+              {recognitionMode && recognitionExamples.length > 1 && (
+                <button onClick={playNextRecognitionExample}><ChevronRight size={16} /> 下一句</button>
+              )}
             </div>
           </div>
           {activeDirection === 'zh-ko' ? (
@@ -3820,14 +4053,30 @@ function PracticePage({ store, updateStore, set }) {
             </>
           ) : (
             <>
-              <div className="prompt ko">
-                <span>請在心中想中文意思</span>
-                <div className="prompt-title">
-                  <h1>{question.ko}</h1>
-                  <QuestionKindBadge kind={question.kind} />
+              {((recognitionMode && recognitionListening) || grammarListeningMode) && !recognitionWordVisible ? (
+                <div className="prompt ko recognition-listening-prompt">
+                  <Volume2 size={42} aria-hidden="true" />
+                  <span>{grammarListeningMode ? '請聆聽韓文例句' : '請聆聽韓文發音'}</span>
+                  <small>{grammarListeningMode ? '需要時可按右上方「重播」再次播放' : recognitionExamples.length ? '可重播單字，也可以播放韓文例句' : '需要時可按右上方「重播」再次播放'}</small>
                 </div>
-              </div>
-              {!revealed ? <button className="primary wide" onClick={revealAnswerForSelfGrade}>公佈答案</button> : (
+              ) : (
+                <div className="prompt ko">
+                  <span>{grammarListeningMode ? '請根據中文回想韓文例句' : '請在心中想中文意思'}</span>
+                  <div className="prompt-title">
+                    <h1>{grammarListeningMode ? question.zh : question.ko}</h1>
+                    <QuestionKindBadge kind={question.kind} />
+                  </div>
+                </div>
+              )}
+              {!revealed ? (
+                <button className="primary wide" onClick={advanceRecognitionStage}>
+                  {!recognitionWordVisible && grammarListeningMode
+                    ? '顯示中文'
+                    : !recognitionWordVisible && recognitionMode && recognitionListening
+                      ? '顯示韓文'
+                      : '公佈答案'}
+                </button>
+              ) : (
                 <div className="answer-panel grade-banner">
                   <strong><Check size={18} /> 請看右側單字卡後自評</strong>
                 </div>
@@ -3844,7 +4093,7 @@ function PracticePage({ store, updateStore, set }) {
           onWrong={() => submit(false)}
           onNext={goNext}
           isStarred={(store.starred || []).includes(question.source?.id)}
-          onToggleStar={grammarMode ? null : () => toggleStarredItem(updateStore, question.source.id)}
+          onToggleStar={grammarMode || grammarListeningMode ? null : () => toggleStarredItem(updateStore, question.source.id)}
         />
       </div>
     </section>
@@ -3852,8 +4101,9 @@ function PracticePage({ store, updateStore, set }) {
 }
 
 function QuestionKindBadge({ kind }) {
-  const isExample = kind === 'example' || kind === 'grammar-example';
-  return <small className={`question-kind-badge ${isExample ? 'example' : 'term'}`}>{kind === 'grammar-example' ? '文法例句' : isExample ? '例句' : '單字'}</small>;
+  const isGrammarExample = kind === 'grammar-example' || kind === 'grammar-listening';
+  const isExample = kind === 'example' || isGrammarExample;
+  return <small className={`question-kind-badge ${isExample ? 'example' : 'term'}`}>{isGrammarExample ? '文法例句' : isExample ? '例句' : '單字'}</small>;
 }
 
 function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, onWrong, onNext, isStarred = false, onToggleStar }) {
@@ -3863,17 +4113,17 @@ function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, on
         {!visible ? (
           <div className="answer-placeholder">
             <span>答案卡片</span>
-            <strong>{question.kind === 'grammar-example' ? '答題後會顯示文法與完整例句' : '答題後會顯示完整單字卡'}</strong>
+            <strong>{question.kind === 'grammar-example' || question.kind === 'grammar-listening' ? '答題後會顯示文法與完整例句' : '答題後會顯示完整單字卡'}</strong>
           </div>
         ) : (
           <>
             <div className="answer-review-head">
               <span>{graded ? (correct ? '答對' : '答錯') : '公布答案'}</span>
-              {(question.kind === 'example' || question.kind === 'grammar-example') && <strong>{question.kind === 'grammar-example' ? question.source.title : '例句來自這張卡片'}</strong>}
+              {(question.kind === 'example' || question.kind === 'grammar-example' || question.kind === 'grammar-listening') && <strong>{question.kind === 'grammar-example' || question.kind === 'grammar-listening' ? question.source.title : '例句來自這張卡片'}</strong>}
               {graded && <small>再按 Enter 進入下一題</small>}
             </div>
             <div className="answer-card-stage">
-              {question.kind === 'grammar-example' ? (
+              {question.kind === 'grammar-example' || question.kind === 'grammar-listening' ? (
                 <div className="grammar-practice-answer">
                   <h3>{question.source.title}</h3>
                   {question.source.notes && <p>{question.source.notes}</p>}
@@ -4502,14 +4752,20 @@ export {
   attemptDate,
   buildJsonImportDraft,
   createRecordsFromImportEntries,
+  dailyGrammarListeningSchedule,
   dailyGrammarSchedule,
   dailyRecognitionSchedule,
   findImportConflict,
   isTransientFirestoreError,
   markReviewDateComplete,
+  grammarListeningQuestions,
   normalizeGrammarNote,
   normalizeKoreanKey,
+  nextRecognitionExampleIndex,
+  nextRecognitionRevealState,
   recordOrder,
+  recordDailyGrammarListeningAnswer,
+  recognitionKoreanExamples,
   recordsFromSnapshot,
   resolveImportConflictDraft,
   shouldInitializeDailyRecognition,

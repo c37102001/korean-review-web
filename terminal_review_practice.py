@@ -17,16 +17,20 @@ from __future__ import annotations
 
 import curses
 import getpass
+import hashlib
 import json
 import os
 import random
 import re
+import shutil
+import subprocess
 import textwrap
 import time
 import unicodedata
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib import error, parse, request
 
@@ -38,8 +42,12 @@ PROGRESS_SHARD_COUNT = 16
 REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90]
 DAILY_RECOGNITION_LIMIT = 50
 DAILY_RECOGNITION_MODE = "daily-recognition"
+DAILY_GRAMMAR_LISTENING_LIMIT = 20
+DAILY_GRAMMAR_LISTENING_MODE = "daily-grammar-listening"
 DAILY_GRAMMAR_MODE = "daily-grammar"
 DAILY_MIXED_MODE = "daily-mixed"
+KOREAN_NEURAL_VOICE = "ko-KR-SunHiNeural"
+KOREAN_NEURAL_RATE = "-8%"
 
 
 def utc_now_iso() -> str:
@@ -200,6 +208,7 @@ class FirebaseClient:
         state["completedReviewDates"] = settings.get("completedReviewDates") or []
         state["starred"] = settings.get("starred") or []
         state["recognition"] = settings.get("recognition")
+        state["grammarListening"] = settings.get("grammarListening")
         self._saved_state = _clone_json(state)
         return state
 
@@ -263,7 +272,11 @@ class FirebaseClient:
 
         previous_completed = set(previous.get("completedReviewDates") or [])
         added_completed = [date_key for date_key in (state.get("completedReviewDates") or []) if date_key not in previous_completed]
-        settings_changed = previous.get("starred") != state.get("starred") or previous.get("recognition") != state.get("recognition")
+        settings_changed = (
+            previous.get("starred") != state.get("starred")
+            or previous.get("recognition") != state.get("recognition")
+            or previous.get("grammarListening") != state.get("grammarListening")
+        )
         if settings_changed:
             payload_data = {"schemaVersion": FIRESTORE_SCHEMA_VERSION, "updatedAt": utc_now_iso()}
             field_paths = ["schemaVersion", "updatedAt"]
@@ -273,6 +286,9 @@ class FirebaseClient:
             if previous.get("recognition") != state.get("recognition"):
                 payload_data["recognition"] = state.get("recognition")
                 field_paths.append("recognition")
+            if previous.get("grammarListening") != state.get("grammarListening"):
+                payload_data["grammarListening"] = state.get("grammarListening")
+                field_paths.append("grammarListening")
             payload = {"fields": {key: _to_firestore_value(value) for key, value in payload_data.items()}}
             query = parse.urlencode([("updateMask.fieldPaths", field_path) for field_path in field_paths])
             self._request_json(
@@ -370,6 +386,7 @@ def empty_state() -> Dict[str, Any]:
         "completedReviewDates": [],
         "starred": [],
         "recognition": None,
+        "grammarListening": None,
     }
 
 
@@ -648,24 +665,26 @@ def shuffle_items(items: Iterable[Any], seed: int) -> List[Any]:
     return result
 
 
-def daily_recognition_questions(
+def daily_round_questions(
     state: Dict[str, Any],
     questions: List[Question],
+    state_key: str,
+    mode: str,
     date_key: Optional[str] = None,
-    limit: int = DAILY_RECOGNITION_LIMIT,
+    limit: int = 20,
 ) -> List[Question]:
     date_key = date_key or today_string()
-    terms = order_questions(question for question in questions if question.kind == "term")
-    if not terms:
+    ordered_questions = order_questions(questions)
+    if not ordered_questions:
         return []
 
-    term_ids = {question.id for question in terms}
+    question_ids = {question.id for question in ordered_questions}
     attempts = [
         attempt for attempt in (state.get("attempts") or [])
-        if attempt.get("mode") == DAILY_RECOGNITION_MODE and attempt.get("questionId") in term_ids
+        if attempt.get("mode") == mode and attempt.get("questionId") in question_ids
     ]
-    recognition = state.get("recognition")
-    if not recognition:
+    round_state = state.get(state_key)
+    if not round_state:
         correct_ids: set[str] = set()
         pending_wrong_ids: set[str] = set()
         round_completed_on = ""
@@ -680,19 +699,19 @@ def daily_recognition_questions(
             else:
                 correct_ids.discard(question_id)
                 pending_wrong_ids.add(question_id)
-            if len(correct_ids) == len(term_ids):
+            if len(correct_ids) == len(question_ids):
                 round_completed_on = attempt_date(attempt)
-        recognition = {
+        round_state = {
             "correctIds": sorted(correct_ids), "pendingWrongIds": sorted(pending_wrong_ids),
             "roundCompletedOn": round_completed_on, "dailyDate": "", "assignmentIds": [], "answeredIds": [],
         }
 
-    correct_ids = {item for item in recognition.get("correctIds", []) if item in term_ids}
-    pending_wrong_ids = {item for item in recognition.get("pendingWrongIds", []) if item in term_ids}
-    round_completed_on = str(recognition.get("roundCompletedOn") or "")
-    if len(correct_ids) == len(term_ids) and not round_completed_on:
-        round_completed_on = str(recognition.get("dailyDate") or date_key)
-    if recognition.get("dailyDate") != date_key and round_completed_on and round_completed_on < date_key:
+    correct_ids = {item for item in round_state.get("correctIds", []) if item in question_ids}
+    pending_wrong_ids = {item for item in round_state.get("pendingWrongIds", []) if item in question_ids}
+    round_completed_on = str(round_state.get("roundCompletedOn") or "")
+    if len(correct_ids) == len(question_ids) and not round_completed_on:
+        round_completed_on = str(round_state.get("dailyDate") or date_key)
+    if round_state.get("dailyDate") != date_key and round_completed_on and round_completed_on < date_key:
         correct_ids.clear()
         pending_wrong_ids.clear()
         round_completed_on = ""
@@ -702,17 +721,17 @@ def daily_recognition_questions(
         key=lambda attempt: str(attempt.get("time") or ""),
     )
     attempted_ids = list(dict.fromkeys(str(attempt.get("questionId")) for attempt in attempts_today))
-    assignment_ids = [item for item in (recognition.get("assignmentIds") or []) if item in term_ids]
-    if recognition.get("dailyDate") != date_key:
+    assignment_ids = [item for item in (round_state.get("assignmentIds") or []) if item in question_ids]
+    if round_state.get("dailyDate") != date_key:
         wrong = shuffle_items(
-            (question for question in terms if question.id in pending_wrong_ids),
-            seed_from_string(f"{date_key}-wrong"),
+            (question for question in ordered_questions if question.id in pending_wrong_ids),
+            seed_from_string(f"{date_key}-{mode}-wrong"),
         )[:limit]
         wrong_ids = {question.id for question in wrong}
-        unseen = [question for question in terms if question.id not in correct_ids and question.id not in wrong_ids]
+        unseen = [question for question in ordered_questions if question.id not in correct_ids and question.id not in wrong_ids]
         assignment_ids = [question.id for question in shuffle_items(
-            wrong + shuffle_items(unseen, seed_from_string(f"{date_key}-unseen"))[:max(0, limit - len(wrong))],
-            seed_from_string(f"{date_key}-assignment"),
+            wrong + shuffle_items(unseen, seed_from_string(f"{date_key}-{mode}-unseen"))[:max(0, limit - len(wrong))],
+            seed_from_string(f"{date_key}-{mode}-assignment"),
         )]
     assignment_limit = max(limit, len(attempted_ids))
     assignment_ids = (attempted_ids + [item for item in assignment_ids if item not in attempted_ids])[:assignment_limit]
@@ -725,15 +744,75 @@ def daily_recognition_questions(
         else:
             correct_ids.discard(question_id)
             pending_wrong_ids.add(question_id)
-    if len(correct_ids) == len(term_ids):
+    if len(correct_ids) == len(question_ids):
         round_completed_on = date_key
-    state["recognition"] = {
+    state[state_key] = {
         "correctIds": sorted(correct_ids), "pendingWrongIds": sorted(pending_wrong_ids),
         "roundCompletedOn": round_completed_on, "dailyDate": date_key,
         "assignmentIds": assignment_ids, "answeredIds": list(answered_ids),
     }
-    by_id = {question.id: question for question in terms}
+    by_id = {question.id: question for question in ordered_questions}
     return [by_id[item] for item in assignment_ids if item not in answered_ids and item in by_id]
+
+
+def daily_recognition_questions(
+    state: Dict[str, Any],
+    questions: List[Question],
+    date_key: Optional[str] = None,
+    limit: int = DAILY_RECOGNITION_LIMIT,
+) -> List[Question]:
+    terms = [question for question in questions if question.kind == "term"]
+    return daily_round_questions(
+        state,
+        terms,
+        "recognition",
+        DAILY_RECOGNITION_MODE,
+        date_key,
+        limit,
+    )
+
+
+def grammar_listening_questions(notes: List[GrammarNote]) -> List[Question]:
+    questions: List[Question] = []
+    for note in notes:
+        source = Card(
+            id=note.id,
+            date="",
+            ko=note.title,
+            zh="",
+            pos="文法",
+            notes=[note.notes] if note.notes else [],
+        )
+        for index, example in enumerate(note.examples):
+            if not example.get("ko") or not example.get("zh"):
+                continue
+            example_id = example.get("id") or str(index)
+            questions.append(Question(
+                id=f"grammar-listening:{note.id}:{example_id}",
+                item_id=note.id,
+                date="",
+                kind="grammar-listening",
+                ko=example["ko"],
+                zh=example["zh"],
+                source=source,
+            ))
+    return questions
+
+
+def daily_grammar_listening_questions(
+    state: Dict[str, Any],
+    questions: List[Question],
+    date_key: Optional[str] = None,
+    limit: int = DAILY_GRAMMAR_LISTENING_LIMIT,
+) -> List[Question]:
+    return daily_round_questions(
+        state,
+        questions,
+        "grammarListening",
+        DAILY_GRAMMAR_LISTENING_MODE,
+        date_key,
+        limit,
+    )
 
 
 def record_answer(state: Dict[str, Any], question: Question, correct: bool) -> None:
@@ -760,36 +839,64 @@ def record_answer(state: Dict[str, Any], question: Question, correct: bool) -> N
     del attempts[5000:]
 
 
-def record_daily_recognition_answer(state: Dict[str, Any], question: Question, correct: bool) -> None:
-    recognition = state.setdefault("recognition", {
+def record_daily_round_answer(
+    state: Dict[str, Any],
+    question: Question,
+    correct: bool,
+    state_key: str,
+    mode: str,
+    record_wrong_stats: bool = False,
+) -> None:
+    round_state = state.setdefault(state_key, {
         "correctIds": [], "pendingWrongIds": [], "roundCompletedOn": "", "dailyDate": today_string(),
         "assignmentIds": [], "answeredIds": [],
     })
-    correct_ids = set(recognition.get("correctIds") or [])
-    pending_wrong_ids = set(recognition.get("pendingWrongIds") or [])
+    correct_ids = set(round_state.get("correctIds") or [])
+    pending_wrong_ids = set(round_state.get("pendingWrongIds") or [])
     if correct:
         correct_ids.add(question.id)
         pending_wrong_ids.discard(question.id)
     else:
         correct_ids.discard(question.id)
         pending_wrong_ids.add(question.id)
-    recognition["correctIds"] = sorted(correct_ids)
-    recognition["pendingWrongIds"] = sorted(pending_wrong_ids)
-    recognition["answeredIds"] = list(dict.fromkeys([*(recognition.get("answeredIds") or []), question.id]))
-    if not correct:
+    round_state["correctIds"] = sorted(correct_ids)
+    round_state["pendingWrongIds"] = sorted(pending_wrong_ids)
+    round_state["answeredIds"] = list(dict.fromkeys([*(round_state.get("answeredIds") or []), question.id]))
+    if not correct and record_wrong_stats:
         record_answer(state, question, False)
-        state["attempts"][0]["mode"] = DAILY_RECOGNITION_MODE
+        state["attempts"][0]["mode"] = mode
         return
     attempts = state.setdefault("attempts", [])
     attempts.insert(0, {
         "id": str(uuid.uuid4()),
         "questionId": question.id,
-        "correct": True,
+        "correct": correct,
         "date": today_string(),
         "time": utc_now_iso(),
-        "mode": DAILY_RECOGNITION_MODE,
+        "mode": mode,
     })
     del attempts[5000:]
+
+
+def record_daily_recognition_answer(state: Dict[str, Any], question: Question, correct: bool) -> None:
+    record_daily_round_answer(
+        state,
+        question,
+        correct,
+        "recognition",
+        DAILY_RECOGNITION_MODE,
+        record_wrong_stats=True,
+    )
+
+
+def record_daily_grammar_listening_answer(state: Dict[str, Any], question: Question, correct: bool) -> None:
+    record_daily_round_answer(
+        state,
+        question,
+        correct,
+        "grammarListening",
+        DAILY_GRAMMAR_LISTENING_MODE,
+    )
 
 
 def toggle_star(state: Dict[str, Any], card: Card) -> None:
@@ -827,6 +934,132 @@ def card_examples(card: Card) -> List[Dict[str, str]]:
             if ko or zh:
                 examples.append({"ko": ko, "zh": zh})
     return examples
+
+
+def korean_speech_commands(text: str) -> List[List[str]]:
+    commands: List[List[str]] = []
+    if shutil.which("spd-say"):
+        commands.append(["spd-say", "--wait", "--language", "ko", "--rate", "-10", text])
+    if shutil.which("espeak-ng"):
+        commands.append(["espeak-ng", "-v", "ko", "-s", "145", text])
+    elif shutil.which("espeak"):
+        commands.append(["espeak", "-v", "ko", "-s", "145", text])
+    return commands
+
+
+def korean_audio_players(audio_path: Path) -> List[List[str]]:
+    commands: List[List[str]] = []
+    if shutil.which("cvlc"):
+        commands.append([
+            "cvlc",
+            "--intf", "dummy",
+            "--play-and-exit",
+            "--no-video",
+            "--quiet",
+            str(audio_path),
+        ])
+    if shutil.which("ffplay"):
+        commands.append([
+            "ffplay",
+            "-nodisp",
+            "-autoexit",
+            "-loglevel", "quiet",
+            str(audio_path),
+        ])
+    return commands
+
+
+def neural_korean_audio(text: str) -> Optional[Path]:
+    edge_tts = shutil.which("edge-tts")
+    if not edge_tts or not korean_audio_players(Path("probe.mp3")):
+        return None
+    cache_root = Path(os.getenv("XDG_CACHE_HOME", Path.home() / ".cache"))
+    cache_dir = cache_root / "korean-review-web" / "tts"
+    cache_key = hashlib.sha256(
+        f"{KOREAN_NEURAL_VOICE}\0{KOREAN_NEURAL_RATE}\0{text}".encode("utf-8")
+    ).hexdigest()
+    audio_path = cache_dir / f"{cache_key}.mp3"
+    if audio_path.exists() and audio_path.stat().st_size > 0:
+        return audio_path
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    temporary_path = cache_dir / f".{cache_key}-{uuid.uuid4().hex}.mp3"
+    try:
+        result = subprocess.run(
+            [
+                edge_tts,
+                "--voice", KOREAN_NEURAL_VOICE,
+                f"--rate={KOREAN_NEURAL_RATE}",
+                "--text", text,
+                "--write-media", str(temporary_path),
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
+        if result.returncode != 0 or not temporary_path.exists() or temporary_path.stat().st_size == 0:
+            return None
+        os.replace(temporary_path, audio_path)
+        return audio_path
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    finally:
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def play_korean_audio(audio_path: Path) -> bool:
+    for command in korean_audio_players(audio_path):
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=20,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode == 0:
+            return True
+    return False
+
+
+def speak_korean(text: str) -> bool:
+    if not text.strip():
+        return False
+    neural_audio = neural_korean_audio(text)
+    if neural_audio and play_korean_audio(neural_audio):
+        return True
+    for command in korean_speech_commands(text):
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=20,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode == 0:
+            return True
+    return False
+
+
+def next_recognition_reveal_state(
+    listening_mode: bool,
+    word_visible: bool,
+    revealed: bool,
+) -> Tuple[bool, bool]:
+    if revealed:
+        return True, True
+    if listening_mode and not word_visible:
+        return True, False
+    return True, True
 
 
 def _cell_width(ch: str) -> int:
@@ -908,15 +1141,50 @@ def load_local_env(path: str = ".env") -> None:
             os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
 
 
+def _split_by_cell_width(text: str, max_cells: int) -> List[str]:
+    max_cells = max(1, max_cells)
+    lines: List[str] = []
+    current: List[str] = []
+    current_width = 0
+    for char in text:
+        if char == "\n":
+            lines.append("".join(current))
+            current = []
+            current_width = 0
+            continue
+        char_width = _cell_width(char)
+        if current and current_width + char_width > max_cells:
+            lines.append("".join(current))
+            current = []
+            current_width = 0
+        current.append(char)
+        current_width += char_width
+    lines.append("".join(current))
+    return lines or [""]
+
+
 def draw_line(stdscr: curses.window, y: int, x: int, text: str, attr: int = 0) -> None:
     height, width = stdscr.getmaxyx()
     if y < 0 or y >= height or x >= width:
         return
-    stdscr.addstr(y, max(0, x), text[: max(0, width - max(0, x) - 1)], attr)
+    start_x = max(0, x)
+    available_cells = max(0, width - start_x - 1)
+    if not available_cells:
+        return
+    clipped = _split_by_cell_width(text, available_cells)[0]
+    try:
+        stdscr.addstr(y, start_x, clipped, attr)
+    except curses.error:
+        # A terminal resize can invalidate dimensions between getmaxyx/addstr.
+        return
 
 
 def draw_wrapped(stdscr: curses.window, y: int, x: int, width: int, text: str, attr: int = 0) -> int:
-    for line in textwrap.wrap(text, max(1, width)) or [""]:
+    height, screen_width = stdscr.getmaxyx()
+    available_cells = max(1, min(width, screen_width - max(0, x) - 1))
+    for line in _split_by_cell_width(text, available_cells):
+        if y >= height:
+            break
         draw_line(stdscr, y, x, line, attr)
         y += 1
     return y
@@ -1095,6 +1363,7 @@ def due_task_menu(
     state: Dict[str, Any],
     questions: List[Question],
     grammar_task: Tuple[Optional[GrammarNote], List[Question]],
+    grammar_listening: List[Question],
 ) -> Optional[Tuple[str, List[Question]]]:
     due = daily_due_questions(state, questions)
     recognition = daily_recognition_questions(state, questions)
@@ -1102,7 +1371,7 @@ def due_task_menu(
     grouped: Dict[str, List[Question]] = {}
     for question in due:
         grouped.setdefault(question.date, []).append(question)
-    if not grouped and not recognition and not grammar_questions:
+    if not grouped and not recognition and not grammar_listening and not grammar_questions:
         wait_message(stdscr, "今日複習題", "今天的測驗已全部完成。")
         return None
     options = []
@@ -1110,6 +1379,8 @@ def due_task_menu(
         options.append((DAILY_MIXED_MODE, f"全部到期單字（混合隨機） · {len(due)} 題"))
     if recognition:
         options.append((DAILY_RECOGNITION_MODE, f"每日韓文認字測驗 · 剩餘 {len(recognition)} 題"))
+    if grammar_listening:
+        options.append((DAILY_GRAMMAR_LISTENING_MODE, f"每日文法例句聽力 · 剩餘 {len(grammar_listening)} 題"))
     if grammar_note and grammar_questions:
         options.append((DAILY_GRAMMAR_MODE, f"每日文法測驗 · {grammar_note.title} · {len(grammar_questions)} 題"))
     options.extend((date_key, f"{date_key} · {len(items)} 題") for date_key, items in sorted(grouped.items()))
@@ -1118,6 +1389,8 @@ def due_task_menu(
         return None
     if selected == DAILY_RECOGNITION_MODE:
         return selected, recognition
+    if selected == DAILY_GRAMMAR_LISTENING_MODE:
+        return selected, grammar_listening
     if selected == DAILY_GRAMMAR_MODE:
         return selected, grammar_questions
     if selected == DAILY_MIXED_MODE:
@@ -1255,35 +1528,59 @@ def run_daily_recognition(
     state: Dict[str, Any],
     client: FirebaseClient,
     session: AuthSession,
+    listening_mode: bool = False,
+    grammar_listening_mode: bool = False,
 ) -> None:
+    title = "每日文法例句聽力" if grammar_listening_mode else "每日韓文認字測驗"
     if not questions:
-        wait_message(stdscr, "每日韓文認字測驗", "今天的認字題已完成。")
+        wait_message(stdscr, title, "今天的題目已完成。")
         return
 
     idx = 0
     revealed = False
+    word_visible = not listening_mode and not grammar_listening_mode
     message = ""
     scroll_offset = 0
     results: Dict[str, bool] = {}
+    example_indices: Dict[str, int] = {}
+    spoken_question_id = ""
     cards_by_id = {card.id: card for card in all_cards}
     curses.curs_set(0)
     stdscr.keypad(True)
     while True:
         question = questions[idx]
         card = question.source
+        korean_examples = [] if grammar_listening_mode else [
+            example["ko"]
+            for example in card_examples(card)
+            if example.get("ko")
+        ]
+        if question.id not in example_indices:
+            example_indices[question.id] = random.randrange(len(korean_examples)) if korean_examples else 0
+        example_index = example_indices[question.id]
         graded = question.id in results
         if graded:
             revealed = True
         stdscr.erase()
         height, width = stdscr.getmaxyx()
+        example_help = " 9=例句" if korean_examples else ""
+        next_example_help = " +=下句" if len(korean_examples) > 1 else ""
+        star_help = "" if grammar_listening_mode else " 0=星號"
+        audio_label = "例句" if grammar_listening_mode else "單字"
         draw_line(
             stdscr,
             1,
             2,
-            f"認字 | 每日韓文認字測驗 | {idx + 1}/{len(questions)}  Esc=返回 0=星號 8=翻面 4/6=上下題 1=答錯 2=答對 ↑↓=捲動",
+            f"{'文法聽力' if grammar_listening_mode else '認字' + ('·純聽力' if listening_mode else '')} | {title} | {idx + 1}/{len(questions)}  Esc=返回{star_help} 7={audio_label}{example_help}{next_example_help} 8=揭露 4/6=上下題 1=答錯 2=答對 ↑↓=捲動",
             curses.A_BOLD,
         )
-        draw_wrapped(stdscr, 2, 2, width - 4, f"{'★' if card.is_starred else '☆'} {card.ko}", curses.A_BOLD)
+        if grammar_listening_mode:
+            prompt_text = question.ko if revealed else question.zh if word_visible else "[韓文隱藏，請聆聽例句]"
+            prompt_prefix = ""
+        else:
+            prompt_text = card.ko if word_visible or revealed else "[韓文隱藏，請聆聽發音]"
+            prompt_prefix = f"{'★' if card.is_starred else '☆'} "
+        draw_wrapped(stdscr, 2, 2, width - 4, f"{prompt_prefix}{prompt_text}", curses.A_BOLD)
         detail_lines: List[Tuple[str, int, int]] = []
 
         def append_detail(text: str, indent: int = 0, attr: int = 0) -> None:
@@ -1292,23 +1589,42 @@ def run_daily_recognition(
                 detail_lines.append((line, indent, attr))
 
         if not revealed:
-            append_detail("按 8 翻面查看完整單字卡。", attr=curses.A_DIM)
+            if (listening_mode or grammar_listening_mode) and not word_visible:
+                listening_help = f"按 7 重播{audio_label}"
+                if korean_examples:
+                    listening_help += f"；按 9 播放例句 {example_index + 1}/{len(korean_examples)}"
+                    if len(korean_examples) > 1:
+                        listening_help += "；按 + 切換下一句"
+                reveal_label = "中文" if grammar_listening_mode else "韓文"
+                append_detail(f"{listening_help}；按 8 顯示{reveal_label}。", attr=curses.A_DIM)
+            else:
+                append_detail(
+                    "按 8 公佈韓文答案。" if grammar_listening_mode else "按 8 查看完整單字卡。",
+                    attr=curses.A_DIM,
+                )
         else:
-            heading = " / ".join(part for part in (card.zh, card.pos) if part)
-            append_detail(heading, attr=curses.A_BOLD)
-            for meaning_idx, meaning in enumerate(card.meanings, 1):
-                detail = f"{meaning_idx}. {meaning.get('zh', '')}"
-                if meaning.get("pattern"):
-                    detail += f" · {meaning.get('pattern')}"
-                append_detail(detail, indent=2)
-                for example in meaning.get("examples") or []:
-                    example_text = " / ".join(part for part in (example.get("ko"), example.get("zh")) if part)
-                    append_detail(example_text, indent=4, attr=curses.A_DIM)
-            for note in card.notes:
-                append_detail(f"筆記: {note}", indent=2, attr=curses.A_DIM)
-            related_words = [cards_by_id[item_id].ko for item_id in card.related if item_id in cards_by_id]
-            if related_words:
-                append_detail(f"相關詞: {'、'.join(related_words)}", indent=2, attr=curses.A_DIM)
+            if grammar_listening_mode:
+                append_detail(f"文法: {card.ko}", attr=curses.A_BOLD)
+                for note in card.notes:
+                    append_detail(f"筆記: {note}", indent=2, attr=curses.A_DIM)
+                append_detail(f"韓文: {question.ko}", indent=2)
+                append_detail(f"中文: {question.zh}", indent=2, attr=curses.A_DIM)
+            else:
+                heading = " / ".join(part for part in (card.zh, card.pos) if part)
+                append_detail(heading, attr=curses.A_BOLD)
+                for meaning_idx, meaning in enumerate(card.meanings, 1):
+                    detail = f"{meaning_idx}. {meaning.get('zh', '')}"
+                    if meaning.get("pattern"):
+                        detail += f" · {meaning.get('pattern')}"
+                    append_detail(detail, indent=2)
+                    for example in meaning.get("examples") or []:
+                        example_text = " / ".join(part for part in (example.get("ko"), example.get("zh")) if part)
+                        append_detail(example_text, indent=4, attr=curses.A_DIM)
+                for note in card.notes:
+                    append_detail(f"筆記: {note}", indent=2, attr=curses.A_DIM)
+                related_words = [cards_by_id[item_id].ko for item_id in card.related if item_id in cards_by_id]
+                if related_words:
+                    append_detail(f"相關詞: {'、'.join(related_words)}", indent=2, attr=curses.A_DIM)
             if not graded:
                 append_detail("請按 1（答錯）或 2（答對）自評。", attr=curses.A_BOLD)
         visible_rows = max(1, height - 5)
@@ -1317,7 +1633,12 @@ def run_daily_recognition(
             draw_line(stdscr, row, 2 + indent, line, attr)
         footer = message
         if graded:
-            result_text = "答對" if results[question.id] else "答錯，已加入明日題目並記入不熟悉"
+            if results[question.id]:
+                result_text = "答對"
+            elif grammar_listening_mode:
+                result_text = "答錯，已保留到明日題目"
+            else:
+                result_text = "答錯，已加入明日題目並記入不熟悉"
             footer = f"{result_text}。按 Enter 或 6 進入下一題。"
         elif revealed and not footer:
             footer = "1=答錯  2=答對"
@@ -1326,6 +1647,12 @@ def run_daily_recognition(
         if footer:
             draw_line(stdscr, height - 1, 2, footer, curses.A_BOLD)
         update_curses_screen(stdscr)
+        if (listening_mode or grammar_listening_mode) and not word_visible and not graded and spoken_question_id != question.id:
+            spoken_question_id = question.id
+            speech_text = question.ko if grammar_listening_mode else card.ko
+            if not speak_korean(speech_text):
+                message = "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+            continue
         key = stdscr.get_wch()
         if isinstance(key, int) and 0 <= key <= 255:
             key = chr(key)
@@ -1336,10 +1663,11 @@ def run_daily_recognition(
                 message = "請先翻面並選擇答對或答錯。"
                 continue
             if idx == len(questions) - 1:
-                wait_message(stdscr, "完成", "今天的韓文認字測驗已完成。")
+                wait_message(stdscr, "完成", f"今天的{title}已完成。")
                 return
             idx += 1
             revealed = questions[idx].id in results
+            word_visible = revealed or (not listening_mode and not grammar_listening_mode)
             message = ""
             scroll_offset = 0
             continue
@@ -1351,7 +1679,7 @@ def run_daily_recognition(
             continue
         if not isinstance(key, str):
             continue
-        if key == "0":
+        if key == "0" and not grammar_listening_mode:
             snapshot = _clone_json(state)
             toggle_star(state, card)
             if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
@@ -1361,9 +1689,36 @@ def run_daily_recognition(
             message = "已打星號" if card.is_starred else "已取消星號"
         elif key == "8":
             if not graded:
-                revealed = not revealed
+                word_visible, revealed = next_recognition_reveal_state(
+                    listening_mode or grammar_listening_mode,
+                    word_visible,
+                    revealed,
+                )
             message = ""
             scroll_offset = 0
+        elif key == "7":
+            speech_text = question.ko if grammar_listening_mode else card.ko
+            if not speak_korean(speech_text):
+                message = "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+            else:
+                message = "已重播韓文發音。"
+        elif key == "9":
+            if not korean_examples:
+                message = "這張單字卡沒有韓文例句。"
+            elif not speak_korean(korean_examples[example_index]):
+                message = "無法播放例句語音。"
+            else:
+                message = f"已播放例句 {example_index + 1}/{len(korean_examples)}。"
+        elif key == "+":
+            if not korean_examples:
+                message = "這張單字卡沒有韓文例句。"
+            else:
+                example_index = (example_index + 1) % len(korean_examples)
+                example_indices[question.id] = example_index
+                if not speak_korean(korean_examples[example_index]):
+                    message = "無法播放例句語音。"
+                else:
+                    message = f"已切換並播放例句 {example_index + 1}/{len(korean_examples)}。"
         elif key in ("1", "2"):
             if not revealed:
                 message = "請先按 8 翻面查看答案。"
@@ -1373,7 +1728,10 @@ def run_daily_recognition(
                 continue
             correct = key == "2"
             snapshot = _clone_json(state)
-            record_daily_recognition_answer(state, question, correct)
+            if grammar_listening_mode:
+                record_daily_grammar_listening_answer(state, question, correct)
+            else:
+                record_daily_recognition_answer(state, question, correct)
             if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
                 message = ""
                 continue
@@ -1382,6 +1740,7 @@ def run_daily_recognition(
         elif key == "4":
             idx = max(0, idx - 1)
             revealed = questions[idx].id in results
+            word_visible = revealed or (not listening_mode and not grammar_listening_mode)
             message = ""
             scroll_offset = 0
         elif key == "6":
@@ -1389,10 +1748,11 @@ def run_daily_recognition(
                 message = "請先翻面並選擇答對或答錯。"
                 continue
             if idx == len(questions) - 1:
-                wait_message(stdscr, "完成", "今天的韓文認字測驗已完成。")
+                wait_message(stdscr, "完成", f"今天的{title}已完成。")
                 return
             idx += 1
             revealed = questions[idx].id in results
+            word_visible = revealed or (not listening_mode and not grammar_listening_mode)
             message = ""
             scroll_offset = 0
 
@@ -1622,13 +1982,20 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
     except RuntimeError as exc:
         wait_message(stdscr, "載入失敗", str(exc))
         return
-    skip_recognition_initialization = False
+    skip_round_initialization = False
     while True:
-        if not skip_recognition_initialization:
+        grammar_listening_pool = grammar_listening_questions(grammar_notes)
+        if not skip_round_initialization:
             snapshot = _clone_json(state)
             previous_recognition = _clone_json(state.get("recognition"))
+            previous_grammar_listening = _clone_json(state.get("grammarListening"))
             daily_recognition_questions(state, questions)
-            if previous_recognition != state.get("recognition") and not save_review_state_or_restore(
+            daily_grammar_listening_questions(state, grammar_listening_pool)
+            round_state_changed = (
+                previous_recognition != state.get("recognition")
+                or previous_grammar_listening != state.get("grammarListening")
+            )
+            if round_state_changed and not save_review_state_or_restore(
                 stdscr,
                 client,
                 session,
@@ -1636,7 +2003,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 snapshot,
                 "今日題目暫時無法同步",
             ):
-                skip_recognition_initialization = True
+                skip_round_initialization = True
         today = today_string()
         completed = state.setdefault("completedReviewDates", [])
         choice = menu(
@@ -1650,17 +2017,46 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
         if choice == "refresh":
             try:
                 state, cards, questions, grammar_notes, grammar_review = load_data(client, session)
-                skip_recognition_initialization = False
+                skip_round_initialization = False
             except RuntimeError as exc:
                 wait_message(stdscr, "同步失敗", str(exc))
             continue
         if choice == "due":
             grammar_task = daily_grammar_questions(grammar_notes, grammar_review)
-            task = due_task_menu(stdscr, state, questions, grammar_task)
+            grammar_listening = daily_grammar_listening_questions(state, grammar_listening_pool)
+            task = due_task_menu(stdscr, state, questions, grammar_task, grammar_listening)
             if task:
                 task_type, selected = task
                 if task_type == DAILY_RECOGNITION_MODE:
-                    run_daily_recognition(stdscr, selected, cards, state, client, session)
+                    recognition_mode = menu(
+                        stdscr,
+                        "每日韓文認字測驗 | 選擇方式",
+                        [
+                            ("visible", "顯示韓文（原本模式）"),
+                            ("listening", "純聽力（先聽發音，再揭露韓文）"),
+                        ],
+                    )
+                    if recognition_mode:
+                        run_daily_recognition(
+                            stdscr,
+                            selected,
+                            cards,
+                            state,
+                            client,
+                            session,
+                            listening_mode=recognition_mode == "listening",
+                        )
+                elif task_type == DAILY_GRAMMAR_LISTENING_MODE:
+                    run_daily_recognition(
+                        stdscr,
+                        selected,
+                        cards,
+                        state,
+                        client,
+                        session,
+                        listening_mode=True,
+                        grammar_listening_mode=True,
+                    )
                 elif task_type == DAILY_GRAMMAR_MODE:
                     grammar_note, _ = grammar_task
                     completed = run_practice(
@@ -1705,6 +2101,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 if (
                     not daily_due_questions(state, questions)
                     and not daily_recognition_questions(state, questions)
+                    and not daily_grammar_listening_questions(state, grammar_listening_pool)
                     and not daily_grammar_questions(grammar_notes, grammar_review)[1]
                 ):
                     completed = state.setdefault("completedReviewDates", [])

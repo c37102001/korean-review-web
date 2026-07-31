@@ -44,6 +44,23 @@ Firestore rules：
 
 目前規則限制登入使用者只能讀寫自己的 `users/{uid}` 資料。
 
+## Terminal 測驗
+
+```bash
+python3 -m pip install -r requirements-terminal.txt
+python3 terminal_review_practice.py
+```
+
+每日認字的純聽力模式使用 Microsoft Neural 韓文語音，並將產生的音檔快取在
+`~/.cache/korean-review-web/tts`。系統需要 `cvlc` 或 `ffplay` 播放音檔；
+無網路或 Neural 語音不可用時，程式會退回 `spd-say`／`espeak-ng`。
+
+純聽力模式快捷鍵：`7` 重播單字、`9` 播放目前例句、`+` 切換並播放下一句、
+`8` 依序揭露韓文與完整答案。
+
+每日文法例句聽力同樣使用 `7` 重播；`8` 會依序顯示中文提示與韓文答案，
+翻面後用 `1`（答錯）或 `2`（答對）自評。
+
 ## 部署
 
 Vite `base` 已設定為 `/korean-review-web/`，GitHub Actions workflow 在 push 到 `main` 後會部署到 GitHub Pages。

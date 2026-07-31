@@ -177,6 +177,97 @@ test('daily recognition initialization runs only when the persisted date changes
   }, '2026-07-23'), false);
 });
 
+test('daily recognition listening mode reveals Korean before the answer', () => {
+  const listeningStart = helpers.nextRecognitionRevealState(true, false, false);
+  assert.deepEqual(listeningStart, { wordVisible: true, revealed: false });
+  assert.deepEqual(
+    helpers.nextRecognitionRevealState(true, listeningStart.wordVisible, listeningStart.revealed),
+    { wordVisible: true, revealed: true },
+  );
+  assert.deepEqual(
+    helpers.nextRecognitionRevealState(false, true, false),
+    { wordVisible: true, revealed: true },
+  );
+});
+
+test('recognition example audio skips empty Korean and cycles predictably', () => {
+  const examples = helpers.recognitionKoreanExamples({
+    meanings: [
+      { examples: [{ ko: '첫 번째 문장입니다.', zh: '第一句。' }, { ko: '', zh: '只有中文。' }] },
+      { examples: [{ ko: '두 번째 문장입니다.', zh: '第二句。' }] },
+    ],
+  });
+  assert.deepEqual(examples, ['첫 번째 문장입니다.', '두 번째 문장입니다.']);
+  assert.equal(helpers.nextRecognitionExampleIndex(0, examples.length), 1);
+  assert.equal(helpers.nextRecognitionExampleIndex(1, examples.length), 0);
+  assert.equal(helpers.nextRecognitionExampleIndex(0, 0), 0);
+});
+
+test('daily grammar listening assigns 20 examples and keeps wrong answers for tomorrow', () => {
+  const notes = Array.from({ length: 30 }, (_, index) => ({
+    id: `grammar-${index}`,
+    title: `文法 ${index}`,
+    createdAt: `2026-07-${String(index + 1).padStart(2, '0')}`,
+    examples: [{ id: `example-${index}`, ko: `문장 ${index}`, zh: `句子 ${index}` }],
+  }));
+  const questions = helpers.grammarListeningQuestions(notes);
+  const first = helpers.dailyGrammarListeningSchedule({ attempts: [], grammarListening: null }, questions, '2026-07-30', 20);
+  assert.equal(first.questions.length, 20);
+
+  const wrongId = first.questions[0].id;
+  const attempts = first.questions.map((question, index) => ({
+    id: `attempt-${index}`,
+    questionId: question.id,
+    correct: question.id !== wrongId,
+    date: '2026-07-30',
+    time: `2026-07-30T01:${String(index).padStart(2, '0')}:00.000Z`,
+    mode: 'daily-grammar-listening',
+  }));
+  const completedToday = helpers.dailyGrammarListeningSchedule({
+    attempts,
+    grammarListening: first.state,
+  }, questions, '2026-07-30', 20);
+  assert.equal(completedToday.questions.length, 0);
+
+  const tomorrow = helpers.dailyGrammarListeningSchedule({
+    attempts,
+    grammarListening: completedToday.state,
+  }, questions, '2026-07-31', 20);
+  assert.equal(tomorrow.questions.length, 11);
+  assert.ok(tomorrow.questions.some((question) => question.id === wrongId));
+  assert.equal(new Set(tomorrow.questions.map((question) => question.id)).size, 11);
+});
+
+test('grammar listening self-grading does not change long-term progress or stats', () => {
+  const question = {
+    id: 'grammar-listening:grammar-1:example-1',
+    itemId: 'grammar-1',
+    kind: 'grammar-listening',
+    ko: '한국어 문장입니다.',
+    zh: '這是韓文句子。',
+    source: { id: 'grammar-1', title: '文法一' },
+  };
+  const store = {
+    attempts: [],
+    stats: { untouched: { total: 1 } },
+    progress: { untouched: { stage: 1 } },
+    grammarListening: {
+      correctIds: [],
+      pendingWrongIds: [],
+      roundCompletedOn: '',
+      dailyDate: '2026-07-31',
+      assignmentIds: [question.id],
+      answeredIds: [],
+    },
+  };
+  const next = helpers.recordDailyGrammarListeningAnswer(store, question, false);
+  assert.deepEqual(next.stats, store.stats);
+  assert.deepEqual(next.progress, store.progress);
+  assert.equal(next.attempts[0].correct, false);
+  assert.equal(next.attempts[0].mode, 'daily-grammar-listening');
+  assert.deepEqual(next.grammarListening.pendingWrongIds, [question.id]);
+});
+
 test('exhausted daily quota is not retried as a transient Firestore error', () => {
   assert.equal(helpers.isTransientFirestoreError({
     code: 'resource-exhausted',
