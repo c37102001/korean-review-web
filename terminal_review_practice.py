@@ -815,10 +815,26 @@ def daily_grammar_listening_questions(
     )
 
 
-def record_answer(state: Dict[str, Any], question: Question, correct: bool) -> None:
+def record_answer(
+    state: Dict[str, Any],
+    question: Question,
+    correct: bool,
+    review_interval_override: Optional[int] = None,
+) -> None:
     now = utc_now_iso()
     previous = get_progress(state, question)
-    stage = min(int(previous.get("stage", 0)) + 1, len(REVIEW_INTERVALS) - 1) if correct else 0
+    override_stage = (
+        REVIEW_INTERVALS.index(review_interval_override)
+        if review_interval_override in REVIEW_INTERVALS
+        else None
+    )
+    stage = (
+        override_stage
+        if correct and override_stage is not None
+        else min(int(previous.get("stage", 0)) + 1, len(REVIEW_INTERVALS) - 1)
+        if correct
+        else 0
+    )
     stats = state.setdefault("stats", {})
     old = stats.get(question.id, {})
     stats[question.id] = {
@@ -1325,16 +1341,31 @@ def save_review_state_or_restore(
 
 
 def menu(stdscr: curses.window, title: str, options: List[Tuple[str, str]], subtitle: str = "Arrows=move Enter=open Esc=back") -> Optional[str]:
+    if not options:
+        return None
     selected = 0
     curses.curs_set(0)
     stdscr.keypad(True)
     while True:
         stdscr.clear()
+        height, _ = stdscr.getmaxyx()
+        visible_count = max(1, height - 4)
+        start = max(0, min(selected - visible_count + 1, len(options) - visible_count))
+        visible_options = options[start:start + visible_count]
         draw_line(stdscr, 1, 2, title, curses.A_BOLD)
         draw_line(stdscr, 2, 2, subtitle, curses.A_DIM)
-        for idx, (_, label) in enumerate(options):
-            attr = curses.A_REVERSE if idx == selected else curses.A_NORMAL
-            draw_line(stdscr, 3 + idx, 2, ("» " if idx == selected else "  ") + label, attr)
+        for row, (_, label) in enumerate(visible_options, 3):
+            option_index = start + row - 3
+            attr = curses.A_REVERSE if option_index == selected else curses.A_NORMAL
+            draw_line(stdscr, row, 2, ("» " if option_index == selected else "  ") + label, attr)
+        if len(options) > visible_count:
+            draw_line(
+                stdscr,
+                height - 1,
+                2,
+                f"{selected + 1}/{len(options)}",
+                curses.A_DIM,
+            )
         stdscr.refresh()
         key = stdscr.getch()
         if key == 27:
@@ -1356,6 +1387,129 @@ def date_menu(stdscr: curses.window, cards: List[Card]) -> Optional[str]:
         wait_message(stdscr, "月曆", "目前沒有任何日期資料。")
         return None
     return menu(stdscr, "月曆 | 選擇日期", options)
+
+
+def run_grammar_note_detail(
+    stdscr: curses.window,
+    notes: List[GrammarNote],
+    start_index: int,
+) -> None:
+    note_index = start_index
+    example_index = 0
+    scroll_offset = 0
+    message = ""
+    curses.curs_set(0)
+    stdscr.keypad(True)
+    while True:
+        note = notes[note_index]
+        examples = note.examples
+        if examples:
+            example_index %= len(examples)
+        else:
+            example_index = 0
+
+        stdscr.erase()
+        height, width = stdscr.getmaxyx()
+        draw_line(
+            stdscr,
+            1,
+            2,
+            (
+                f"文法筆記 | {note_index + 1}/{len(notes)}  Esc=列表 "
+                "4/6=前後篇 7=播放例句 9=下一例句 ↑↓=捲動"
+            ),
+            curses.A_BOLD,
+        )
+        detail_lines: List[Tuple[str, int, int]] = []
+
+        def append_detail(text: str, indent: int = 0, attr: int = 0) -> None:
+            line_width = max(1, width - 4 - indent)
+            for line in _split_by_cell_width(text, line_width):
+                detail_lines.append((line, indent, attr))
+
+        append_detail(note.title, attr=curses.A_BOLD)
+        if note.created_at:
+            append_detail(f"建立時間: {note.created_at}", attr=curses.A_DIM)
+        if note.notes:
+            append_detail("筆記", attr=curses.A_BOLD)
+            append_detail(note.notes, indent=2)
+        if examples:
+            append_detail(f"例句 · {len(examples)} 句", attr=curses.A_BOLD)
+            for index, example in enumerate(examples):
+                marker = "▶" if index == example_index else " "
+                append_detail(f"{marker} {index + 1}. {example['ko']}", indent=2, attr=curses.A_BOLD if index == example_index else 0)
+                append_detail(f"   {example['zh']}", indent=4, attr=curses.A_DIM)
+        else:
+            append_detail("目前沒有例句。", attr=curses.A_DIM)
+
+        visible_rows = max(1, height - 4)
+        scroll_offset = min(scroll_offset, max(0, len(detail_lines) - visible_rows))
+        for row, (line, indent, attr) in enumerate(
+            detail_lines[scroll_offset:scroll_offset + visible_rows],
+            2,
+        ):
+            draw_line(stdscr, row, 2 + indent, line, attr)
+        footer = message
+        if len(detail_lines) > visible_rows:
+            range_text = (
+                f"內容 {scroll_offset + 1}-"
+                f"{min(len(detail_lines), scroll_offset + visible_rows)}/{len(detail_lines)}"
+            )
+            footer = f"{footer}  {range_text}".strip()
+        if footer:
+            draw_line(stdscr, height - 1, 2, footer, curses.A_BOLD)
+        update_curses_screen(stdscr)
+
+        key = stdscr.get_wch()
+        if isinstance(key, int) and 0 <= key <= 255:
+            key = chr(key)
+        if key == "\x1b":
+            return
+        if key == curses.KEY_UP:
+            scroll_offset = max(0, scroll_offset - 1)
+            continue
+        if key == curses.KEY_DOWN:
+            scroll_offset += 1
+            continue
+        if not isinstance(key, str):
+            continue
+        if key == "4":
+            note_index = (note_index - 1) % len(notes)
+            example_index = 0
+            scroll_offset = 0
+            message = ""
+        elif key == "6":
+            note_index = (note_index + 1) % len(notes)
+            example_index = 0
+            scroll_offset = 0
+            message = ""
+        elif key in ("7", "9"):
+            if not examples:
+                message = "這篇文法筆記沒有韓文例句。"
+                continue
+            if key == "9":
+                example_index = (example_index + 1) % len(examples)
+            if speak_korean(examples[example_index]["ko"]):
+                message = f"已播放例句 {example_index + 1}/{len(examples)}。"
+            else:
+                message = "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+
+
+def run_grammar_notebook(stdscr: curses.window, grammar_notes: List[GrammarNote]) -> None:
+    if not grammar_notes:
+        wait_message(stdscr, "文法筆記", "目前還沒有文法筆記。")
+        return
+    notes = sorted(grammar_notes, key=lambda note: (note.created_at, note.id), reverse=True)
+    by_id = {note.id: index for index, note in enumerate(notes)}
+    while True:
+        selected = menu(
+            stdscr,
+            "文法筆記 | 選擇文法",
+            [(note.id, f"{note.title} · {len(note.examples)} 個例句") for note in notes],
+        )
+        if selected is None:
+            return
+        run_grammar_note_detail(stdscr, notes, by_id[selected])
 
 
 def due_task_menu(
@@ -1776,6 +1930,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
     enforce_answer_length = config.get("enforce_answer_length", False)
     allow_star = config.get("allow_star", True)
     require_answer_before_next = config.get("require_answer_before_next", False)
+    daily_review = config.get("daily_review", False)
     if curses.has_colors():
         curses.start_color()
         try:
@@ -1868,8 +2023,23 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 )
                 continue
             if should_record_results:
+                review_interval_override = None
+                previous_correct = int((state.get("stats") or {}).get(question.id, {}).get("correct", 0))
+                if correct and daily_review and question.kind == "term" and previous_correct >= 5:
+                    choice = menu(
+                        stdscr,
+                        f"已答對 {previous_correct} 次 | {question.ko}",
+                        [
+                            ("yes", "是，30 天後再出現"),
+                            ("no", "否，維持原本排程"),
+                        ],
+                        "這次仍會記錄答對；是否讓每日測驗一個月內不再出現？",
+                    )
+                    curses.curs_set(1)
+                    if choice == "yes":
+                        review_interval_override = 30
                 snapshot = _clone_json(state)
-                record_answer(state, question, correct)
+                record_answer(state, question, correct, review_interval_override)
                 if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
                     message = ""
                     continue
@@ -1879,7 +2049,10 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             last_correct = correct
             retry_diff = False
             if should_record_results:
-                message = "答對，按 Enter 或 6 進入下一題。" if correct else "答錯，已記錄。按 Enter 或 6 進入下一題。"
+                if correct and review_interval_override == 30:
+                    message = "答對，已安排 30 天後再複習。按 Enter 或 6 進入下一題。"
+                else:
+                    message = "答對，按 Enter 或 6 進入下一題。" if correct else "答錯，已記錄。按 Enter 或 6 進入下一題。"
             else:
                 message = "答對，未紀錄。按 Enter 或 6 進入下一題。" if correct else "答錯，未紀錄。按 Enter 或 6 進入下一題。"
             continue
@@ -2009,7 +2182,14 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
         choice = menu(
             stdscr,
             f"韓文筆記 Terminal | {session.email}",
-            [("due", "今日複習題"), ("calendar", "月曆"), ("notebook", "單字本"), ("refresh", "重新同步"), ("quit", "離開")],
+            [
+                ("due", "今日複習題"),
+                ("calendar", "月曆"),
+                ("notebook", "單字本"),
+                ("grammar", "文法筆記"),
+                ("refresh", "重新同步"),
+                ("quit", "離開"),
+            ],
             "↑↓=移動 Enter=選擇 Esc=離開",
         )
         if choice in (None, "quit"):
@@ -2093,6 +2273,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                             "random": True,
                             "record_results": True,
                             "enforce_answer_length": True,
+                            "daily_review": True,
                         },
                         state,
                         client,
@@ -2126,6 +2307,8 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 run_collection(stdscr, selected_date, day_cards, day_questions, state, client, session)
         elif choice == "notebook":
             run_collection(stdscr, "單字本", cards, questions, state, client, session)
+        elif choice == "grammar":
+            run_grammar_notebook(stdscr, grammar_notes)
 
 
 def clear_plain_screen() -> None:

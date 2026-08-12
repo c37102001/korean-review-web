@@ -2055,6 +2055,26 @@ textarea:focus {
   background: transparent;
 }
 
+.monthly-skip-modal {
+  width: min(520px, 100%);
+}
+
+.monthly-skip-modal h2 {
+  margin: 8px 0 12px;
+  color: #26383f;
+  font-size: 27px;
+}
+
+.monthly-skip-modal p {
+  color: #5f6d74;
+  line-height: 1.7;
+}
+
+.monthly-skip-modal .actions {
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
 .export-panel {
   width: min(920px, 100%);
 }

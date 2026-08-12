@@ -268,6 +268,49 @@ test('grammar listening self-grading does not change long-term progress or stats
   assert.deepEqual(next.grammarListening.pendingWrongIds, [question.id]);
 });
 
+test('well-known daily terms can be postponed for 30 days without losing the answer record', () => {
+  const question = {
+    id: 'term-known',
+    itemId: 'card-known',
+    kind: 'term',
+    ko: '신문',
+    zh: '新聞',
+  };
+  const store = {
+    attempts: [],
+    stats: { [question.id]: { total: 7, correct: 5, wrong: 2 } },
+    progress: { [question.id]: { stage: 2, nextDue: '2026-08-12' } },
+  };
+  assert.equal(helpers.shouldOfferMonthlyReviewSkip(store, question, true, true), true);
+  assert.equal(helpers.shouldOfferMonthlyReviewSkip(store, question, true, false), false);
+
+  const postponed = helpers.recordAnswer(store, question, true, 30);
+  assert.equal(postponed.stats[question.id].total, 8);
+  assert.equal(postponed.stats[question.id].correct, 6);
+  assert.equal(postponed.progress[question.id].stage, 4);
+  const millisecondsPerDay = 24 * 60 * 60 * 1000;
+  assert.equal(
+    (Date.parse(postponed.progress[question.id].nextDue) - Date.parse(postponed.attempts[0].date)) / millisecondsPerDay,
+    30,
+  );
+});
+
+test('declining the monthly skip keeps the original review progression', () => {
+  const question = { id: 'term-normal', kind: 'term' };
+  const store = {
+    attempts: [],
+    stats: { [question.id]: { total: 5, correct: 5, wrong: 0 } },
+    progress: { [question.id]: { stage: 1, nextDue: '2026-08-12' } },
+  };
+  const normal = helpers.recordAnswer(store, question, true);
+  assert.equal(normal.progress[question.id].stage, 2);
+  const millisecondsPerDay = 24 * 60 * 60 * 1000;
+  assert.equal(
+    (Date.parse(normal.progress[question.id].nextDue) - Date.parse(normal.attempts[0].date)) / millisecondsPerDay,
+    7,
+  );
+});
+
 test('exhausted daily quota is not retried as a transient Firestore error', () => {
   assert.equal(helpers.isTransientFirestoreError({
     code: 'resource-exhausted',
@@ -347,6 +390,31 @@ test('grammar example parser preserves ids and rejects an incomplete pair', () =
   assert.throws(
     () => helpers.parseGrammarExamplesText('한국어 문장입니다.'),
     /第 1 個例句缺少中文翻譯/,
+  );
+});
+
+test('word examples use alternating Korean and Chinese lines', () => {
+  const text = `오늘은 날씨가 좋아요.
+今天天氣很好。
+
+주말에는 사람이 많아요.
+週末人很多。`;
+  const examples = helpers.parsePairLines(text);
+  assert.deepEqual(examples, [
+    { ko: '오늘은 날씨가 좋아요.', zh: '今天天氣很好。' },
+    { ko: '주말에는 사람이 많아요.', zh: '週末人很多。' },
+  ]);
+  assert.equal(helpers.formatPairLines(examples), text);
+  assert.throws(() => helpers.parsePairLines('한국어만 있어요.'), /第 1 個例句缺少中文翻譯/);
+});
+
+test('word example parser remains compatible with old pipe-separated input', () => {
+  assert.deepEqual(
+    helpers.parsePairLines('첫 문장입니다. | 第一句。\n두 번째 문장입니다. | 第二句。'),
+    [
+      { ko: '첫 문장입니다.', zh: '第一句。' },
+      { ko: '두 번째 문장입니다.', zh: '第二句。' },
+    ],
   );
 });
 

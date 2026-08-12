@@ -869,11 +869,34 @@ function linesToArray(text) {
 }
 
 function parsePairLines(text) {
-  return linesToArray(text).map((line) => {
-    const separator = line.includes('|') ? '|' : '=';
-    const [ko, ...rest] = line.split(separator);
-    return { ko: ko.trim(), zh: rest.join(separator).trim() };
-  }).filter((entry) => entry.ko && entry.zh);
+  const lines = linesToArray(text);
+  if (!lines.length) return [];
+
+  // Keep old saved/pasted input usable while the editor now emits line pairs.
+  if (lines.every((line) => line.includes('|'))) {
+    return lines.map((line, index) => {
+      const [ko, ...rest] = line.split('|');
+      const zh = rest.join('|').trim();
+      if (!ko.trim() || !zh) throw new Error(`第 ${index + 1} 個例句需要韓文和中文`);
+      return { ko: ko.trim(), zh };
+    });
+  }
+
+  if (lines.length % 2 !== 0) {
+    throw new Error(`第 ${Math.floor(lines.length / 2) + 1} 個例句缺少中文翻譯`);
+  }
+  const examples = [];
+  for (let index = 0; index < lines.length; index += 2) {
+    examples.push({ ko: lines[index], zh: lines[index + 1] });
+  }
+  return examples;
+}
+
+function formatPairLines(examples = []) {
+  return examples
+    .filter((example) => example.ko || example.zh)
+    .map((example) => `${example.ko || ''}\n${example.zh || ''}`)
+    .join('\n\n');
 }
 
 function createRecordsForDate(date, rawItems, existingItems = []) {
@@ -1566,10 +1589,13 @@ function calculateReviewStreaks(completedReviewDates, today = todayString()) {
   return { current, best };
 }
 
-function recordAnswer(store, question, correct) {
+function recordAnswer(store, question, correct, reviewIntervalOverride = null) {
   const now = new Date().toISOString();
   const previous = getProgress(store, question);
-  const stage = correct ? Math.min(previous.stage + 1, REVIEW_INTERVALS.length - 1) : 0;
+  const overrideStage = REVIEW_INTERVALS.indexOf(reviewIntervalOverride);
+  const stage = correct
+    ? overrideStage >= 0 ? overrideStage : Math.min(previous.stage + 1, REVIEW_INTERVALS.length - 1)
+    : 0;
   return {
     ...store,
     stats: {
@@ -1593,6 +1619,15 @@ function recordAnswer(store, question, correct) {
     },
     attempts: [{ id: crypto.randomUUID(), questionId: question.id, correct, date: todayString(), time: now }, ...store.attempts].slice(0, 5000),
   };
+}
+
+function shouldOfferMonthlyReviewSkip(store, question, correct, dailyReview) {
+  return Boolean(
+    dailyReview
+    && correct
+    && question?.kind === 'term'
+    && (store.stats?.[question.id]?.correct || 0) >= 5
+  );
 }
 
 function recordDailyRoundAnswer(store, question, correct, {
@@ -1931,6 +1966,7 @@ function App() {
       questions: sourceQuestions,
       label,
       dueOnly: !!options.dueOnly,
+      dailyReview: !!options.dailyReview,
       recordResults: options.recordResults ?? true,
       mode: options.mode || '',
       grammarNote: options.grammarNote || null,
@@ -2071,7 +2107,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
   const mastered = questions.filter((question) => getStats(store, question.id).level === '已熟練').length;
   const progress = totalPending ? Math.max(0, Math.round((answeredToday.length / (answeredToday.length + totalPending)) * 100)) : 100;
   const startNextDailyTask = () => {
-    if (due.length) onPractice(due, '今日測驗', { dueOnly: true });
+    if (due.length) onPractice(due, '今日測驗', { dueOnly: true, dailyReview: true });
     else if (recognition.length) onPractice(recognition, '每日韓文認字測驗', { dueOnly: true, mode: DAILY_RECOGNITION_MODE });
     else if (grammarListening.length) onPractice(grammarListening, '每日文法例句聽力', { dueOnly: true, mode: DAILY_GRAMMAR_LISTENING_MODE });
     else onPractice(grammarQuestions, `每日文法測驗 · ${grammarSchedule.note.title}`, {
@@ -2187,7 +2223,11 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
                   <h3>{dateLabel(task.studyDate)} 的內容</h3>
                   <p>到期日 {task.dueDate} · {task.questions.length} 題 · 未完成</p>
                 </div>
-                <button className="primary small" onClick={() => onPractice(task.questions, `${task.studyDate} 測驗`, { dueOnly: true })}>開始</button>
+                <button className="primary small" onClick={() => onPractice(
+                  task.questions,
+                  `${task.studyDate} 測驗`,
+                  { dueOnly: true, dailyReview: true },
+                )}>開始</button>
               </div>
             ))}
             {!tasks.length && !recognition.length && !grammarListening.length && !grammarQuestions.length && <div className="empty">今天的測驗已完成。你可以從日曆或單字本主動測驗。</div>}
@@ -2768,7 +2808,12 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
                   </label>
                   <label className="wide-field">
                     例句
-                    <textarea value={meaning.examples} onChange={(event) => updateManualMeaning(meaningIndex, { examples: event.target.value })} placeholder="每行一筆：韓文 | 中文" />
+                    <textarea
+                      value={meaning.examples}
+                      onChange={(event) => updateManualMeaning(meaningIndex, { examples: event.target.value })}
+                      placeholder={'韓文一行、中文一行，例句之間可空一行\n\n오늘은 날씨가 좋아요.\n今天天氣很好。\n\n주말에는 사람이 많아요.\n週末人很多。'}
+                      rows={8}
+                    />
                   </label>
                 </section>
               ))}
@@ -3066,7 +3111,7 @@ function itemToManual(item) {
       id: meaning.id || '',
       zh: meaning.zh || '',
       pattern: meaning.pattern || '',
-      examples: (meaning.examples || []).map((example) => `${example.ko || ''} | ${example.zh || ''}`).join('\n'),
+      examples: formatPairLines(meaning.examples),
     })),
     notes: (item.notes || []).join('\n'),
     relatedSelected: (item.related || []).filter(Boolean),
@@ -3724,6 +3769,7 @@ function PracticePage({ store, updateStore, set }) {
   const [sessionFinished, setSessionFinished] = useState(false);
   const [completionError, setCompletionError] = useState('');
   const [completionSaving, setCompletionSaving] = useState(false);
+  const [monthlySkipPrompt, setMonthlySkipPrompt] = useState(false);
   const completionStartedRef = useRef(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [autoPronounce, setAutoPronounce] = useState(true);
@@ -3759,9 +3805,11 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
+    setMonthlySkipPrompt(false);
     setRecognitionWordVisible(!(recognitionListening || grammarListeningMode));
     setCompletionError('');
     setCompletionSaving(false);
+    setMonthlySkipPrompt(false);
     completionStartedRef.current = false;
   };
   const startSession = () => {
@@ -3782,6 +3830,7 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
+    setMonthlySkipPrompt(false);
     setRecognitionWordVisible(!(recognitionListening || grammarListeningMode));
   };
 
@@ -3863,17 +3912,28 @@ function PracticePage({ store, updateStore, set }) {
   // Used when 確認/Enter auto-grades a typed answer: records the result right
   // away (no manual 答對/答錯 choice) but keeps the question on screen so the
   // outcome is visible until the user presses Enter for the next one.
-  const gradeAndRecord = (correct) => {
+  const finalizeTypedGrade = (correct, reviewIntervalOverride = null) => {
     if (shouldRecordResults) {
-      updateStore((current) => recordAnswer(current, question, correct));
+      updateStore((current) => recordAnswer(current, question, correct, reviewIntervalOverride));
     }
     setGraded(true);
     setLastCorrect(correct);
     if (soundEnabled) playResultSound(correct);
     if (autoPronounce) window.setTimeout(() => speakAnswer(question), soundEnabled ? 320 : 0);
   };
+  const gradeAndRecord = (correct) => {
+    if (shouldOfferMonthlyReviewSkip(store, question, correct, set.dailyReview)) {
+      setMonthlySkipPrompt(true);
+      return;
+    }
+    finalizeTypedGrade(correct);
+  };
+  const resolveMonthlySkip = (skipForMonth) => {
+    setMonthlySkipPrompt(false);
+    finalizeTypedGrade(true, skipForMonth ? 30 : null);
+  };
   const handleConfirm = () => {
-    if (graded || !input.trim()) return;
+    if (graded || monthlySkipPrompt || !input.trim()) return;
     const submittedInput = input.trim();
     setInput(submittedInput);
     const checkResult = compareAnswer(submittedInput, question.ko);
@@ -4083,7 +4143,7 @@ function PracticePage({ store, updateStore, set }) {
                   }}
                   placeholder="여기에 한국어를 입력하세요 (Enter 送出)"
                   autoFocus
-                  disabled={graded}
+                  disabled={graded || monthlySkipPrompt}
                 />
                 <span className="input-korean-count">{countKoreanLetters(input)}</span>
                 <div className="actions answer-actions">
@@ -4147,6 +4207,22 @@ function PracticePage({ store, updateStore, set }) {
           onToggleStar={grammarMode || grammarListeningMode ? null : () => toggleStarredItem(updateStore, question.source.id)}
         />
       </div>
+      {monthlySkipPrompt && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="monthly-skip-title">
+          <div className="modal-panel monthly-skip-modal">
+            <span className="eyebrow">Review interval</span>
+            <h2 id="monthly-skip-title">一個月內不再出現這題嗎？</h2>
+            <p>
+              「{question.ko}」過去已答對 {store.stats?.[question.id]?.correct || 0} 次。
+              選擇「是」仍會記錄本次答對，但下一次每日測驗會安排在 30 天後。
+            </p>
+            <div className="actions">
+              <button type="button" onClick={() => resolveMonthlySkip(false)}>否，維持原排程</button>
+              <button type="button" className="primary" autoFocus onClick={() => resolveMonthlySkip(true)}>是，30 天後再出現</button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -4791,17 +4867,21 @@ export {
   markReviewDateComplete,
   grammarListeningQuestions,
   formatGrammarExamplesText,
+  formatPairLines,
   normalizeGrammarNote,
   normalizeKoreanKey,
   parseGrammarExamplesText,
+  parsePairLines,
   nextRecognitionExampleIndex,
   nextRecognitionRevealState,
   recordOrder,
+  recordAnswer,
   recordDailyGrammarListeningAnswer,
   recognitionKoreanExamples,
   recordsFromSnapshot,
   resolveImportConflictDraft,
   shouldInitializeDailyRecognition,
+  shouldOfferMonthlyReviewSkip,
 };
 
 if (typeof document !== 'undefined') createRoot(document.getElementById('root')).render(<App />);
