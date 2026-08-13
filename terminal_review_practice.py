@@ -28,6 +28,7 @@ import textwrap
 import time
 import unicodedata
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -42,8 +43,6 @@ PROGRESS_SHARD_COUNT = 16
 REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90]
 DAILY_RECOGNITION_LIMIT = 50
 DAILY_RECOGNITION_MODE = "daily-recognition"
-DAILY_GRAMMAR_LISTENING_LIMIT = 20
-DAILY_GRAMMAR_LISTENING_MODE = "daily-grammar-listening"
 DAILY_GRAMMAR_MODE = "daily-grammar"
 DAILY_MIXED_MODE = "daily-mixed"
 KOREAN_NEURAL_VOICE = "ko-KR-SunHiNeural"
@@ -208,7 +207,6 @@ class FirebaseClient:
         state["completedReviewDates"] = settings.get("completedReviewDates") or []
         state["starred"] = settings.get("starred") or []
         state["recognition"] = settings.get("recognition")
-        state["grammarListening"] = settings.get("grammarListening")
         self._saved_state = _clone_json(state)
         return state
 
@@ -275,7 +273,6 @@ class FirebaseClient:
         settings_changed = (
             previous.get("starred") != state.get("starred")
             or previous.get("recognition") != state.get("recognition")
-            or previous.get("grammarListening") != state.get("grammarListening")
         )
         if settings_changed:
             payload_data = {"schemaVersion": FIRESTORE_SCHEMA_VERSION, "updatedAt": utc_now_iso()}
@@ -286,9 +283,6 @@ class FirebaseClient:
             if previous.get("recognition") != state.get("recognition"):
                 payload_data["recognition"] = state.get("recognition")
                 field_paths.append("recognition")
-            if previous.get("grammarListening") != state.get("grammarListening"):
-                payload_data["grammarListening"] = state.get("grammarListening")
-                field_paths.append("grammarListening")
             payload = {"fields": {key: _to_firestore_value(value) for key, value in payload_data.items()}}
             query = parse.urlencode([("updateMask.fieldPaths", field_path) for field_path in field_paths])
             self._request_json(
@@ -386,7 +380,6 @@ def empty_state() -> Dict[str, Any]:
         "completedReviewDates": [],
         "starred": [],
         "recognition": None,
-        "grammarListening": None,
     }
 
 
@@ -565,16 +558,24 @@ def load_data(
     client: FirebaseClient,
     session: AuthSession,
 ) -> Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any]]:
-    state = client.load_review_state(session)
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        state_future = executor.submit(client.load_review_state, session)
+        records_future = executor.submit(client.list_records, session)
+        grammar_notes_future = executor.submit(client.list_grammar_notes, session)
+        grammar_review_future = executor.submit(client.load_grammar_review, session)
+        state = state_future.result()
+        records = records_future.result()
+        grammar_note_records = grammar_notes_future.result()
+        grammar_review = grammar_review_future.result()
+
     records_by_id: Dict[str, Dict[str, Any]] = {}
-    for record in client.list_records(session):
+    for record in records:
         record_id = record.get("id") or record.get("_docId")
         if record_id:
             record["id"] = record_id
             records_by_id[record_id] = record
     cards, questions = normalize_records(list(records_by_id.values()), state)
-    grammar_notes = normalize_grammar_notes(client.list_grammar_notes(session))
-    grammar_review = client.load_grammar_review(session)
+    grammar_notes = normalize_grammar_notes(grammar_note_records)
     return state, cards, questions, grammar_notes, grammar_review
 
 
@@ -628,15 +629,16 @@ def daily_grammar_questions(
         id=note.id,
         date="",
         ko=note.title,
-        zh=note.notes,
+        zh="",
         pos="文法",
+        notes=[note.notes] if note.notes else [],
     )
     questions = [
         Question(
             id=f"grammar:{note.id}:{example['id']}",
             item_id=note.id,
             date="",
-            kind="example",
+            kind="grammar-example",
             ko=example["ko"],
             zh=example["zh"],
             source=source,
@@ -770,49 +772,6 @@ def daily_recognition_questions(
     )
 
 
-def grammar_listening_questions(notes: List[GrammarNote]) -> List[Question]:
-    questions: List[Question] = []
-    for note in notes:
-        source = Card(
-            id=note.id,
-            date="",
-            ko=note.title,
-            zh="",
-            pos="文法",
-            notes=[note.notes] if note.notes else [],
-        )
-        for index, example in enumerate(note.examples):
-            if not example.get("ko") or not example.get("zh"):
-                continue
-            example_id = example.get("id") or str(index)
-            questions.append(Question(
-                id=f"grammar-listening:{note.id}:{example_id}",
-                item_id=note.id,
-                date="",
-                kind="grammar-listening",
-                ko=example["ko"],
-                zh=example["zh"],
-                source=source,
-            ))
-    return questions
-
-
-def daily_grammar_listening_questions(
-    state: Dict[str, Any],
-    questions: List[Question],
-    date_key: Optional[str] = None,
-    limit: int = DAILY_GRAMMAR_LISTENING_LIMIT,
-) -> List[Question]:
-    return daily_round_questions(
-        state,
-        questions,
-        "grammarListening",
-        DAILY_GRAMMAR_LISTENING_MODE,
-        date_key,
-        limit,
-    )
-
-
 def record_answer(
     state: Dict[str, Any],
     question: Question,
@@ -899,16 +858,6 @@ def record_daily_recognition_answer(state: Dict[str, Any], question: Question, c
         correct,
         "recognition",
         DAILY_RECOGNITION_MODE,
-    )
-
-
-def record_daily_grammar_listening_answer(state: Dict[str, Any], question: Question, correct: bool) -> None:
-    record_daily_round_answer(
-        state,
-        question,
-        correct,
-        "grammarListening",
-        DAILY_GRAMMAR_LISTENING_MODE,
     )
 
 
@@ -1514,7 +1463,6 @@ def due_task_menu(
     state: Dict[str, Any],
     questions: List[Question],
     grammar_task: Tuple[Optional[GrammarNote], List[Question]],
-    grammar_listening: List[Question],
 ) -> Optional[Tuple[str, List[Question]]]:
     due = daily_due_questions(state, questions)
     recognition = daily_recognition_questions(state, questions)
@@ -1522,7 +1470,7 @@ def due_task_menu(
     grouped: Dict[str, List[Question]] = {}
     for question in due:
         grouped.setdefault(question.date, []).append(question)
-    if not grouped and not recognition and not grammar_listening and not grammar_questions:
+    if not grouped and not recognition and not grammar_questions:
         wait_message(stdscr, "今日複習題", "今天的測驗已全部完成。")
         return None
     options = []
@@ -1530,18 +1478,14 @@ def due_task_menu(
         options.append((DAILY_MIXED_MODE, f"全部到期單字（混合隨機） · {len(due)} 題"))
     if recognition:
         options.append((DAILY_RECOGNITION_MODE, f"每日單字例句聽力 · 剩餘 {len(recognition)} 題"))
-    if grammar_listening:
-        options.append((DAILY_GRAMMAR_LISTENING_MODE, f"每日文法例句聽力 · 剩餘 {len(grammar_listening)} 題"))
     if grammar_note and grammar_questions:
-        options.append((DAILY_GRAMMAR_MODE, f"每日文法測驗 · {grammar_note.title} · {len(grammar_questions)} 題"))
+        options.append((DAILY_GRAMMAR_MODE, f"每日文法例句聽力 · {grammar_note.title} · {len(grammar_questions)} 題"))
     options.extend((date_key, f"{date_key} · {len(items)} 題") for date_key, items in sorted(grouped.items()))
     selected = menu(stdscr, "今日複習題 | 選擇任務", options)
     if not selected:
         return None
     if selected == DAILY_RECOGNITION_MODE:
         return selected, recognition
-    if selected == DAILY_GRAMMAR_LISTENING_MODE:
-        return selected, grammar_listening
     if selected == DAILY_GRAMMAR_MODE:
         return selected, grammar_questions
     if selected == DAILY_MIXED_MODE:
@@ -1679,12 +1623,12 @@ def run_daily_recognition(
     state: Dict[str, Any],
     client: FirebaseClient,
     session: AuthSession,
-    grammar_listening_mode: bool = False,
-) -> None:
-    title = "每日文法例句聽力" if grammar_listening_mode else "每日單字例句聽力"
+    grammar_mode: bool = False,
+) -> bool:
+    title = "每日文法例句聽力" if grammar_mode else "每日單字例句聽力"
     if not questions:
         wait_message(stdscr, title, "今天的題目已完成。")
-        return
+        return False
 
     idx = 0
     revealed = False
@@ -1704,16 +1648,16 @@ def run_daily_recognition(
             revealed = True
         stdscr.erase()
         height, width = stdscr.getmaxyx()
-        star_help = "" if grammar_listening_mode else " 0=星號"
+        star_help = "" if grammar_mode else " 0=星號"
         audio_label = "例句"
         draw_line(
             stdscr,
             1,
             2,
-            f"{'文法聽力' if grammar_listening_mode else '例句聽力'} | {title} | {idx + 1}/{len(questions)}  Esc=返回{star_help} 7={audio_label} 8=揭露 4/6=上下題 1=答錯 2=答對 ↑↓=捲動",
+            f"{'文法聽力' if grammar_mode else '例句聽力'} | {title} | {idx + 1}/{len(questions)}  Esc=返回{star_help} 7={audio_label} 8=揭露 4/6=上下題 1=答錯 2=答對 ↑↓=捲動",
             curses.A_BOLD,
         )
-        if grammar_listening_mode:
+        if grammar_mode:
             prompt_text = question.ko if revealed else question.zh if word_visible else "[韓文隱藏，請聆聽例句]"
             prompt_prefix = ""
         else:
@@ -1730,15 +1674,15 @@ def run_daily_recognition(
         if not revealed:
             if not word_visible:
                 listening_help = f"按 7 重播{audio_label}"
-                reveal_label = "中文" if grammar_listening_mode else "完整答案"
+                reveal_label = "中文" if grammar_mode else "完整答案"
                 append_detail(f"{listening_help}；按 8 顯示{reveal_label}。", attr=curses.A_DIM)
             else:
                 append_detail(
-                    "按 8 公佈韓文答案。" if grammar_listening_mode else "按 8 查看完整單字卡。",
+                    "按 8 公佈韓文答案。" if grammar_mode else "按 8 查看完整單字卡。",
                     attr=curses.A_DIM,
                 )
         else:
-            if grammar_listening_mode:
+            if grammar_mode:
                 append_detail(f"文法: {card.ko}", attr=curses.A_BOLD)
                 for note in card.notes:
                     append_detail(f"筆記: {note}", indent=2, attr=curses.A_DIM)
@@ -1770,8 +1714,8 @@ def run_daily_recognition(
         if graded:
             if results[question.id]:
                 result_text = "答對"
-            elif grammar_listening_mode:
-                result_text = "答錯，已保留到明日題目"
+            elif grammar_mode:
+                result_text = "答錯"
             else:
                 result_text = "答錯，已保留到明日題目"
             footer = f"{result_text}。按 Enter 或 6 進入下一題。"
@@ -1791,14 +1735,14 @@ def run_daily_recognition(
         if isinstance(key, int) and 0 <= key <= 255:
             key = chr(key)
         if key == "\x1b":
-            return
+            return False
         if key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13):
             if not graded:
                 message = "請先翻面並選擇答對或答錯。"
                 continue
             if idx == len(questions) - 1:
                 wait_message(stdscr, "完成", f"今天的{title}已完成。")
-                return
+                return True
             idx += 1
             revealed = questions[idx].id in results
             word_visible = revealed
@@ -1813,7 +1757,7 @@ def run_daily_recognition(
             continue
         if not isinstance(key, str):
             continue
-        if key == "0" and not grammar_listening_mode:
+        if key == "0" and not grammar_mode:
             snapshot = _clone_json(state)
             toggle_star(state, card)
             if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
@@ -1823,7 +1767,7 @@ def run_daily_recognition(
             message = "已打星號" if card.is_starred else "已取消星號"
         elif key == "8":
             if not graded:
-                if grammar_listening_mode:
+                if grammar_mode:
                     word_visible, revealed = next_recognition_reveal_state(True, word_visible, revealed)
                 else:
                     word_visible, revealed = True, True
@@ -1842,14 +1786,12 @@ def run_daily_recognition(
                 message = "這題已完成評分。"
                 continue
             correct = key == "2"
-            snapshot = _clone_json(state)
-            if grammar_listening_mode:
-                record_daily_grammar_listening_answer(state, question, correct)
-            else:
+            if not grammar_mode:
+                snapshot = _clone_json(state)
                 record_daily_recognition_answer(state, question, correct)
-            if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
-                message = ""
-                continue
+                if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
+                    message = ""
+                    continue
             results[question.id] = correct
             message = ""
         elif key == "4":
@@ -1864,7 +1806,7 @@ def run_daily_recognition(
                 continue
             if idx == len(questions) - 1:
                 wait_message(stdscr, "完成", f"今天的{title}已完成。")
-                return
+                return True
             idx += 1
             revealed = questions[idx].id in results
             word_visible = revealed
@@ -2118,17 +2060,11 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
         return
     skip_round_initialization = False
     while True:
-        grammar_listening_pool = grammar_listening_questions(grammar_notes)
         if not skip_round_initialization:
             snapshot = _clone_json(state)
             previous_recognition = _clone_json(state.get("recognition"))
-            previous_grammar_listening = _clone_json(state.get("grammarListening"))
             daily_recognition_questions(state, questions)
-            daily_grammar_listening_questions(state, grammar_listening_pool)
-            round_state_changed = (
-                previous_recognition != state.get("recognition")
-                or previous_grammar_listening != state.get("grammarListening")
-            )
+            round_state_changed = previous_recognition != state.get("recognition")
             if round_state_changed and not save_review_state_or_restore(
                 stdscr,
                 client,
@@ -2164,8 +2100,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
             continue
         if choice == "due":
             grammar_task = daily_grammar_questions(grammar_notes, grammar_review)
-            grammar_listening = daily_grammar_listening_questions(state, grammar_listening_pool)
-            task = due_task_menu(stdscr, state, questions, grammar_task, grammar_listening)
+            task = due_task_menu(stdscr, state, questions, grammar_task)
             if task:
                 task_type, selected = task
                 if task_type == DAILY_RECOGNITION_MODE:
@@ -2177,36 +2112,18 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                         client,
                         session,
                     )
-                elif task_type == DAILY_GRAMMAR_LISTENING_MODE:
-                    run_daily_recognition(
+                elif task_type == DAILY_GRAMMAR_MODE:
+                    grammar_note, _ = grammar_task
+                    grammar_completed = run_daily_recognition(
                         stdscr,
                         selected,
                         cards,
                         state,
                         client,
                         session,
-                        grammar_listening_mode=True,
+                        grammar_mode=True,
                     )
-                elif task_type == DAILY_GRAMMAR_MODE:
-                    grammar_note, _ = grammar_task
-                    completed = run_practice(
-                        stdscr,
-                        f"每日文法測驗 · {grammar_note.title}",
-                        selected,
-                        {
-                            "direction": "zh-ko",
-                            "source": "all",
-                            "starred": False,
-                            "random": False,
-                            "record_results": False,
-                            "allow_star": False,
-                            "require_answer_before_next": True,
-                        },
-                        state,
-                        client,
-                        session,
-                    )
-                    if completed and grammar_note:
+                    if grammar_completed and grammar_note:
                         try:
                             grammar_review = client.save_grammar_review(session, grammar_note)
                         except RuntimeError as exc:
@@ -2232,7 +2149,6 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 if (
                     not daily_due_questions(state, questions)
                     and not daily_recognition_questions(state, questions)
-                    and not daily_grammar_listening_questions(state, grammar_listening_pool)
                     and not daily_grammar_questions(grammar_notes, grammar_review)[1]
                 ):
                     completed = state.setdefault("completedReviewDates", [])

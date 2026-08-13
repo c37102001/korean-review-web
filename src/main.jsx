@@ -38,8 +38,6 @@ import './styles.css';
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
 const DAILY_RECOGNITION_LIMIT = 50;
 const DAILY_RECOGNITION_MODE = 'daily-recognition';
-const DAILY_GRAMMAR_LISTENING_LIMIT = 20;
-const DAILY_GRAMMAR_LISTENING_MODE = 'daily-grammar-listening';
 const DAILY_GRAMMAR_MODE = 'daily-grammar';
 const CONTENT_SCHEMA_VERSION = 2;
 const FIRESTORE_SCHEMA_VERSION = 3;
@@ -71,7 +69,6 @@ function emptyStore() {
     completedReviewDates: [],
     starred: [],
     recognition: null,
-    grammarListening: null,
   };
 }
 
@@ -367,7 +364,6 @@ async function readFirestoreStoreV3(uid) {
     completedReviewDates: settings.completedReviewDates || [],
     starred: settings.starred || [],
     recognition: settings.recognition || null,
-    grammarListening: settings.grammarListening || null,
   };
 }
 
@@ -392,7 +388,6 @@ async function writeFullFirestoreStoreV3(uid, store) {
     completedReviewDates: store.completedReviewDates || [],
     starred: store.starred || [],
     recognition: store.recognition || null,
-    grammarListening: store.grammarListening || null,
     updatedAt: serverTimestamp(),
   });
 }
@@ -435,16 +430,12 @@ async function persistFirestoreStoreChanges(uid, previous, next) {
   const addedCompletedDates = (next.completedReviewDates || []).filter((date) => !previousCompletedDates.has(date));
   const settingsChanged = addedCompletedDates.length
     || JSON.stringify(previous.starred || []) !== JSON.stringify(next.starred || [])
-    || JSON.stringify(previous.recognition || null) !== JSON.stringify(next.recognition || null)
-    || JSON.stringify(previous.grammarListening || null) !== JSON.stringify(next.grammarListening || null);
+    || JSON.stringify(previous.recognition || null) !== JSON.stringify(next.recognition || null);
   if (settingsChanged) {
     const settingsUpdate = { schemaVersion: FIRESTORE_SCHEMA_VERSION, updatedAt: serverTimestamp() };
     if (addedCompletedDates.length) settingsUpdate.completedReviewDates = arrayUnion(...addedCompletedDates);
     if (JSON.stringify(previous.starred || []) !== JSON.stringify(next.starred || [])) settingsUpdate.starred = next.starred || [];
     if (JSON.stringify(previous.recognition || null) !== JSON.stringify(next.recognition || null)) settingsUpdate.recognition = next.recognition || null;
-    if (JSON.stringify(previous.grammarListening || null) !== JSON.stringify(next.grammarListening || null)) {
-      settingsUpdate.grammarListening = next.grammarListening || null;
-    }
     operations.push((batch) => batch.set(reviewSettingsRef(uid), settingsUpdate, { merge: true }));
   }
   await commitFirestoreOperations(operations);
@@ -530,7 +521,6 @@ function useFirestoreStore(user) {
             ])].sort(),
             starred: settings.starred || [],
             recognition: settings.recognition || null,
-            grammarListening: settings.grammarListening || null,
           }));
         }));
         unsubscribers.push(onSnapshot(collection(db, 'users', user.uid, 'progressShards'), { includeMetadataChanges: true }, (snap) => {
@@ -1438,35 +1428,6 @@ function shouldInitializeDailyRecognition(recognition, date = todayString()) {
   return !recognition || recognition.dailyDate !== date;
 }
 
-function grammarListeningQuestions(notes) {
-  return [...notes]
-    .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '') || a.id.localeCompare(b.id))
-    .flatMap((note) => (note.examples || [])
-      .filter((example) => example.ko && example.zh)
-      .map((example, index) => ({
-        id: `grammar-listening:${note.id}:${example.id || index}`,
-        itemId: note.id,
-        kind: 'grammar-listening',
-        ko: example.ko,
-        zh: example.zh,
-        source: note,
-      })));
-}
-
-function dailyGrammarListeningSchedule(
-  store,
-  questions,
-  date = todayString(),
-  limit = DAILY_GRAMMAR_LISTENING_LIMIT,
-) {
-  return dailyRoundSchedule(store, questions, {
-    stateKey: 'grammarListening',
-    mode: DAILY_GRAMMAR_LISTENING_MODE,
-    date,
-    limit,
-  });
-}
-
 function nextRecognitionRevealState(listeningMode, wordVisible, revealed) {
   if (revealed) return { wordVisible: true, revealed: true };
   if (listeningMode && !wordVisible) return { wordVisible: true, revealed: false };
@@ -1670,13 +1631,6 @@ function recordDailyRecognitionAnswer(store, question, correct) {
   });
 }
 
-function recordDailyGrammarListeningAnswer(store, question, correct) {
-  return recordDailyRoundAnswer(store, question, correct, {
-    stateKey: 'grammarListening',
-    mode: DAILY_GRAMMAR_LISTENING_MODE,
-  });
-}
-
 function normalizeAnswer(text) {
   return [...text.replace(PUNCTUATION_RE, '')];
 }
@@ -1853,15 +1807,6 @@ function App() {
     [store.attempts, store.recognition, dailyQuestions],
   );
   const todayRecognitionQuestions = todayRecognitionSchedule.questions;
-  const grammarListeningPool = useMemo(
-    () => grammarListeningQuestions(grammar.notes),
-    [grammar.notes],
-  );
-  const todayGrammarListeningSchedule = useMemo(
-    () => dailyGrammarListeningSchedule(store, grammarListeningPool, todayString()),
-    [store.attempts, store.grammarListening, grammarListeningPool],
-  );
-  const todayGrammarListeningQuestions = todayGrammarListeningSchedule.questions;
   const todayGrammarSchedule = useMemo(
     () => dailyGrammarSchedule(grammar.notes, grammar.review, todayString()),
     [grammar.notes, grammar.review],
@@ -1884,35 +1829,11 @@ function App() {
   }, [user, storeLoading, store.recognition?.dailyDate, dailyQuestions, updateStore]);
 
   useEffect(() => {
-    if (!user || storeLoading || grammar.loading) return;
-    const date = todayString();
-    if (!shouldInitializeDailyRecognition(store.grammarListening, date)) return;
-    const initializationKey = `${user.uid}:${date}:grammar-listening`;
-    if (recognitionInitializationRef.current.has(initializationKey)) return;
-    recognitionInitializationRef.current.add(initializationKey);
-    updateStore((current) => {
-      if (!shouldInitializeDailyRecognition(current.grammarListening, date)) return current;
-      const schedule = dailyGrammarListeningSchedule(current, grammarListeningPool, date);
-      return { ...current, grammarListening: schedule.state };
-    }).catch(() => {
-      recognitionInitializationRef.current.delete(initializationKey);
-    });
-  }, [
-    user,
-    storeLoading,
-    grammar.loading,
-    store.grammarListening?.dailyDate,
-    grammarListeningPool,
-    updateStore,
-  ]);
-
-  useEffect(() => {
     if (!user || storeLoading || grammar.loading || grammar.reviewLoading) return;
     const today = todayString();
     const todayComplete = (
       todayDailyQuestions.length === 0
       && todayRecognitionQuestions.length === 0
-      && todayGrammarListeningQuestions.length === 0
       && todayGrammarQuestions.length === 0
     );
     const todayMarked = (store.completedReviewDates || []).includes(today);
@@ -1926,7 +1847,6 @@ function App() {
     store.completedReviewDates,
     todayDailyQuestions,
     todayRecognitionQuestions,
-    todayGrammarListeningQuestions,
     todayGrammarQuestions,
     markDateComplete,
   ]);
@@ -1987,7 +1907,7 @@ function App() {
   if (storeLoading) return <LoadingScreen text="載入資料中" />;
 
   const views = {
-    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} recognitionQuestions={todayRecognitionQuestions} grammarListeningQuestions={todayGrammarListeningQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} />,
+    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} recognitionQuestions={todayRecognitionQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} />,
     notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} />,
@@ -2076,14 +1996,14 @@ function LoginPage() {
   );
 }
 
-function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQuestions, grammarListeningQuestions: grammarListening, grammarSchedule, onCompleteGrammar, onPractice, onAddRecords, onUpdateRecord, onWriteRecords }) {
+function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQuestions, grammarSchedule, onCompleteGrammar, onPractice, onAddRecords, onUpdateRecord, onWriteRecords }) {
   const [addOpen, setAddOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const today = todayString();
   const due = dueQuestionsForToday;
   const recognition = recognitionQuestions;
   const grammarQuestions = grammarSchedule.questions;
-  const totalPending = due.length + recognition.length + grammarListening.length + grammarQuestions.length;
+  const totalPending = due.length + recognition.length + grammarQuestions.length;
   const tasks = groupTasks(store, due, today);
   const answeredToday = store.attempts.filter((attempt) => attemptDate(attempt) === today);
   const correctToday = answeredToday.filter((attempt) => attempt.correct).length;
@@ -2093,8 +2013,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
   const startNextDailyTask = () => {
     if (due.length) onPractice(due, '今日測驗', { dueOnly: true, dailyReview: true });
     else if (recognition.length) onPractice(recognition, '每日單字例句聽力', { dueOnly: true, mode: DAILY_RECOGNITION_MODE });
-    else if (grammarListening.length) onPractice(grammarListening, '每日文法例句聽力', { dueOnly: true, mode: DAILY_GRAMMAR_LISTENING_MODE });
-    else onPractice(grammarQuestions, `每日文法測驗 · ${grammarSchedule.note.title}`, {
+    else onPractice(grammarQuestions, `每日文法例句聽力 · ${grammarSchedule.note.title}`, {
       dueOnly: true,
       recordResults: false,
       mode: DAILY_GRAMMAR_MODE,
@@ -2109,7 +2028,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
         <div>
           <span className="eyebrow">Today · {dateLabel(today)}</span>
           <h1>今天也來練一點韓文</h1>
-          <p>目前有 {totalPending} 題等待完成，包含到期單字、單字例句聽力、文法聽力與文法測驗。</p>
+          <p>目前有 {totalPending} 題等待完成，包含到期單字、單字例句聽力與每日文法例句聽力。</p>
           <div className="actions">
             <button className="primary" disabled={!totalPending} onClick={startNextDailyTask}><Dumbbell size={18} /> 開始今日測驗</button>
             <button onClick={() => setAddOpen(true)}><Plus size={18} /> 快速新增單字</button>
@@ -2158,7 +2077,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
 
       <div className="split">
         <div className="panel">
-          <div className="panel-title"><h2>測驗任務</h2><span>{tasks.length || recognition.length || grammarListening.length || grammarQuestions.length ? '未完成任務會保留' : '目前沒有待完成任務'}</span></div>
+          <div className="panel-title"><h2>測驗任務</h2><span>{tasks.length || recognition.length || grammarQuestions.length ? '未完成任務會保留' : '目前沒有待完成任務'}</span></div>
           <div className="task-list">
             {!!recognition.length && (
               <div className="task-card recognition-task-card">
@@ -2170,28 +2089,14 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
                 <button className="primary small" onClick={() => onPractice(recognition, '每日單字例句聽力', { dueOnly: true, mode: DAILY_RECOGNITION_MODE })}>開始</button>
               </div>
             )}
-            {!!grammarListening.length && (
-              <div className="task-card grammar-listening-task-card">
-                <div>
-                  <span className="badge">每日</span>
-                  <h3>文法例句聽力</h3>
-                  <p>從全部文法例句抽題 · 剩餘 {grammarListening.length} 題</p>
-                </div>
-                <button className="primary small" onClick={() => onPractice(
-                  grammarListening,
-                  '每日文法例句聽力',
-                  { dueOnly: true, mode: DAILY_GRAMMAR_LISTENING_MODE },
-                )}>開始</button>
-              </div>
-            )}
             {!!grammarQuestions.length && (
               <div className="task-card grammar-task-card">
                 <div>
                   <span className="badge">每日</span>
-                  <h3>文法測驗</h3>
-                  <p>{grammarSchedule.note.title} · {grammarQuestions.length} 個例句</p>
+                  <h3>文法例句聽力</h3>
+                  <p>{grammarSchedule.note.title} · 全部 {grammarQuestions.length} 個例句</p>
                 </div>
-                <button className="primary small" onClick={() => onPractice(grammarQuestions, `每日文法測驗 · ${grammarSchedule.note.title}`, {
+                <button className="primary small" onClick={() => onPractice(grammarQuestions, `每日文法例句聽力 · ${grammarSchedule.note.title}`, {
                   dueOnly: true,
                   recordResults: false,
                   mode: DAILY_GRAMMAR_MODE,
@@ -2214,7 +2119,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
                 )}>開始</button>
               </div>
             ))}
-            {!tasks.length && !recognition.length && !grammarListening.length && !grammarQuestions.length && <div className="empty">今天的測驗已完成。你可以從日曆或單字本主動測驗。</div>}
+            {!tasks.length && !recognition.length && !grammarQuestions.length && <div className="empty">今天的測驗已完成。你可以從日曆或單字本主動測驗。</div>}
           </div>
         </div>
         <div className="panel">
@@ -3733,11 +3638,10 @@ function PracticePage({ store, updateStore, set }) {
   const [starredOnly, setStarredOnly] = useState(false);
   const [recordResults, setRecordResults] = useState(set.recordResults ?? true);
   const recognitionMode = set.mode === DAILY_RECOGNITION_MODE;
-  const grammarListeningMode = set.mode === DAILY_GRAMMAR_LISTENING_MODE;
   const grammarMode = set.mode === DAILY_GRAMMAR_MODE;
   const fixedSource = set.termOnly || set.dueOnly;
-  const activeDirection = recognitionMode || grammarListeningMode ? 'ko-zh' : set.dueOnly ? 'zh-ko' : direction;
-  const shouldRecordResults = !grammarMode && !grammarListeningMode && (set.dueOnly || recordResults);
+  const activeDirection = recognitionMode || grammarMode ? 'ko-zh' : set.dueOnly ? 'zh-ko' : direction;
+  const shouldRecordResults = !grammarMode && (set.dueOnly || recordResults);
   const [recognitionWordVisible, setRecognitionWordVisible] = useState(false);
   const [started, setStarted] = useState(!!set.dueOnly);
   const [questionQueue, setQuestionQueue] = useState([]);
@@ -3758,14 +3662,14 @@ function PracticePage({ store, updateStore, set }) {
   const sourceQuestions = useMemo(() => {
     const starredSet = new Set(store.starred || []);
     const applyStarFilter = (list) => (starredOnly ? list.filter((q) => starredSet.has(q.itemId)) : list);
-    if (recognitionMode || grammarListeningMode || grammarMode) return set.questions;
+    if (recognitionMode || grammarMode) return set.questions;
     if (set.dueOnly) return orderReviewQuestions(set.questions);
     if (direction === 'ko-zh') return applyStarFilter(set.questions.filter((q) => q.kind === 'term'));
     const activeSource = set.termOnly ? 'term' : source;
     const filtered = set.questions.filter((q) => activeSource === 'all' || q.kind === activeSource);
     const orderedFiltered = activeSource === 'all' ? orderReviewQuestions(filtered) : filtered;
     return applyStarFilter(orderedFiltered);
-  }, [set.questions, source, direction, set.termOnly, set.dueOnly, recognitionMode, grammarListeningMode, grammarMode, store, starredOnly]);
+  }, [set.questions, source, direction, set.termOnly, set.dueOnly, recognitionMode, grammarMode, store, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
   const resetSession = () => {
@@ -3787,7 +3691,7 @@ function PracticePage({ store, updateStore, set }) {
     completionStartedRef.current = false;
   };
   const startSession = () => {
-    const nextQuestions = recognitionMode || grammarListeningMode || grammarMode
+    const nextQuestions = recognitionMode || grammarMode
       ? sourceQuestions
       : set.dueOnly ? shuffleReviewQuestionsByKind(sourceQuestions) : shuffleItems(sourceQuestions, Date.now());
     if (!nextQuestions.length) {
@@ -3811,7 +3715,7 @@ function PracticePage({ store, updateStore, set }) {
   useEffect(() => {
     if (!set.dueOnly) return;
     if (questionQueue.length) return;
-    const nextQuestions = recognitionMode || grammarListeningMode || grammarMode ? sourceQuestions : shuffleReviewQuestionsByKind(sourceQuestions);
+    const nextQuestions = recognitionMode || grammarMode ? sourceQuestions : shuffleReviewQuestionsByKind(sourceQuestions);
     setQuestionQueue(nextQuestions);
     setStarted(!!nextQuestions.length);
     setIndex(0);
@@ -3822,14 +3726,14 @@ function PracticePage({ store, updateStore, set }) {
     setLastCorrect(null);
     setTypedAttempts(0);
     setRecognitionWordVisible(false);
-  }, [set.dueOnly, recognitionMode, grammarListeningMode, grammarMode, sourceQuestions, questionQueue.length]);
+  }, [set.dueOnly, recognitionMode, grammarMode, sourceQuestions, questionQueue.length]);
 
   useEffect(() => {
-    const audioFirst = recognitionMode || grammarListeningMode;
+    const audioFirst = recognitionMode || grammarMode;
     if (!started || !audioFirst || recognitionWordVisible || !question) return undefined;
     const timer = window.setTimeout(() => speakAnswer(question), 180);
     return () => window.clearTimeout(timer);
-  }, [started, recognitionMode, grammarListeningMode, recognitionWordVisible, question?.id]);
+  }, [started, recognitionMode, grammarMode, recognitionWordVisible, question?.id]);
 
   useEffect(() => {
     if (direction === 'ko-zh') setSource('term');
@@ -3869,8 +3773,6 @@ function PracticePage({ store, updateStore, set }) {
   const submit = (correct) => {
     if (recognitionMode) {
       updateStore((current) => recordDailyRecognitionAnswer(current, question, correct));
-    } else if (grammarListeningMode) {
-      updateStore((current) => recordDailyGrammarListeningAnswer(current, question, correct));
     } else if (shouldRecordResults && (!correct || activeDirection !== 'ko-zh')) {
       updateStore((current) => recordAnswer(current, question, correct));
     }
@@ -3937,7 +3839,7 @@ function PracticePage({ store, updateStore, set }) {
       return;
     }
     const next = nextRecognitionRevealState(
-      grammarListeningMode,
+      grammarMode,
       recognitionWordVisible,
       revealed,
     );
@@ -3947,7 +3849,7 @@ function PracticePage({ store, updateStore, set }) {
   useEffect(() => {
     if (!started) return undefined;
     const onKeyDown = (event) => {
-      if (event.key === ' ' && (recognitionMode || grammarListeningMode) && !event.isComposing) {
+      if (event.key === ' ' && (recognitionMode || grammarMode) && !event.isComposing) {
         event.preventDefault();
         speakAnswer(question);
         return;
@@ -3964,7 +3866,7 @@ function PracticePage({ store, updateStore, set }) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [started, revealed, graded, question, index, queue.length, recognitionMode, grammarListeningMode]);
+  }, [started, revealed, graded, question, index, queue.length, recognitionMode, grammarMode]);
 
   if (!started && !set.dueOnly) {
     return (
@@ -4041,11 +3943,11 @@ function PracticePage({ store, updateStore, set }) {
         <div className="practice-shell">
           <div className="progress-line"><span style={{ width: `${((index + 1) / queue.length) * 100}%` }} /></div>
           <div className="quiz-meta quiz-meta-row">
-            <span>{index + 1} / {queue.length} · {grammarListeningMode ? '文法例句聽力' : recognitionMode ? '單字例句聽力' : activeDirection === 'zh-ko' ? '中翻韓' : '韓翻中'}</span>
+            <span>{index + 1} / {queue.length} · {grammarMode ? '文法例句聽力' : recognitionMode ? '單字例句聽力' : activeDirection === 'zh-ko' ? '中翻韓' : '韓翻中'}</span>
             <div className="quiz-options">
               <button className={soundEnabled ? 'selected-soft' : ''} onClick={() => setSoundEnabled((enabled) => !enabled)}>{soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />} 音效</button>
-              {!recognitionMode && !grammarListeningMode && <button className={autoPronounce ? 'selected-soft' : ''} onClick={() => setAutoPronounce((enabled) => !enabled)}>{autoPronounce ? <Volume2 size={16} /> : <VolumeX size={16} />} 自動發音</button>}
-              <button disabled={!recognitionMode && !grammarListeningMode && !revealed && !graded} onClick={() => speakAnswer(question)}><Volume2 size={16} /> {recognitionMode || grammarListeningMode ? '重播' : '發音'}</button>
+              {!recognitionMode && !grammarMode && <button className={autoPronounce ? 'selected-soft' : ''} onClick={() => setAutoPronounce((enabled) => !enabled)}>{autoPronounce ? <Volume2 size={16} /> : <VolumeX size={16} />} 自動發音</button>}
+              <button disabled={!recognitionMode && !grammarMode && !revealed && !graded} onClick={() => speakAnswer(question)}><Volume2 size={16} /> {recognitionMode || grammarMode ? '重播' : '發音'}</button>
             </div>
           </div>
           {activeDirection === 'zh-ko' ? (
@@ -4093,30 +3995,30 @@ function PracticePage({ store, updateStore, set }) {
             </>
           ) : (
             <>
-              {(recognitionMode || grammarListeningMode) && !recognitionWordVisible ? (
+              {(recognitionMode || grammarMode) && !recognitionWordVisible ? (
                 <div className="prompt ko recognition-listening-prompt">
                   <Volume2 size={42} aria-hidden="true" />
-                  <span>{grammarListeningMode ? '請聆聽文法例句' : '請聆聽單字例句'}</span>
+                  <span>{grammarMode ? '請聆聽文法例句' : '請聆聽單字例句'}</span>
                   <small>需要時可按右上方「重播」再次播放</small>
                 </div>
               ) : (
                 <div className="prompt ko">
-                  <span>{grammarListeningMode ? '請根據中文回想韓文例句' : '請在心中想中文意思'}</span>
+                  <span>{grammarMode ? '請根據中文回想韓文例句' : '請在心中想中文意思'}</span>
                   <div className="prompt-title">
-                    <h1>{grammarListeningMode ? question.zh : question.ko}</h1>
+                    <h1>{grammarMode ? question.zh : question.ko}</h1>
                     <QuestionKindBadge kind={question.kind} />
                   </div>
                 </div>
               )}
               {!revealed ? (
                 <button className="primary wide" onClick={advanceRecognitionStage}>
-                  {!recognitionWordVisible && grammarListeningMode
+                  {!recognitionWordVisible && grammarMode
                     ? '顯示中文'
                     : '公佈答案'}
                 </button>
               ) : (
                 <div className="answer-panel grade-banner">
-                  <strong><Check size={18} /> 請看右側單字卡後自評</strong>
+                  <strong><Check size={18} /> 請看右側答案卡後自評</strong>
                 </div>
               )}
             </>
@@ -4131,7 +4033,7 @@ function PracticePage({ store, updateStore, set }) {
           onWrong={() => submit(false)}
           onNext={goNext}
           isStarred={(store.starred || []).includes(question.source?.id)}
-          onToggleStar={grammarMode || grammarListeningMode ? null : () => toggleStarredItem(updateStore, question.source.id)}
+          onToggleStar={grammarMode ? null : () => toggleStarredItem(updateStore, question.source.id)}
         />
       </div>
       {monthlySkipPrompt && (
@@ -4155,7 +4057,7 @@ function PracticePage({ store, updateStore, set }) {
 }
 
 function QuestionKindBadge({ kind }) {
-  const isGrammarExample = kind === 'grammar-example' || kind === 'grammar-listening';
+  const isGrammarExample = kind === 'grammar-example';
   const isExample = kind === 'example' || isGrammarExample;
   return <small className={`question-kind-badge ${isExample ? 'example' : 'term'}`}>{isGrammarExample ? '文法例句' : isExample ? '例句' : '單字'}</small>;
 }
@@ -4167,17 +4069,17 @@ function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, on
         {!visible ? (
           <div className="answer-placeholder">
             <span>答案卡片</span>
-            <strong>{question.kind === 'grammar-example' || question.kind === 'grammar-listening' ? '答題後會顯示文法與完整例句' : '答題後會顯示完整單字卡'}</strong>
+            <strong>{question.kind === 'grammar-example' ? '答題後會顯示文法與完整例句' : '答題後會顯示完整單字卡'}</strong>
           </div>
         ) : (
           <>
             <div className="answer-review-head">
               <span>{graded ? (correct ? '答對' : '答錯') : '公布答案'}</span>
-              {(question.kind === 'example' || question.kind === 'grammar-example' || question.kind === 'grammar-listening') && <strong>{question.kind === 'grammar-example' || question.kind === 'grammar-listening' ? question.source.title : '例句來自這張卡片'}</strong>}
+              {(question.kind === 'example' || question.kind === 'grammar-example') && <strong>{question.kind === 'grammar-example' ? question.source.title : '例句來自這張卡片'}</strong>}
               {graded && <small>再按 Enter 進入下一題</small>}
             </div>
             <div className="answer-card-stage">
-              {question.kind === 'grammar-example' || question.kind === 'grammar-listening' ? (
+              {question.kind === 'grammar-example' ? (
                 <div className="grammar-practice-answer">
                   <h3>{question.source.title}</h3>
                   {question.source.notes && <p>{question.source.notes}</p>}
@@ -4786,13 +4688,11 @@ export {
   attemptDate,
   buildJsonImportDraft,
   createRecordsFromImportEntries,
-  dailyGrammarListeningSchedule,
   dailyGrammarSchedule,
   dailyRecognitionSchedule,
   findImportConflict,
   isTransientFirestoreError,
   markReviewDateComplete,
-  grammarListeningQuestions,
   formatGrammarExamplesText,
   formatPairLines,
   normalizeGrammarNote,
@@ -4804,7 +4704,6 @@ export {
   recordOrder,
   recordAnswer,
   recordDailyRecognitionAnswer,
-  recordDailyGrammarListeningAnswer,
   recordsFromSnapshot,
   resolveImportConflictDraft,
   shouldInitializeDailyRecognition,

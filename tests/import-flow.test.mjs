@@ -257,71 +257,6 @@ test('daily word-example listening wrong answers only affect tomorrow round stat
   assert.deepEqual(next.recognition.pendingWrongIds, [question.id]);
 });
 
-test('daily grammar listening assigns 20 examples and keeps wrong answers for tomorrow', () => {
-  const notes = Array.from({ length: 30 }, (_, index) => ({
-    id: `grammar-${index}`,
-    title: `文法 ${index}`,
-    createdAt: `2026-07-${String(index + 1).padStart(2, '0')}`,
-    examples: [{ id: `example-${index}`, ko: `문장 ${index}`, zh: `句子 ${index}` }],
-  }));
-  const questions = helpers.grammarListeningQuestions(notes);
-  const first = helpers.dailyGrammarListeningSchedule({ attempts: [], grammarListening: null }, questions, '2026-07-30', 20);
-  assert.equal(first.questions.length, 20);
-
-  const wrongId = first.questions[0].id;
-  const attempts = first.questions.map((question, index) => ({
-    id: `attempt-${index}`,
-    questionId: question.id,
-    correct: question.id !== wrongId,
-    date: '2026-07-30',
-    time: `2026-07-30T01:${String(index).padStart(2, '0')}:00.000Z`,
-    mode: 'daily-grammar-listening',
-  }));
-  const completedToday = helpers.dailyGrammarListeningSchedule({
-    attempts,
-    grammarListening: first.state,
-  }, questions, '2026-07-30', 20);
-  assert.equal(completedToday.questions.length, 0);
-
-  const tomorrow = helpers.dailyGrammarListeningSchedule({
-    attempts,
-    grammarListening: completedToday.state,
-  }, questions, '2026-07-31', 20);
-  assert.equal(tomorrow.questions.length, 11);
-  assert.ok(tomorrow.questions.some((question) => question.id === wrongId));
-  assert.equal(new Set(tomorrow.questions.map((question) => question.id)).size, 11);
-});
-
-test('grammar listening self-grading does not change long-term progress or stats', () => {
-  const question = {
-    id: 'grammar-listening:grammar-1:example-1',
-    itemId: 'grammar-1',
-    kind: 'grammar-listening',
-    ko: '한국어 문장입니다.',
-    zh: '這是韓文句子。',
-    source: { id: 'grammar-1', title: '文法一' },
-  };
-  const store = {
-    attempts: [],
-    stats: { untouched: { total: 1 } },
-    progress: { untouched: { stage: 1 } },
-    grammarListening: {
-      correctIds: [],
-      pendingWrongIds: [],
-      roundCompletedOn: '',
-      dailyDate: '2026-07-31',
-      assignmentIds: [question.id],
-      answeredIds: [],
-    },
-  };
-  const next = helpers.recordDailyGrammarListeningAnswer(store, question, false);
-  assert.deepEqual(next.stats, store.stats);
-  assert.deepEqual(next.progress, store.progress);
-  assert.equal(next.attempts[0].correct, false);
-  assert.equal(next.attempts[0].mode, 'daily-grammar-listening');
-  assert.deepEqual(next.grammarListening.pendingWrongIds, [question.id]);
-});
-
 test('well-known daily terms can be postponed for 30 days without losing the answer record', () => {
   const question = {
     id: 'term-known',
@@ -492,6 +427,7 @@ test('daily grammar review continues into newly added notes before wrapping', ()
   const schedule = helpers.dailyGrammarSchedule(grammarNotes, review, '2026-07-24');
   assert.equal(schedule.note.id, 'grammar-11');
   assert.deepEqual(schedule.questions.map((question) => question.zh), ['句子 11A', '句子 11B']);
+  assert.ok(schedule.questions.every((question) => question.kind === 'grammar-example'));
 
   const wrapped = helpers.dailyGrammarSchedule(grammarNotes, {
     ...review,
