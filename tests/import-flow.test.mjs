@@ -133,17 +133,19 @@ test('editing a replacement into another existing Korean word is rejected', () =
   assert.throws(() => helpers.resolveImportConflictDraft(draft, 'edit', [first, second]), /會和既有單字重複/);
 });
 
-test('daily recognition never adds more questions after the daily limit was answered', () => {
+test('daily word-example listening never adds more questions after the daily limit was answered', () => {
   const questions = Array.from({ length: 100 }, (_, index) => ({
-    id: `term-${index}`,
-    itemId: `term-${index}`,
+    id: `example-${index}`,
+    itemId: `card-${Math.floor(index / 4)}`,
     date: '2026-07-01',
-    kind: 'term',
+    kind: 'example',
+    ko: `例句 ${index}`,
+    zh: `句子 ${index}`,
     source: { index },
   }));
   const attempts = Array.from({ length: 50 }, (_, index) => ({
     id: `attempt-${index}`,
-    questionId: `term-${index}`,
+    questionId: `example-${index}`,
     correct: true,
     date: '2026-07-22',
     time: `2026-07-22T01:${String(index).padStart(2, '0')}:00.000Z`,
@@ -156,7 +158,7 @@ test('daily recognition never adds more questions after the daily limit was answ
       pendingWrongIds: [],
       roundCompletedOn: '',
       dailyDate: '2026-07-22',
-      assignmentIds: Array.from({ length: 50 }, (_, index) => `term-${index + 50}`),
+      assignmentIds: Array.from({ length: 50 }, (_, index) => `example-${index + 50}`),
       answeredIds: [],
     },
   };
@@ -177,7 +179,7 @@ test('daily recognition initialization runs only when the persisted date changes
   }, '2026-07-23'), false);
 });
 
-test('daily recognition listening mode reveals Korean before the answer', () => {
+test('grammar listening mode reveals its Chinese cue before the answer', () => {
   const listeningStart = helpers.nextRecognitionRevealState(true, false, false);
   assert.deepEqual(listeningStart, { wordVisible: true, revealed: false });
   assert.deepEqual(
@@ -190,17 +192,69 @@ test('daily recognition listening mode reveals Korean before the answer', () => 
   );
 });
 
-test('recognition example audio skips empty Korean and cycles predictably', () => {
-  const examples = helpers.recognitionKoreanExamples({
-    meanings: [
-      { examples: [{ ko: '첫 번째 문장입니다.', zh: '第一句。' }, { ko: '', zh: '只有中文。' }] },
-      { examples: [{ ko: '두 번째 문장입니다.', zh: '第二句。' }] },
-    ],
-  });
-  assert.deepEqual(examples, ['첫 번째 문장입니다.', '두 번째 문장입니다.']);
-  assert.equal(helpers.nextRecognitionExampleIndex(0, examples.length), 1);
-  assert.equal(helpers.nextRecognitionExampleIndex(1, examples.length), 0);
-  assert.equal(helpers.nextRecognitionExampleIndex(0, 0), 0);
+test('daily word-example listening replaces stale term assignments on the same day', () => {
+  const questions = Array.from({ length: 60 }, (_, index) => ({
+    id: `example-${index}`,
+    itemId: `card-${index}`,
+    date: '2026-07-01',
+    kind: 'example',
+    source: { index },
+  }));
+  const schedule = helpers.dailyRecognitionSchedule({
+    attempts: [],
+    recognition: {
+      correctIds: ['old-term'],
+      pendingWrongIds: [],
+      roundCompletedOn: '',
+      dailyDate: '2026-07-22',
+      assignmentIds: ['old-term'],
+      answeredIds: [],
+    },
+  }, questions, '2026-07-22', 50);
+  assert.equal(schedule.questions.length, 50);
+  assert.ok(schedule.questions.every((question) => question.kind === 'example'));
+  assert.ok(!schedule.state.assignmentIds.includes('old-term'));
+});
+
+test('every stored word example enters the listening pool even when text is repeated', () => {
+  const records = ['first', 'second'].map((id, index) => ({
+    id,
+    date: '2026-08-01',
+    order: index,
+    item: {
+      ko: `단어 ${index}`,
+      meanings: [{
+        id: `${id}-meaning`,
+        zh: `單字 ${index}`,
+        examples: [{ id: `${id}-example`, ko: '같은 문장입니다.', zh: '相同的句子。' }],
+      }],
+      related: [],
+    },
+  }));
+  const { questions } = helpers.normalizeRecords(records);
+  const examples = questions.filter((question) => question.kind === 'example');
+  assert.deepEqual(examples.map((question) => question.id), ['first-example', 'second-example']);
+  assert.equal(helpers.dailyRecognitionSchedule({ attempts: [], recognition: null }, questions, '2026-08-13').questions.length, 2);
+});
+
+test('daily word-example listening wrong answers only affect tomorrow round state', () => {
+  const question = {
+    id: 'example-1', itemId: 'card-1', kind: 'example', ko: '문장입니다.', zh: '這是句子。', source: {},
+  };
+  const store = {
+    attempts: [],
+    stats: { untouched: { total: 1 } },
+    progress: { untouched: { stage: 1 } },
+    recognition: {
+      correctIds: [], pendingWrongIds: [], roundCompletedOn: '', dailyDate: '2026-08-13',
+      assignmentIds: [question.id], answeredIds: [],
+    },
+  };
+  const next = helpers.recordDailyRecognitionAnswer(store, question, false);
+  assert.deepEqual(next.stats, store.stats);
+  assert.deepEqual(next.progress, store.progress);
+  assert.equal(next.attempts[0].correct, false);
+  assert.deepEqual(next.recognition.pendingWrongIds, [question.id]);
 });
 
 test('daily grammar listening assigns 20 examples and keeps wrong answers for tomorrow', () => {

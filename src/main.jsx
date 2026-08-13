@@ -691,17 +691,6 @@ function itemExamples(item) {
   return (item.meanings || []).flatMap((meaning) => meaning.examples || []);
 }
 
-function recognitionKoreanExamples(item) {
-  return itemExamples(item)
-    .map((example) => String(example.ko || '').trim())
-    .filter(Boolean);
-}
-
-function nextRecognitionExampleIndex(currentIndex, exampleCount) {
-  if (exampleCount <= 0) return 0;
-  return (currentIndex + 1) % exampleCount;
-}
-
 function displayRelated(item, allItems = []) {
   const byId = new Map(allItems.map((entry) => [entry.id, entry]));
   return (item.related || []).map((id) => byId.get(id)).filter(Boolean);
@@ -721,11 +710,7 @@ function normalizeRecords(records) {
   }));
 
   const questions = [];
-  const seenExamples = new Set();
   const addExampleQuestion = (item, example, id) => {
-    const key = `${example.ko}\n${example.zh}`;
-    if (seenExamples.has(key)) return;
-    seenExamples.add(key);
     questions.push({
       id,
       itemId: item.id,
@@ -1393,7 +1378,7 @@ function dailyRoundSchedule(store, questions, {
     .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
   const attemptedIds = [...new Set(attemptsToday.map((attempt) => attempt.questionId))];
   let assignmentIds = (state.assignmentIds || []).filter((id) => questionIds.has(id));
-  if (state.dailyDate !== date) {
+  if (state.dailyDate !== date || (!assignmentIds.length && !attemptedIds.length)) {
     const wrong = shuffleItems(
       questions.filter((question) => pendingWrongIds.has(question.id)),
       seedFromString(`${date}-${mode}-wrong`),
@@ -1440,8 +1425,8 @@ function dailyRoundSchedule(store, questions, {
 }
 
 function dailyRecognitionSchedule(store, questions, date = todayString(), limit = DAILY_RECOGNITION_LIMIT) {
-  const terms = orderReviewQuestions(questions.filter((question) => question.kind === 'term'));
-  return dailyRoundSchedule(store, terms, {
+  const examples = orderReviewQuestions(questions.filter((question) => question.kind === 'example'));
+  return dailyRoundSchedule(store, examples, {
     stateKey: 'recognition',
     mode: DAILY_RECOGNITION_MODE,
     date,
@@ -1682,7 +1667,6 @@ function recordDailyRecognitionAnswer(store, question, correct) {
   return recordDailyRoundAnswer(store, question, correct, {
     stateKey: 'recognition',
     mode: DAILY_RECOGNITION_MODE,
-    recordWrongStats: true,
   });
 }
 
@@ -2108,7 +2092,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
   const progress = totalPending ? Math.max(0, Math.round((answeredToday.length / (answeredToday.length + totalPending)) * 100)) : 100;
   const startNextDailyTask = () => {
     if (due.length) onPractice(due, '今日測驗', { dueOnly: true, dailyReview: true });
-    else if (recognition.length) onPractice(recognition, '每日韓文認字測驗', { dueOnly: true, mode: DAILY_RECOGNITION_MODE });
+    else if (recognition.length) onPractice(recognition, '每日單字例句聽力', { dueOnly: true, mode: DAILY_RECOGNITION_MODE });
     else if (grammarListening.length) onPractice(grammarListening, '每日文法例句聽力', { dueOnly: true, mode: DAILY_GRAMMAR_LISTENING_MODE });
     else onPractice(grammarQuestions, `每日文法測驗 · ${grammarSchedule.note.title}`, {
       dueOnly: true,
@@ -2125,7 +2109,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
         <div>
           <span className="eyebrow">Today · {dateLabel(today)}</span>
           <h1>今天也來練一點韓文</h1>
-          <p>目前有 {totalPending} 題等待完成，包含到期單字、每日認字、文法聽力與文法測驗。</p>
+          <p>目前有 {totalPending} 題等待完成，包含到期單字、單字例句聽力、文法聽力與文法測驗。</p>
           <div className="actions">
             <button className="primary" disabled={!totalPending} onClick={startNextDailyTask}><Dumbbell size={18} /> 開始今日測驗</button>
             <button onClick={() => setAddOpen(true)}><Plus size={18} /> 快速新增單字</button>
@@ -2180,10 +2164,10 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
               <div className="task-card recognition-task-card">
                 <div>
                   <span className="badge">每日</span>
-                  <h3>韓文認字測驗</h3>
-                  <p>從全部單字隨機抽題 · 剩餘 {recognition.length} 題</p>
+                  <h3>單字例句聽力</h3>
+                  <p>從全部單字的所有例句隨機抽題 · 剩餘 {recognition.length} 題</p>
                 </div>
-                <button className="primary small" onClick={() => onPractice(recognition, '每日韓文認字測驗', { dueOnly: true, mode: DAILY_RECOGNITION_MODE })}>開始</button>
+                <button className="primary small" onClick={() => onPractice(recognition, '每日單字例句聽力', { dueOnly: true, mode: DAILY_RECOGNITION_MODE })}>開始</button>
               </div>
             )}
             {!!grammarListening.length && (
@@ -3754,10 +3738,8 @@ function PracticePage({ store, updateStore, set }) {
   const fixedSource = set.termOnly || set.dueOnly;
   const activeDirection = recognitionMode || grammarListeningMode ? 'ko-zh' : set.dueOnly ? 'zh-ko' : direction;
   const shouldRecordResults = !grammarMode && !grammarListeningMode && (set.dueOnly || recordResults);
-  const [recognitionListening, setRecognitionListening] = useState(false);
-  const [recognitionWordVisible, setRecognitionWordVisible] = useState(!grammarListeningMode);
-  const [recognitionExampleIndex, setRecognitionExampleIndex] = useState(0);
-  const [started, setStarted] = useState(!!set.dueOnly && !recognitionMode);
+  const [recognitionWordVisible, setRecognitionWordVisible] = useState(false);
+  const [started, setStarted] = useState(!!set.dueOnly);
   const [questionQueue, setQuestionQueue] = useState([]);
   const [index, setIndex] = useState(0);
   const [input, setInput] = useState('');
@@ -3786,14 +3768,6 @@ function PracticePage({ store, updateStore, set }) {
   }, [set.questions, source, direction, set.termOnly, set.dueOnly, recognitionMode, grammarListeningMode, grammarMode, store, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
-  const recognitionExamples = useMemo(
-    () => (recognitionMode && question ? recognitionKoreanExamples(question.source) : []),
-    [recognitionMode, question?.id],
-  );
-  const activeRecognitionExampleIndex = recognitionExamples.length
-    ? recognitionExampleIndex % recognitionExamples.length
-    : 0;
-  const currentRecognitionExample = recognitionExamples[activeRecognitionExampleIndex] || '';
   const resetSession = () => {
     setSessionFinished(false);
     setStarted(false);
@@ -3806,7 +3780,7 @@ function PracticePage({ store, updateStore, set }) {
     setLastCorrect(null);
     setTypedAttempts(0);
     setMonthlySkipPrompt(false);
-    setRecognitionWordVisible(!(recognitionListening || grammarListeningMode));
+    setRecognitionWordVisible(false);
     setCompletionError('');
     setCompletionSaving(false);
     setMonthlySkipPrompt(false);
@@ -3831,11 +3805,11 @@ function PracticePage({ store, updateStore, set }) {
     setLastCorrect(null);
     setTypedAttempts(0);
     setMonthlySkipPrompt(false);
-    setRecognitionWordVisible(!(recognitionListening || grammarListeningMode));
+    setRecognitionWordVisible(false);
   };
 
   useEffect(() => {
-    if (!set.dueOnly || recognitionMode) return;
+    if (!set.dueOnly) return;
     if (questionQueue.length) return;
     const nextQuestions = recognitionMode || grammarListeningMode || grammarMode ? sourceQuestions : shuffleReviewQuestionsByKind(sourceQuestions);
     setQuestionQueue(nextQuestions);
@@ -3847,21 +3821,15 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
-    setRecognitionWordVisible(!grammarListeningMode);
+    setRecognitionWordVisible(false);
   }, [set.dueOnly, recognitionMode, grammarListeningMode, grammarMode, sourceQuestions, questionQueue.length]);
 
   useEffect(() => {
-    const audioFirst = (recognitionMode && recognitionListening) || grammarListeningMode;
+    const audioFirst = recognitionMode || grammarListeningMode;
     if (!started || !audioFirst || recognitionWordVisible || !question) return undefined;
     const timer = window.setTimeout(() => speakAnswer(question), 180);
     return () => window.clearTimeout(timer);
-  }, [started, recognitionMode, recognitionListening, grammarListeningMode, recognitionWordVisible, question?.id]);
-
-  useEffect(() => {
-    setRecognitionExampleIndex(
-      recognitionExamples.length ? Math.floor(Math.random() * recognitionExamples.length) : 0,
-    );
-  }, [question?.id, recognitionExamples.length]);
+  }, [started, recognitionMode, grammarListeningMode, recognitionWordVisible, question?.id]);
 
   useEffect(() => {
     if (direction === 'ko-zh') setSource('term');
@@ -3891,7 +3859,7 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
-    setRecognitionWordVisible(!(recognitionListening || grammarListeningMode));
+    setRecognitionWordVisible(false);
     if (index + 1 < queue.length) setIndex(index + 1);
     else if (set.dueOnly) finishSession();
     else resetSession();
@@ -3963,28 +3931,23 @@ function PracticePage({ store, updateStore, set }) {
     if (autoPronounce) speakAnswer(question);
   };
   const advanceRecognitionStage = () => {
+    if (recognitionMode) {
+      setRecognitionWordVisible(true);
+      revealAnswerForSelfGrade();
+      return;
+    }
     const next = nextRecognitionRevealState(
-      (recognitionMode && recognitionListening) || grammarListeningMode,
+      grammarListeningMode,
       recognitionWordVisible,
       revealed,
     );
     setRecognitionWordVisible(next.wordVisible);
     if (next.revealed) revealAnswerForSelfGrade();
   };
-  const playRecognitionExample = () => {
-    if (currentRecognitionExample) speakText(currentRecognitionExample, 'ko-KR');
-  };
-  const playNextRecognitionExample = () => {
-    if (!recognitionExamples.length) return;
-    const nextIndex = nextRecognitionExampleIndex(activeRecognitionExampleIndex, recognitionExamples.length);
-    setRecognitionExampleIndex(nextIndex);
-    speakText(recognitionExamples[nextIndex], 'ko-KR');
-  };
-
   useEffect(() => {
     if (!started) return undefined;
     const onKeyDown = (event) => {
-      if (event.key === ' ' && ((recognitionMode && recognitionListening) || grammarListeningMode) && !event.isComposing) {
+      if (event.key === ' ' && (recognitionMode || grammarListeningMode) && !event.isComposing) {
         event.preventDefault();
         speakAnswer(question);
         return;
@@ -4001,33 +3964,7 @@ function PracticePage({ store, updateStore, set }) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [started, revealed, graded, question, index, queue.length, recognitionMode, recognitionListening, grammarListeningMode]);
-
-  if (!started && recognitionMode) {
-    return (
-      <section className="page practice-start">
-        <div className="panel start-panel recognition-start-panel">
-          <span className="eyebrow">Recognition · {set.label}</span>
-          <h1>選擇認字測驗方式</h1>
-          <div className="segmented recognition-mode-picker">
-            <button className={!recognitionListening ? 'active' : ''} onClick={() => setRecognitionListening(false)}>
-              顯示韓文
-            </button>
-            <button className={recognitionListening ? 'active' : ''} onClick={() => setRecognitionListening(true)}>
-              <Volume2 size={17} /> 純聽力
-            </button>
-          </div>
-          <div className="fixed-source-note">
-            {recognitionListening
-              ? '每題會先只播放韓文發音；第一次揭露顯示韓文，第二次才顯示完整答案卡。'
-              : '題目會直接顯示韓文，揭露後查看完整答案卡並自行判斷答對或答錯。'}
-          </div>
-          <p>{sourceQuestions.length} 題等待測驗。</p>
-          <button className="primary wide" disabled={!sourceQuestions.length} onClick={startSession}>開始</button>
-        </div>
-      </section>
-    );
-  }
+  }, [started, revealed, graded, question, index, queue.length, recognitionMode, grammarListeningMode]);
 
   if (!started && !set.dueOnly) {
     return (
@@ -4104,19 +4041,11 @@ function PracticePage({ store, updateStore, set }) {
         <div className="practice-shell">
           <div className="progress-line"><span style={{ width: `${((index + 1) / queue.length) * 100}%` }} /></div>
           <div className="quiz-meta quiz-meta-row">
-            <span>{index + 1} / {queue.length} · {grammarListeningMode ? '文法例句聽力' : recognitionMode ? (recognitionListening ? '純聽力認字' : '韓文認字') : activeDirection === 'zh-ko' ? '中翻韓' : '韓翻中'}</span>
+            <span>{index + 1} / {queue.length} · {grammarListeningMode ? '文法例句聽力' : recognitionMode ? '單字例句聽力' : activeDirection === 'zh-ko' ? '中翻韓' : '韓翻中'}</span>
             <div className="quiz-options">
               <button className={soundEnabled ? 'selected-soft' : ''} onClick={() => setSoundEnabled((enabled) => !enabled)}>{soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />} 音效</button>
-              {!recognitionListening && !grammarListeningMode && <button className={autoPronounce ? 'selected-soft' : ''} onClick={() => setAutoPronounce((enabled) => !enabled)}>{autoPronounce ? <Volume2 size={16} /> : <VolumeX size={16} />} 自動發音</button>}
-              <button disabled={!recognitionMode && !grammarListeningMode && !revealed && !graded} onClick={() => speakAnswer(question)}><Volume2 size={16} /> {recognitionListening || grammarListeningMode ? '重播' : '發音'}</button>
-              {recognitionMode && !!recognitionExamples.length && (
-                <button onClick={playRecognitionExample}>
-                  <Volume2 size={16} /> {recognitionExamples.length > 1 ? `例句 ${activeRecognitionExampleIndex + 1}/${recognitionExamples.length}` : '播放例句'}
-                </button>
-              )}
-              {recognitionMode && recognitionExamples.length > 1 && (
-                <button onClick={playNextRecognitionExample}><ChevronRight size={16} /> 下一句</button>
-              )}
+              {!recognitionMode && !grammarListeningMode && <button className={autoPronounce ? 'selected-soft' : ''} onClick={() => setAutoPronounce((enabled) => !enabled)}>{autoPronounce ? <Volume2 size={16} /> : <VolumeX size={16} />} 自動發音</button>}
+              <button disabled={!recognitionMode && !grammarListeningMode && !revealed && !graded} onClick={() => speakAnswer(question)}><Volume2 size={16} /> {recognitionMode || grammarListeningMode ? '重播' : '發音'}</button>
             </div>
           </div>
           {activeDirection === 'zh-ko' ? (
@@ -4164,11 +4093,11 @@ function PracticePage({ store, updateStore, set }) {
             </>
           ) : (
             <>
-              {((recognitionMode && recognitionListening) || grammarListeningMode) && !recognitionWordVisible ? (
+              {(recognitionMode || grammarListeningMode) && !recognitionWordVisible ? (
                 <div className="prompt ko recognition-listening-prompt">
                   <Volume2 size={42} aria-hidden="true" />
-                  <span>{grammarListeningMode ? '請聆聽韓文例句' : '請聆聽韓文發音'}</span>
-                  <small>{grammarListeningMode ? '需要時可按右上方「重播」再次播放' : recognitionExamples.length ? '可重播單字，也可以播放韓文例句' : '需要時可按右上方「重播」再次播放'}</small>
+                  <span>{grammarListeningMode ? '請聆聽文法例句' : '請聆聽單字例句'}</span>
+                  <small>需要時可按右上方「重播」再次播放</small>
                 </div>
               ) : (
                 <div className="prompt ko">
@@ -4183,9 +4112,7 @@ function PracticePage({ store, updateStore, set }) {
                 <button className="primary wide" onClick={advanceRecognitionStage}>
                   {!recognitionWordVisible && grammarListeningMode
                     ? '顯示中文'
-                    : !recognitionWordVisible && recognitionMode && recognitionListening
-                      ? '顯示韓文'
-                      : '公佈答案'}
+                    : '公佈答案'}
                 </button>
               ) : (
                 <div className="answer-panel grade-banner">
@@ -4870,14 +4797,14 @@ export {
   formatPairLines,
   normalizeGrammarNote,
   normalizeKoreanKey,
+  normalizeRecords,
   parseGrammarExamplesText,
   parsePairLines,
-  nextRecognitionExampleIndex,
   nextRecognitionRevealState,
   recordOrder,
   recordAnswer,
+  recordDailyRecognitionAnswer,
   recordDailyGrammarListeningAnswer,
-  recognitionKoreanExamples,
   recordsFromSnapshot,
   resolveImportConflictDraft,
   shouldInitializeDailyRecognition,

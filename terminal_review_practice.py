@@ -495,7 +495,6 @@ def normalize_records(records: List[Dict[str, Any]], state: Dict[str, Any]) -> T
     starred = set(state.get("starred") or [])
     cards: List[Card] = []
     questions: List[Question] = []
-    seen_examples: set[Tuple[str, str]] = set()
     for index, record in enumerate(records):
         item = record.get("item", {}) or {}
         record_id = record.get("id") or record.get("_docId")
@@ -525,9 +524,8 @@ def normalize_records(records: List[Dict[str, Any]], state: Dict[str, Any]) -> T
             for ex_index, example in enumerate(meaning.get("examples", []) or []):
                 ko = str(example.get("ko", "")).strip()
                 zh = str(example.get("zh", "")).strip()
-                if not ko or not zh or (ko, zh) in seen_examples:
+                if not ko or not zh:
                     continue
-                seen_examples.add((ko, zh))
                 qid = str(example.get("id") or f"{card.id}-{meaning.get('id', 'meaning')}-ex-{ex_index}")
                 questions.append(Question(qid, card.id, card.date, "example", ko, zh, card))
     cards.sort(key=lambda c: (c.date, c.order, c.id))
@@ -722,7 +720,7 @@ def daily_round_questions(
     )
     attempted_ids = list(dict.fromkeys(str(attempt.get("questionId")) for attempt in attempts_today))
     assignment_ids = [item for item in (round_state.get("assignmentIds") or []) if item in question_ids]
-    if round_state.get("dailyDate") != date_key:
+    if round_state.get("dailyDate") != date_key or (not assignment_ids and not attempted_ids):
         wrong = shuffle_items(
             (question for question in ordered_questions if question.id in pending_wrong_ids),
             seed_from_string(f"{date_key}-{mode}-wrong"),
@@ -761,10 +759,10 @@ def daily_recognition_questions(
     date_key: Optional[str] = None,
     limit: int = DAILY_RECOGNITION_LIMIT,
 ) -> List[Question]:
-    terms = [question for question in questions if question.kind == "term"]
+    examples = [question for question in questions if question.kind == "example"]
     return daily_round_questions(
         state,
-        terms,
+        examples,
         "recognition",
         DAILY_RECOGNITION_MODE,
         date_key,
@@ -901,7 +899,6 @@ def record_daily_recognition_answer(state: Dict[str, Any], question: Question, c
         correct,
         "recognition",
         DAILY_RECOGNITION_MODE,
-        record_wrong_stats=True,
     )
 
 
@@ -1532,7 +1529,7 @@ def due_task_menu(
     if due:
         options.append((DAILY_MIXED_MODE, f"全部到期單字（混合隨機） · {len(due)} 題"))
     if recognition:
-        options.append((DAILY_RECOGNITION_MODE, f"每日韓文認字測驗 · 剩餘 {len(recognition)} 題"))
+        options.append((DAILY_RECOGNITION_MODE, f"每日單字例句聽力 · 剩餘 {len(recognition)} 題"))
     if grammar_listening:
         options.append((DAILY_GRAMMAR_LISTENING_MODE, f"每日文法例句聽力 · 剩餘 {len(grammar_listening)} 題"))
     if grammar_note and grammar_questions:
@@ -1682,21 +1679,19 @@ def run_daily_recognition(
     state: Dict[str, Any],
     client: FirebaseClient,
     session: AuthSession,
-    listening_mode: bool = False,
     grammar_listening_mode: bool = False,
 ) -> None:
-    title = "每日文法例句聽力" if grammar_listening_mode else "每日韓文認字測驗"
+    title = "每日文法例句聽力" if grammar_listening_mode else "每日單字例句聽力"
     if not questions:
         wait_message(stdscr, title, "今天的題目已完成。")
         return
 
     idx = 0
     revealed = False
-    word_visible = not listening_mode and not grammar_listening_mode
+    word_visible = False
     message = ""
     scroll_offset = 0
     results: Dict[str, bool] = {}
-    example_indices: Dict[str, int] = {}
     spoken_question_id = ""
     cards_by_id = {card.id: card for card in all_cards}
     curses.curs_set(0)
@@ -1704,35 +1699,25 @@ def run_daily_recognition(
     while True:
         question = questions[idx]
         card = question.source
-        korean_examples = [] if grammar_listening_mode else [
-            example["ko"]
-            for example in card_examples(card)
-            if example.get("ko")
-        ]
-        if question.id not in example_indices:
-            example_indices[question.id] = random.randrange(len(korean_examples)) if korean_examples else 0
-        example_index = example_indices[question.id]
         graded = question.id in results
         if graded:
             revealed = True
         stdscr.erase()
         height, width = stdscr.getmaxyx()
-        example_help = " 9=例句" if korean_examples else ""
-        next_example_help = " +=下句" if len(korean_examples) > 1 else ""
         star_help = "" if grammar_listening_mode else " 0=星號"
-        audio_label = "例句" if grammar_listening_mode else "單字"
+        audio_label = "例句"
         draw_line(
             stdscr,
             1,
             2,
-            f"{'文法聽力' if grammar_listening_mode else '認字' + ('·純聽力' if listening_mode else '')} | {title} | {idx + 1}/{len(questions)}  Esc=返回{star_help} 7={audio_label}{example_help}{next_example_help} 8=揭露 4/6=上下題 1=答錯 2=答對 ↑↓=捲動",
+            f"{'文法聽力' if grammar_listening_mode else '例句聽力'} | {title} | {idx + 1}/{len(questions)}  Esc=返回{star_help} 7={audio_label} 8=揭露 4/6=上下題 1=答錯 2=答對 ↑↓=捲動",
             curses.A_BOLD,
         )
         if grammar_listening_mode:
             prompt_text = question.ko if revealed else question.zh if word_visible else "[韓文隱藏，請聆聽例句]"
             prompt_prefix = ""
         else:
-            prompt_text = card.ko if word_visible or revealed else "[韓文隱藏，請聆聽發音]"
+            prompt_text = question.ko if revealed else "[韓文隱藏，請聆聽例句]"
             prompt_prefix = f"{'★' if card.is_starred else '☆'} "
         draw_wrapped(stdscr, 2, 2, width - 4, f"{prompt_prefix}{prompt_text}", curses.A_BOLD)
         detail_lines: List[Tuple[str, int, int]] = []
@@ -1743,13 +1728,9 @@ def run_daily_recognition(
                 detail_lines.append((line, indent, attr))
 
         if not revealed:
-            if (listening_mode or grammar_listening_mode) and not word_visible:
+            if not word_visible:
                 listening_help = f"按 7 重播{audio_label}"
-                if korean_examples:
-                    listening_help += f"；按 9 播放例句 {example_index + 1}/{len(korean_examples)}"
-                    if len(korean_examples) > 1:
-                        listening_help += "；按 + 切換下一句"
-                reveal_label = "中文" if grammar_listening_mode else "韓文"
+                reveal_label = "中文" if grammar_listening_mode else "完整答案"
                 append_detail(f"{listening_help}；按 8 顯示{reveal_label}。", attr=curses.A_DIM)
             else:
                 append_detail(
@@ -1792,7 +1773,7 @@ def run_daily_recognition(
             elif grammar_listening_mode:
                 result_text = "答錯，已保留到明日題目"
             else:
-                result_text = "答錯，已加入明日題目並記入不熟悉"
+                result_text = "答錯，已保留到明日題目"
             footer = f"{result_text}。按 Enter 或 6 進入下一題。"
         elif revealed and not footer:
             footer = "1=答錯  2=答對"
@@ -1801,10 +1782,9 @@ def run_daily_recognition(
         if footer:
             draw_line(stdscr, height - 1, 2, footer, curses.A_BOLD)
         update_curses_screen(stdscr)
-        if (listening_mode or grammar_listening_mode) and not word_visible and not graded and spoken_question_id != question.id:
+        if not word_visible and not graded and spoken_question_id != question.id:
             spoken_question_id = question.id
-            speech_text = question.ko if grammar_listening_mode else card.ko
-            if not speak_korean(speech_text):
+            if not speak_korean(question.ko):
                 message = "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
             continue
         key = stdscr.get_wch()
@@ -1821,7 +1801,7 @@ def run_daily_recognition(
                 return
             idx += 1
             revealed = questions[idx].id in results
-            word_visible = revealed or (not listening_mode and not grammar_listening_mode)
+            word_visible = revealed
             message = ""
             scroll_offset = 0
             continue
@@ -1843,36 +1823,17 @@ def run_daily_recognition(
             message = "已打星號" if card.is_starred else "已取消星號"
         elif key == "8":
             if not graded:
-                word_visible, revealed = next_recognition_reveal_state(
-                    listening_mode or grammar_listening_mode,
-                    word_visible,
-                    revealed,
-                )
+                if grammar_listening_mode:
+                    word_visible, revealed = next_recognition_reveal_state(True, word_visible, revealed)
+                else:
+                    word_visible, revealed = True, True
             message = ""
             scroll_offset = 0
         elif key == "7":
-            speech_text = question.ko if grammar_listening_mode else card.ko
-            if not speak_korean(speech_text):
+            if not speak_korean(question.ko):
                 message = "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
             else:
                 message = "已重播韓文發音。"
-        elif key == "9":
-            if not korean_examples:
-                message = "這張單字卡沒有韓文例句。"
-            elif not speak_korean(korean_examples[example_index]):
-                message = "無法播放例句語音。"
-            else:
-                message = f"已播放例句 {example_index + 1}/{len(korean_examples)}。"
-        elif key == "+":
-            if not korean_examples:
-                message = "這張單字卡沒有韓文例句。"
-            else:
-                example_index = (example_index + 1) % len(korean_examples)
-                example_indices[question.id] = example_index
-                if not speak_korean(korean_examples[example_index]):
-                    message = "無法播放例句語音。"
-                else:
-                    message = f"已切換並播放例句 {example_index + 1}/{len(korean_examples)}。"
         elif key in ("1", "2"):
             if not revealed:
                 message = "請先按 8 翻面查看答案。"
@@ -1894,7 +1855,7 @@ def run_daily_recognition(
         elif key == "4":
             idx = max(0, idx - 1)
             revealed = questions[idx].id in results
-            word_visible = revealed or (not listening_mode and not grammar_listening_mode)
+            word_visible = revealed
             message = ""
             scroll_offset = 0
         elif key == "6":
@@ -1906,7 +1867,7 @@ def run_daily_recognition(
                 return
             idx += 1
             revealed = questions[idx].id in results
-            word_visible = revealed or (not listening_mode and not grammar_listening_mode)
+            word_visible = revealed
             message = ""
             scroll_offset = 0
 
@@ -2208,24 +2169,14 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
             if task:
                 task_type, selected = task
                 if task_type == DAILY_RECOGNITION_MODE:
-                    recognition_mode = menu(
+                    run_daily_recognition(
                         stdscr,
-                        "每日韓文認字測驗 | 選擇方式",
-                        [
-                            ("visible", "顯示韓文（原本模式）"),
-                            ("listening", "純聽力（先聽發音，再揭露韓文）"),
-                        ],
+                        selected,
+                        cards,
+                        state,
+                        client,
+                        session,
                     )
-                    if recognition_mode:
-                        run_daily_recognition(
-                            stdscr,
-                            selected,
-                            cards,
-                            state,
-                            client,
-                            session,
-                            listening_mode=recognition_mode == "listening",
-                        )
                 elif task_type == DAILY_GRAMMAR_LISTENING_MODE:
                     run_daily_recognition(
                         stdscr,
@@ -2234,7 +2185,6 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                         state,
                         client,
                         session,
-                        listening_mode=True,
                         grammar_listening_mode=True,
                     )
                 elif task_type == DAILY_GRAMMAR_MODE:

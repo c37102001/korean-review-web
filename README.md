@@ -18,9 +18,9 @@ npm run dev
 - `users/{uid}/records/{recordId}`：單字卡唯一資料來源
 - `users/{uid}/progressShards/{00..15}`：分成 16 份的答題統計與 SRS 進度
 - `users/{uid}/reviewDays/{date}`：按日期分組的作答紀錄
-- `users/{uid}/settings/review`：星號、完成日期、每日認字輪次與 DB schema 版本
+- `users/{uid}/settings/review`：星號、完成日期、每日單字例句聽力輪次與 DB schema 版本
 
-progress shard 只會原子更新變動題目；作答紀錄使用原子追加，避免網頁、手機與 terminal 同時使用時互相覆寫。每日認字輪次保存於 settings，不再依賴重播全部歷史紀錄。
+progress shard 只會原子更新變動題目；作答紀錄使用原子追加，避免網頁、手機與 terminal 同時使用時互相覆寫。每日單字例句聽力輪次保存於 settings，不再依賴重播全部歷史紀錄。
 
 內容 schema v2：
 
@@ -51,12 +51,12 @@ python3 -m pip install -r requirements-terminal.txt
 python3 terminal_review_practice.py
 ```
 
-每日認字的純聽力模式使用 Microsoft Neural 韓文語音，並將產生的音檔快取在
+每日單字例句聽力使用 Microsoft Neural 韓文語音，並將產生的音檔快取在
 `~/.cache/korean-review-web/tts`。系統需要 `cvlc` 或 `ffplay` 播放音檔；
 無網路或 Neural 語音不可用時，程式會退回 `spd-say`／`espeak-ng`。
 
-純聽力模式快捷鍵：`7` 重播單字、`9` 播放目前例句、`+` 切換並播放下一句、
-`8` 依序揭露韓文與完整答案。
+單字例句聽力快捷鍵：`7` 重播目前例句、`8` 公佈完整單字卡，之後以
+`1`（答錯）或 `2`（答對）自評。
 
 每日文法例句聽力同樣使用 `7` 重播；`8` 會依序顯示中文提示與韓文答案，
 翻面後用 `1`（答錯）或 `2`（答對）自評。

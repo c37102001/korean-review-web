@@ -1554,13 +1554,6 @@ main {
   box-shadow: none;
 }
 
-.recognition-mode-picker button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-}
-
 .recognition-listening-prompt {
   min-height: 210px;
   display: grid;
