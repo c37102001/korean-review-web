@@ -422,6 +422,25 @@ class FirebaseClient:
                 raise RuntimeError(f"Network error: {exc.reason}") from None
 
 
+def mark_word_as_learned(
+    client: FirebaseClient,
+    session: AuthSession,
+    state: Dict[str, Any],
+    word_id: str,
+) -> bool:
+    """Persist a learned word once and keep the in-memory filters in sync."""
+    learned_word_ids = list(state.get("learnedWordIds") or [])
+    if word_id in learned_word_ids:
+        return False
+    client.add_word_to_learned_folder(
+        session,
+        str(state.get("learnedFolderId") or SYSTEM_LEARNED_FOLDER_ID),
+        word_id,
+    )
+    state["learnedWordIds"] = [*learned_word_ids, word_id]
+    return True
+
+
 def empty_state() -> Dict[str, Any]:
     return {
         "stats": {},
@@ -1725,7 +1744,7 @@ def run_daily_recognition(
             revealed = True
         stdscr.erase()
         height, width = stdscr.getmaxyx()
-        star_help = "" if grammar_mode else " 0=星號"
+        star_help = "" if grammar_mode else " 0=星號 -=已學習"
         audio_label = "例句"
         draw_line(
             stdscr,
@@ -1855,6 +1874,23 @@ def run_daily_recognition(
                 message = "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
             else:
                 message = "已重播韓文發音。"
+        elif key == "-" and not grammar_mode:
+            if not revealed:
+                message = "請先按 8 揭露答案，再加入「已學習」。"
+                continue
+            try:
+                added = mark_word_as_learned(client, session, state, question.item_id)
+            except RuntimeError as exc:
+                message = f"加入已學習失敗：{friendly_firebase_error(exc)}"
+                continue
+            if added:
+                questions = questions[:idx + 1] + [
+                    candidate for candidate in questions[idx + 1:]
+                    if candidate.item_id != question.item_id
+                ]
+                message = "已加入「已學習」，本次尚未出現的同卡例句也已略過。"
+            else:
+                message = "這個單字已經在「已學習」資料夾中。"
         elif key in ("1", "2"):
             if not revealed:
                 message = "請先按 8 翻面查看答案。"
@@ -1943,10 +1979,11 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         record_label = "" if should_record_results else " 不紀錄"
         star_help = " 0=星號" if allow_star else ""
         answer_visible = show_hint or graded
+        learned_help = " -=已學習" if answer_visible and daily_review and question.kind == "term" else ""
         if answer_visible and example_audio_enabled:
-            controls = f"Esc=返回{star_help} 7=例句 +=下一句 4/6=上下題 Enter={'下一題' if graded else '送出'}"
+            controls = f"Esc=返回{star_help}{learned_help} 7=例句 +=下一句 4/6=上下題 Enter={'下一題' if graded else '送出'}"
         else:
-            controls = f"Esc=返回{star_help} 8=答案 4/6=上下題 +=檢查 Enter={'下一題' if graded else '送出'}"
+            controls = f"Esc=返回{star_help}{learned_help} 8=答案 4/6=上下題 +=檢查 Enter={'下一題' if graded else '送出'}"
         draw_line(stdscr, 1, 2, f"測驗{record_label} | {title} | {idx + 1}/{len(questions)}  {controls}", curses.A_BOLD)
         length_hint = f"  ({count_korean_letters(answer)} 個韓文字)" if config["direction"] == "zh-ko" else ""
         star_prefix = f"{'★' if question.source.is_starred else '☆'} " if allow_star else ""
@@ -2059,18 +2096,10 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 snapshot = _clone_json(state)
                 if mark_learned:
                     try:
-                        client.add_word_to_learned_folder(
-                            session,
-                            str(state.get("learnedFolderId") or SYSTEM_LEARNED_FOLDER_ID),
-                            question.item_id,
-                        )
+                        mark_word_as_learned(client, session, state, question.item_id)
                     except RuntimeError as exc:
                         message = f"加入已學習失敗：{friendly_firebase_error(exc)}"
                         continue
-                    state["learnedWordIds"] = list(dict.fromkeys([
-                        *(state.get("learnedWordIds") or []),
-                        question.item_id,
-                    ]))
                 record_answer(state, question, correct)
                 if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
                     message = ""
@@ -2119,6 +2148,21 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                     message = ""
                     continue
                 message = "已打星號" if question.source.is_starred else "已取消星號"
+            elif key == "-" and daily_review and question.kind == "term":
+                if not answer_visible:
+                    message = "請先公佈答案，再加入「已學習」。"
+                    continue
+                try:
+                    added = mark_word_as_learned(client, session, state, question.item_id)
+                except RuntimeError as exc:
+                    message = f"加入已學習失敗：{friendly_firebase_error(exc)}"
+                    continue
+                message = (
+                    "已加入「已學習」，未來每日測驗不再出現。"
+                    if added
+                    else "這個單字已經在「已學習」資料夾中。"
+                )
+                result_message = message
             elif key == "8":
                 revealing_answer = not show_hint
                 show_hint = revealing_answer

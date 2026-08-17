@@ -10,6 +10,8 @@ import {
   Copy,
   Download,
   Dumbbell,
+  Eye,
+  EyeOff,
   Flame,
   Folder,
   FolderInput,
@@ -2127,7 +2129,7 @@ function App() {
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} />,
     notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} />,
-    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} onMarkLearned={(itemId) => folders.addWords(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} />,
+    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} learnedWordIds={learnedWordIds} onMarkLearned={(itemId) => folders.addWords(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} />,
     notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     folders: <FoldersPage folders={folders.folders} items={items} loading={folders.loading} error={folders.error} onSave={folders.save} onDelete={folders.remove} onOpen={openFolder} />,
     folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
@@ -3917,7 +3919,7 @@ function StudyDetails({ item, allItems, onOpenItem }) {
   );
 }
 
-function PracticePage({ store, updateStore, set, onMarkLearned }) {
+function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), onMarkLearned }) {
   const [direction, setDirection] = useState('zh-ko');
   const [source, setSource] = useState('term');
   const [starredOnly, setStarredOnly] = useState(false);
@@ -3943,6 +3945,9 @@ function PracticePage({ store, updateStore, set, onMarkLearned }) {
   const [learnedPrompt, setLearnedPrompt] = useState(false);
   const [learnedPromptSaving, setLearnedPromptSaving] = useState(false);
   const [learnedPromptError, setLearnedPromptError] = useState('');
+  const [markedLearnedIds, setMarkedLearnedIds] = useState(() => new Set());
+  const [directLearnedSaving, setDirectLearnedSaving] = useState(false);
+  const [directLearnedError, setDirectLearnedError] = useState('');
   const completionStartedRef = useRef(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [autoPronounce, setAutoPronounce] = useState(true);
@@ -3959,6 +3964,10 @@ function PracticePage({ store, updateStore, set, onMarkLearned }) {
   }, [set.questions, source, direction, set.termOnly, set.dueOnly, recognitionMode, grammarMode, store, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
+  const isDailyWordQuestion = Boolean(question && !grammarMode && (set.dailyReview || recognitionMode));
+  const isCurrentWordLearned = Boolean(
+    question && (learnedWordIds.has(question.itemId) || markedLearnedIds.has(question.itemId))
+  );
   const resetSession = () => {
     setSessionFinished(false);
     setStarted(false);
@@ -4044,6 +4053,27 @@ function PracticePage({ store, updateStore, set, onMarkLearned }) {
       })
       .finally(() => setCompletionSaving(false));
   };
+  const persistCurrentWordAsLearned = async () => {
+    if (!question || isCurrentWordLearned) return false;
+    await onMarkLearned(question.itemId);
+    setMarkedLearnedIds((current) => new Set(current).add(question.itemId));
+    setQuestionQueue((current) => current.filter((candidate, candidateIndex) => (
+      candidateIndex <= index || candidate.itemId !== question.itemId
+    )));
+    return true;
+  };
+  const markCurrentWordAsLearned = async () => {
+    if (directLearnedSaving || isCurrentWordLearned) return;
+    setDirectLearnedSaving(true);
+    setDirectLearnedError('');
+    try {
+      await persistCurrentWordAsLearned();
+    } catch (error) {
+      setDirectLearnedError(error.message || '加入已學習資料夾失敗');
+    } finally {
+      setDirectLearnedSaving(false);
+    }
+  };
   const goNext = () => {
     setInput('');
     setResult(null);
@@ -4052,6 +4082,7 @@ function PracticePage({ store, updateStore, set, onMarkLearned }) {
     setLastCorrect(null);
     setTypedAttempts(0);
     setRecognitionWordVisible(false);
+    setDirectLearnedError('');
     if (index + 1 < queue.length) setIndex(index + 1);
     else if (set.dueOnly) finishSession();
     else resetSession();
@@ -4092,7 +4123,7 @@ function PracticePage({ store, updateStore, set, onMarkLearned }) {
     if (markLearned) {
       setLearnedPromptSaving(true);
       try {
-        await onMarkLearned(question.itemId);
+        await persistCurrentWordAsLearned();
       } catch (error) {
         setLearnedPromptError(error.message || '加入已學習資料夾失敗');
         setLearnedPromptSaving(false);
@@ -4335,6 +4366,11 @@ function PracticePage({ store, updateStore, set, onMarkLearned }) {
           onNext={goNext}
           isStarred={(store.starred || []).includes(question.source?.id)}
           onToggleStar={grammarMode ? null : () => toggleStarredItem(updateStore, question.source.id)}
+          canMarkLearned={isDailyWordQuestion}
+          isLearned={isCurrentWordLearned}
+          learnedSaving={directLearnedSaving}
+          learnedError={directLearnedError}
+          onMarkLearned={markCurrentWordAsLearned}
         />
       </div>
       {learnedPrompt && (
@@ -4364,7 +4400,7 @@ function QuestionKindBadge({ kind }) {
   return <small className={`question-kind-badge ${isExample ? 'example' : 'term'}`}>{isGrammarExample ? '文法例句' : isExample ? '例句' : '單字'}</small>;
 }
 
-function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, onWrong, onNext, isStarred = false, onToggleStar }) {
+function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, onWrong, onNext, isStarred = false, onToggleStar, canMarkLearned = false, isLearned = false, learnedSaving = false, learnedError = '', onMarkLearned }) {
   return (
     <aside className={`practice-answer-panel ${visible ? 'visible' : ''}`}>
       <div className="answer-panel-inner">
@@ -4394,6 +4430,20 @@ function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, on
                 <NoteCard item={question.source} isStarred={isStarred} onToggleStar={onToggleStar} />
               )}
             </div>
+            {canMarkLearned && (
+              <div className="answer-learned-action">
+                <button
+                  type="button"
+                  className={isLearned ? 'selected-soft' : ''}
+                  disabled={isLearned || learnedSaving}
+                  onClick={onMarkLearned}
+                >
+                  <FolderInput size={18} />
+                  {isLearned ? '已加入「已學習」' : learnedSaving ? '加入中' : '加入「已學習」'}
+                </button>
+                {learnedError && <small className="form-error">{learnedError}</small>}
+              </div>
+            )}
             {!graded && (
               <div className="answer-review-actions">
                 <>
@@ -5295,6 +5345,16 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
       <div className="topbar">
         <div><span className="eyebrow">Notebook</span><h1>單字本</h1></div>
         <div className="actions notebook-actions">
+          <button
+            type="button"
+            className={`learned-visibility-button ${showLearned ? 'active' : ''}`}
+            aria-pressed={showLearned}
+            title={`${showLearned ? '目前顯示' : '目前隱藏'} ${learnedWordIds.size} 個已學習單字`}
+            onClick={() => setShowLearned((current) => !current)}
+          >
+            {showLearned ? <Eye size={18} /> : <EyeOff size={18} />}
+            {showLearned ? '顯示已學習' : '隱藏已學習'}
+          </button>
           <button onClick={() => setExportOpen(true)}><Download size={18} /> 匯出 JSON</button>
           <button onClick={() => setJsonEditOpen(true)}><Pencil size={18} /> 修改 JSON</button>
           <button className="add-date-button" onClick={() => setAddOpen(true)}><Plus size={18} /> 新增單字</button>
@@ -5314,14 +5374,6 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
           onClose={() => setJsonEditOpen(false)}
         />
       )}
-      <div className="notebook-visibility-row">
-        <span>{showLearned ? `已顯示已學習單字（${learnedWordIds.size} 個）` : `已隱藏已學習單字（${learnedWordIds.size} 個）`}</span>
-        <label className="learned-visibility-toggle">
-          <input type="checkbox" role="switch" checked={showLearned} onChange={(event) => setShowLearned(event.target.checked)} />
-          <i aria-hidden="true" />
-          <strong>{showLearned ? '顯示已學習' : '隱藏已學習'}</strong>
-        </label>
-      </div>
       <div className="filters">
         <label className="search"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜尋單字、例句、筆記或相關詞" /></label>
         <select value={type} onChange={(e) => setType(e.target.value)}>{types.map((option) => <option key={option}>{option}</option>)}</select>
