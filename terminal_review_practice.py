@@ -621,6 +621,9 @@ def load_data(
         grammar_review = grammar_review_future.result()
 
     learned_folder = client.ensure_learned_folder(session, folders)
+    if not any(folder.get("id") == learned_folder.get("id") for folder in folders):
+        folders.append(learned_folder)
+    state["folders"] = folders
     state["learnedWordIds"] = learned_folder.get("wordIds") or []
     state["learnedFolderId"] = learned_folder.get("id") or SYSTEM_LEARNED_FOLDER_ID
 
@@ -946,6 +949,11 @@ def card_examples(card: Card) -> List[Dict[str, str]]:
             if ko or zh:
                 examples.append({"ko": ko, "zh": zh})
     return examples
+
+
+def cards_in_folder(cards: List[Card], folder: Dict[str, Any]) -> List[Card]:
+    word_ids = set(str(item) for item in (folder.get("wordIds") or []) if item)
+    return [card for card in cards if card.id in word_ids]
 
 
 def korean_speech_commands(text: str) -> List[List[str]]:
@@ -1616,6 +1624,7 @@ def filtered_questions(questions: List[Question], config: Dict[str, Any]) -> Lis
 def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[str, Any], client: FirebaseClient, session: AuthSession) -> None:
     idx = 0
     show_details = False
+    example_index = 0
     message = ""
     curses.curs_set(0)
     while True:
@@ -1624,16 +1633,22 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             return
         card = cards[idx]
         stdscr.clear()
-        draw_line(stdscr, 1, 2, f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回  0=星號  8=詳情  4/6=上下張", curses.A_BOLD)
+        draw_line(stdscr, 1, 2, f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回 0=星號 7=例句 +=下一例句 8=詳情 4/6=上下張", curses.A_BOLD)
         draw_line(stdscr, 2, 2, f"{'★' if card.is_starred else '☆'} {card.ko}", curses.A_BOLD)
         y = draw_wrapped(stdscr, 3, 2, stdscr.getmaxyx()[1] - 4, card.zh)
         examples = card_examples(card)
         if examples:
+            example_index %= len(examples)
+        else:
+            example_index = 0
+        if examples:
             draw_line(stdscr, y, 2, "例句:", curses.A_DIM)
             y += 1
-            for example in examples:
+            for current_index, example in enumerate(examples):
                 text = " / ".join(part for part in (example.get("ko"), example.get("zh")) if part)
-                y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, text, curses.A_DIM)
+                marker = "▶ " if current_index == example_index else "  "
+                attr = curses.A_BOLD if current_index == example_index else curses.A_DIM
+                y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, marker + text, attr)
         if show_details:
             for meaning in card.meanings:
                 detail = f"- {meaning.get('zh', '')}"
@@ -1658,12 +1673,24 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             message = "已打星號" if card.is_starred else "已取消星號"
         elif key == "8":
             show_details = not show_details
+        elif key in ("7", "+"):
+            if not examples:
+                message = "這張單字卡沒有可播放的韓文例句。"
+                continue
+            if key == "+":
+                example_index = (example_index + 1) % len(examples)
+            if speak_korean(examples[example_index].get("ko", "")):
+                message = f"已播放例句 {example_index + 1}/{len(examples)}。"
+            else:
+                message = "無法播放例句語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
         elif key == "4":
             idx = max(0, idx - 1)
             show_details = False
+            example_index = 0
         elif key == "6":
             idx = min(len(cards) - 1, idx + 1)
             show_details = False
+            example_index = 0
 
 
 def run_daily_recognition(
@@ -2173,6 +2200,53 @@ def run_collection(stdscr: curses.window, title: str, cards: List[Card], questio
         run_practice(stdscr, title, active_questions, config, state, client, session)
 
 
+def run_folder_notebook(
+    stdscr: curses.window,
+    cards: List[Card],
+    questions: List[Question],
+    state: Dict[str, Any],
+    client: FirebaseClient,
+    session: AuthSession,
+) -> None:
+    folders = sorted(
+        state.get("folders") or [],
+        key=lambda folder: (
+            0 if folder.get("id") == state.get("learnedFolderId") else 1,
+            str(folder.get("name") or ""),
+        ),
+    )
+    if not folders:
+        wait_message(stdscr, "資料夾", "目前還沒有資料夾。")
+        return
+    while True:
+        folder_cards = {str(folder.get("id")): cards_in_folder(cards, folder) for folder in folders}
+        selected_id = menu(
+            stdscr,
+            "資料夾 | 選擇資料夾",
+            [
+                (str(folder.get("id")), f"{folder.get('name') or '未命名資料夾'} · {len(folder_cards[str(folder.get('id'))])} 張卡")
+                for folder in folders
+            ],
+        )
+        if selected_id is None:
+            return
+        folder = next((entry for entry in folders if str(entry.get("id")) == selected_id), None)
+        if not folder:
+            continue
+        selected_cards = folder_cards[selected_id]
+        selected_card_ids = {card.id for card in selected_cards}
+        selected_questions = [question for question in questions if question.item_id in selected_card_ids]
+        run_collection(
+            stdscr,
+            str(folder.get("name") or "資料夾"),
+            selected_cards,
+            selected_questions,
+            state,
+            client,
+            session,
+        )
+
+
 def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: AuthSession) -> None:
     try:
         state, cards, questions, grammar_notes, grammar_review = load_data(client, session)
@@ -2204,6 +2278,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 ("due", "今日複習題"),
                 ("calendar", "月曆"),
                 ("notebook", "單字本"),
+                ("folders", "資料夾"),
                 ("grammar", "文法筆記"),
                 ("refresh", "重新同步"),
                 ("quit", "離開"),
@@ -2294,6 +2369,8 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 run_collection(stdscr, selected_date, day_cards, day_questions, state, client, session)
         elif choice == "notebook":
             run_collection(stdscr, "單字本", cards, questions, state, client, session)
+        elif choice == "folders":
+            run_folder_notebook(stdscr, cards, questions, state, client, session)
         elif choice == "grammar":
             run_grammar_notebook(stdscr, grammar_notes)
 
