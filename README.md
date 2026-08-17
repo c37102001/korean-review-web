@@ -51,6 +51,10 @@ python3 -m pip install -r requirements-terminal.txt
 python3 terminal_review_practice.py
 ```
 
+登入後可在任何選單、學習或測驗畫面按 `.` 暫停目前操作並快速新增今天的單字。
+依序輸入必填的韓文、中文，以及選填例句；多句例句格式為
+`韓文1 | 中文1; 韓文2 | 中文2`。任一階段按 `Esc` 都會取消並返回原畫面。
+
 每日單字例句聽力使用 Microsoft Neural 韓文語音，並將產生的音檔快取在
 `~/.cache/korean-review-web/tts`。系統需要 `cvlc` 或 `ffplay` 播放音檔；
 無網路或 Neural 語音不可用時，程式會退回 `spd-say`／`espeak-ng`。

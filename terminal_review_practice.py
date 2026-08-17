@@ -9,7 +9,7 @@ Optional .env values:
   TERMINAL_PRACTICE_PASSWORD=your-password
 
 Core keys:
-  0 toggle star, 8 show/hide answer or details, 4 previous, 6 next,
+  . quick-add a word, 0 toggle star, 8 show/hide answer or details, 4 previous, 6 next,
   + partial check, Enter submit answer, Esc back.
 """
 
@@ -106,6 +106,17 @@ class PartialCheckResult:
     missing_space_before_raw_indices: set[int]
 
 
+@dataclass
+class QuickAddContext:
+    client: "FirebaseClient"
+    session: AuthSession
+    cards: List[Card]
+    questions: List[Question]
+
+
+_QUICK_ADD_CONTEXT: Optional[QuickAddContext] = None
+
+
 class FirebaseClient:
     def __init__(self, api_key: str, project_id: str) -> None:
         self.api_key = api_key
@@ -129,6 +140,20 @@ class FirebaseClient:
             _parse_firestore_fields(doc.get("fields", {})) | {"_docId": _doc_id(doc.get("name", ""))}
             for doc in self._list_documents(["users", session.uid, "records"], session)
         ]
+
+    def create_record(self, session: AuthSession, record: Dict[str, Any]) -> None:
+        record_id = str(record.get("id") or "")
+        if not record_id:
+            raise ValueError("Record id is required")
+        fields = {key: _to_firestore_value(value) for key, value in record.items()}
+        fields["updatedAt"] = {"timestampValue": utc_now_iso()}
+        payload = {"fields": fields}
+        self._request_json(
+            "PATCH",
+            self._document_url(["users", session.uid, "records", record_id]),
+            payload=payload,
+            session=session,
+        )
 
     def list_folders(self, session: AuthSession) -> List[Dict[str, Any]]:
         return [
@@ -1319,14 +1344,187 @@ def update_curses_screen(stdscr: curses.window) -> None:
     curses.doupdate()
 
 
+def set_cursor_visibility(visibility: int) -> int:
+    try:
+        return curses.curs_set(visibility)
+    except curses.error:
+        return 0
+
+
+def parse_quick_add_examples(text: str) -> List[Dict[str, str]]:
+    if not text.strip():
+        return []
+    examples: List[Dict[str, str]] = []
+    for index, segment in enumerate(text.split(";"), 1):
+        segment = segment.strip()
+        if not segment:
+            continue
+        if "|" not in segment:
+            raise ValueError(f"第 {index} 句缺少 |，格式需要是「韓文 | 中文」")
+        ko, zh = (part.strip() for part in segment.split("|", 1))
+        if not ko or not zh:
+            raise ValueError(f"第 {index} 句的韓文和中文都不能空白")
+        examples.append({"ko": ko, "zh": zh})
+    return examples
+
+
+def build_quick_add_record(ko: str, zh: str, examples: List[Dict[str, str]]) -> Dict[str, Any]:
+    date_key = today_string()
+    record_id = f"{date_key}-custom-{uuid.uuid4()}"
+    now = utc_now_iso()
+    meaning_id = f"{record_id}-0"
+    return {
+        "id": record_id,
+        "date": date_key,
+        "order": int(time.time() * 1_000_000),
+        "item": {
+            "ko": ko.strip(),
+            "meanings": [{
+                "id": meaning_id,
+                "zh": zh.strip(),
+                "examples": [
+                    {"id": f"{meaning_id}-ex-{index}", "ko": example["ko"], "zh": example["zh"]}
+                    for index, example in enumerate(examples)
+                ],
+            }],
+            "related": [],
+        },
+        "createdAt": now,
+        "updatedAt": now,
+    }
+
+
+def append_runtime_record(record: Dict[str, Any], cards: List[Card], questions: List[Question]) -> None:
+    new_cards, new_questions = normalize_records([record], {"starred": []})
+    cards.extend(new_cards)
+    cards.sort(key=lambda card: (card.date, card.order, card.id))
+    for index, card in enumerate(cards):
+        card.index = index
+    questions[:] = order_questions([*questions, *new_questions])
+
+
+def _tail_by_cell_width(text: str, max_cells: int) -> str:
+    result: List[str] = []
+    width = 0
+    for character in reversed(text):
+        character_width = _cell_width(character)
+        if result and width + character_width > max_cells:
+            break
+        result.append(character)
+        width += character_width
+    return "".join(reversed(result))
+
+
+def quick_add_word(stdscr: curses.window, context: QuickAddContext) -> bool:
+    fields = ["", "", ""]
+    labels = ["韓文", "中文", "例句"]
+    field_index = 0
+    error_message = ""
+    previous_cursor = set_cursor_visibility(1)
+    while True:
+        stdscr.erase()
+        height, width = stdscr.getmaxyx()
+        draw_line(stdscr, 1, 2, "快速新增單字", curses.A_BOLD)
+        draw_line(stdscr, 2, 2, "Enter=下一步／完成  Esc=取消", curses.A_DIM)
+        summary_y = 4
+        for index, label in enumerate(labels):
+            marker = "»" if index == field_index else " "
+            value = fields[index] if fields[index] else "（尚未填寫）"
+            draw_line(
+                stdscr,
+                summary_y + index,
+                2,
+                f"{marker} {label}: {value}",
+                curses.A_BOLD if index == field_index else curses.A_DIM,
+            )
+        hint = (
+            "韓文為必填。"
+            if field_index == 0
+            else "中文為必填。"
+            if field_index == 1
+            else "選填；格式：韓文1 | 中文1; 韓文2 | 中文2"
+        )
+        draw_wrapped(stdscr, 8, 2, width - 4, hint, curses.A_DIM)
+        prompt = f"輸入{labels[field_index]}: "
+        available = max(1, width - 4 - _text_cell_width(prompt))
+        visible_value = _tail_by_cell_width(fields[field_index], available)
+        draw_line(stdscr, 10, 2, prompt + visible_value)
+        if error_message:
+            draw_wrapped(stdscr, 12, 2, width - 4, error_message, curses.A_BOLD)
+        cursor_x = min(width - 1, 2 + _text_cell_width(prompt) + _text_cell_width(visible_value))
+        try:
+            stdscr.move(min(height - 1, 10), cursor_x)
+        except curses.error:
+            pass
+        update_curses_screen(stdscr)
+        key = stdscr.get_wch()
+        if key == "\x1b" or key == 27:
+            set_cursor_visibility(previous_cursor)
+            return False
+        if key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13):
+            value = fields[field_index].strip()
+            if field_index < 2 and not value:
+                error_message = f"{labels[field_index]}不能空白。"
+                continue
+            fields[field_index] = value
+            if field_index < 2:
+                if field_index == 0:
+                    normalized = unicodedata.normalize("NFC", value).casefold()
+                    duplicate = next((card for card in context.cards if unicodedata.normalize("NFC", card.ko).casefold() == normalized), None)
+                    if duplicate:
+                        error_message = f"「{duplicate.ko}」已存在於 {duplicate.date}，請直接編輯既有單字卡。"
+                        continue
+                field_index += 1
+                error_message = ""
+                continue
+            try:
+                examples = parse_quick_add_examples(value)
+                record = build_quick_add_record(fields[0], fields[1], examples)
+                draw_line(stdscr, 14, 2, "正在儲存到 Firebase...", curses.A_BOLD)
+                update_curses_screen(stdscr)
+                context.client.create_record(context.session, record)
+                append_runtime_record(record, context.cards, context.questions)
+            except ValueError as exc:
+                error_message = str(exc)
+                continue
+            except RuntimeError as exc:
+                error_message = friendly_firebase_error(exc)
+                continue
+            stdscr.erase()
+            draw_line(stdscr, 2, 2, f"已新增：{fields[0]} · {fields[1]}", curses.A_BOLD)
+            draw_line(stdscr, 4, 2, "正在返回原本畫面...", curses.A_DIM)
+            update_curses_screen(stdscr)
+            time.sleep(0.45)
+            set_cursor_visibility(previous_cursor)
+            return True
+        if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
+            fields[field_index] = fields[field_index][:-1]
+            error_message = ""
+            continue
+        if isinstance(key, str) and key.isprintable():
+            fields[field_index] += key
+            error_message = ""
+
+
+def read_terminal_key(stdscr: curses.window, *, wide: bool = False) -> Any:
+    key = stdscr.get_wch() if wide else stdscr.getch()
+    is_quick_add = key == "." if isinstance(key, str) else key == ord(".")
+    if is_quick_add and _QUICK_ADD_CONTEXT is not None:
+        quick_add_word(stdscr, _QUICK_ADD_CONTEXT)
+        return curses.KEY_RESIZE
+    return key
+
+
 def wait_message(stdscr: curses.window, title: str, message: str) -> None:
-    stdscr.clear()
-    curses.curs_set(0)
-    draw_line(stdscr, 1, 2, title, curses.A_BOLD)
-    y = draw_wrapped(stdscr, 3, 2, stdscr.getmaxyx()[1] - 4, message)
-    draw_line(stdscr, y + 1, 2, "Press any key to continue...", curses.A_DIM)
-    stdscr.refresh()
-    stdscr.getch()
+    while True:
+        stdscr.clear()
+        set_cursor_visibility(0)
+        draw_line(stdscr, 1, 2, title, curses.A_BOLD)
+        y = draw_wrapped(stdscr, 3, 2, stdscr.getmaxyx()[1] - 4, message)
+        draw_line(stdscr, y + 1, 2, "Press any key to continue...", curses.A_DIM)
+        stdscr.refresh()
+        if read_terminal_key(stdscr) != curses.KEY_RESIZE:
+            return
 
 
 def friendly_firebase_error(exc: RuntimeError) -> str:
@@ -1367,7 +1565,7 @@ def menu(stdscr: curses.window, title: str, options: List[Tuple[str, str]], subt
     if not options:
         return None
     selected = 0
-    curses.curs_set(0)
+    set_cursor_visibility(0)
     stdscr.keypad(True)
     while True:
         stdscr.clear()
@@ -1390,7 +1588,7 @@ def menu(stdscr: curses.window, title: str, options: List[Tuple[str, str]], subt
                 curses.A_DIM,
             )
         stdscr.refresh()
-        key = stdscr.getch()
+        key = read_terminal_key(stdscr)
         if key == 27:
             return None
         if key in (curses.KEY_UP, curses.KEY_LEFT):
@@ -1421,7 +1619,7 @@ def run_grammar_note_detail(
     example_index = 0
     scroll_offset = 0
     message = ""
-    curses.curs_set(0)
+    set_cursor_visibility(0)
     stdscr.keypad(True)
     while True:
         note = notes[note_index]
@@ -1483,7 +1681,7 @@ def run_grammar_note_detail(
             draw_line(stdscr, height - 1, 2, footer, curses.A_BOLD)
         update_curses_screen(stdscr)
 
-        key = stdscr.get_wch()
+        key = read_terminal_key(stdscr, wide=True)
         if isinstance(key, int) and 0 <= key <= 255:
             key = chr(key)
         if key == "\x1b":
@@ -1581,7 +1779,7 @@ def setup_menu(stdscr: curses.window, title: str, allow_examples: bool = True) -
     random_order = True
     record_results = True
     row = 0
-    curses.curs_set(0)
+    set_cursor_visibility(0)
     while True:
         source_label = {"term": "單字", "example": "例句", "all": "全部"}[source]
         rows = [
@@ -1598,7 +1796,7 @@ def setup_menu(stdscr: curses.window, title: str, allow_examples: bool = True) -
         for idx, label in enumerate(rows):
             draw_line(stdscr, 3 + idx, 2, ("» " if idx == row else "  ") + label, curses.A_REVERSE if idx == row else 0)
         stdscr.refresh()
-        key = stdscr.getch()
+        key = read_terminal_key(stdscr)
         if key == 27:
             return None
         if key == curses.KEY_UP:
@@ -1645,7 +1843,7 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
     show_details = False
     example_index = 0
     message = ""
-    curses.curs_set(0)
+    set_cursor_visibility(0)
     while True:
         if not cards:
             wait_message(stdscr, "學習模式", "沒有可學習的卡片。")
@@ -1679,7 +1877,7 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
         if message:
             draw_line(stdscr, y, 2, message, curses.A_BOLD)
         stdscr.refresh()
-        key = stdscr.get_wch()
+        key = read_terminal_key(stdscr, wide=True)
         if key == "\x1b":
             return
         if key == "0":
@@ -1734,7 +1932,7 @@ def run_daily_recognition(
     results: Dict[str, bool] = {}
     spoken_question_id = ""
     cards_by_id = {card.id: card for card in all_cards}
-    curses.curs_set(0)
+    set_cursor_visibility(0)
     stdscr.keypad(True)
     while True:
         question = questions[idx]
@@ -1827,7 +2025,7 @@ def run_daily_recognition(
             if not speak_korean(question.ko):
                 message = "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
             continue
-        key = stdscr.get_wch()
+        key = read_terminal_key(stdscr, wide=True)
         if isinstance(key, int) and 0 <= key <= 255:
             key = chr(key)
         if key == "\x1b":
@@ -1943,7 +2141,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
     pending_example_audio = ""
     ok_attr = curses.A_BOLD
     wrong_attr = curses.A_REVERSE
-    curses.curs_set(1)
+    set_cursor_visibility(1)
     stdscr.keypad(True)
     should_record_results = config.get("record_results", True)
     enforce_answer_length = config.get("enforce_answer_length", False)
@@ -1963,7 +2161,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
     while True:
         if not questions:
             wait_message(stdscr, "測驗", "沒有可測驗的題目。")
-            curses.curs_set(0)
+            set_cursor_visibility(0)
             return False
         question = questions[idx]
         prompt = question.zh if config["direction"] == "zh-ko" else question.ko
@@ -2032,15 +2230,15 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 audio_message = "無法播放例句語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
             message = " ".join(part for part in (result_message, audio_message) if part)
             continue
-        key = stdscr.get_wch()
+        key = read_terminal_key(stdscr, wide=True)
         if key == "\x1b":
-            curses.curs_set(0)
+            set_cursor_visibility(0)
             return False
         if key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13):
             if graded:
                 if idx == len(questions) - 1:
                     wait_message(stdscr, "完成", "這組題目已完成。")
-                    curses.curs_set(0)
+                    set_cursor_visibility(0)
                     return True
                 idx += 1
                 user_input = ""
@@ -2090,7 +2288,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                         ],
                         "加入後不再出現於每日單字測驗與例句聽力，單字卡仍會保留。",
                     )
-                    curses.curs_set(1)
+                    set_cursor_visibility(1)
                     if choice == "yes":
                         mark_learned = True
                 snapshot = _clone_json(state)
@@ -2202,7 +2400,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                     continue
                 if idx == len(questions) - 1 and graded:
                     wait_message(stdscr, "完成", "這組題目已完成。")
-                    curses.curs_set(0)
+                    set_cursor_visibility(0)
                     return True
                 idx = min(len(questions) - 1, idx + 1)
                 user_input = ""
@@ -2292,11 +2490,14 @@ def run_folder_notebook(
 
 
 def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: AuthSession) -> None:
+    global _QUICK_ADD_CONTEXT
+    _QUICK_ADD_CONTEXT = None
     try:
         state, cards, questions, grammar_notes, grammar_review = load_data(client, session)
     except RuntimeError as exc:
         wait_message(stdscr, "載入失敗", str(exc))
         return
+    _QUICK_ADD_CONTEXT = QuickAddContext(client, session, cards, questions)
     skip_round_initialization = False
     while True:
         if not skip_round_initialization:
@@ -2327,13 +2528,15 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 ("refresh", "重新同步"),
                 ("quit", "離開"),
             ],
-            "↑↓=移動 Enter=選擇 Esc=離開",
+            "↑↓=移動 Enter=選擇 .=快速新增單字 Esc=離開",
         )
         if choice in (None, "quit"):
+            _QUICK_ADD_CONTEXT = None
             return
         if choice == "refresh":
             try:
                 state, cards, questions, grammar_notes, grammar_review = load_data(client, session)
+                _QUICK_ADD_CONTEXT = QuickAddContext(client, session, cards, questions)
                 skip_round_initialization = False
             except RuntimeError as exc:
                 wait_message(stdscr, "同步失敗", str(exc))
