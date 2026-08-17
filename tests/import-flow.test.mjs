@@ -287,6 +287,13 @@ test('a fifth correct daily term answer offers the learned folder', () => {
   assert.equal(helpers.shouldOfferLearnedFolder(store, question, false, true), false);
 });
 
+test('only explicit daily review tests record accuracy results', () => {
+  assert.equal(helpers.shouldRecordPracticeResults({ dailyReview: true, dueOnly: true }), true);
+  assert.equal(helpers.shouldRecordPracticeResults({ dueOnly: true }), false);
+  assert.equal(helpers.shouldRecordPracticeResults({ recordResults: true }), false);
+  assert.equal(helpers.shouldRecordPracticeResults({}), false);
+});
+
 test('learned words are excluded from both daily terms and example listening', () => {
   const questions = [
     { id: 'term-a', itemId: 'card-a', kind: 'term' },

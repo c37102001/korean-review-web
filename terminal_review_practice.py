@@ -1777,7 +1777,6 @@ def setup_menu(stdscr: curses.window, title: str, allow_examples: bool = True) -
     source = "term"
     starred = False
     random_order = True
-    record_results = True
     row = 0
     set_cursor_visibility(0)
     while True:
@@ -1787,12 +1786,11 @@ def setup_menu(stdscr: curses.window, title: str, allow_examples: bool = True) -
             f"內容: {source_label if direction == 'zh-ko' else '單字'}",
             f"篩選: {'有星號' if starred else '全部卡片'}",
             f"順序: {'隨機' if random_order else '依序'}",
-            f"紀錄: {'寫入正確/錯誤' if record_results else '不紀錄'}",
             "開始",
         ]
         stdscr.clear()
         draw_line(stdscr, 1, 2, f"設定 | {title}", curses.A_BOLD)
-        draw_line(stdscr, 2, 2, "↑↓=項目  ←→=切換  Enter=開始  Esc=返回", curses.A_DIM)
+        draw_line(stdscr, 2, 2, "↑↓=項目 ←→=切換 Enter=開始 Esc=返回 · 自主測驗不紀錄", curses.A_DIM)
         for idx, label in enumerate(rows):
             draw_line(stdscr, 3 + idx, 2, ("» " if idx == row else "  ") + label, curses.A_REVERSE if idx == row else 0)
         stdscr.refresh()
@@ -1814,15 +1812,13 @@ def setup_menu(stdscr: curses.window, title: str, allow_examples: bool = True) -
                 starred = not starred
             elif row == 3:
                 random_order = not random_order
-            elif row == 4:
-                record_results = not record_results
         elif key in (curses.KEY_ENTER, 10, 13):
             return {
                 "direction": direction,
                 "source": source if direction == "zh-ko" else "term",
                 "starred": starred,
                 "random": random_order,
-                "record_results": record_results,
+                "record_results": False,
             }
 
 
@@ -2143,7 +2139,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
     wrong_attr = curses.A_REVERSE
     set_cursor_visibility(1)
     stdscr.keypad(True)
-    should_record_results = config.get("record_results", True)
+    should_record_results = config.get("record_results", False)
     enforce_answer_length = config.get("enforce_answer_length", False)
     allow_star = config.get("allow_star", True)
     require_answer_before_next = config.get("require_answer_before_next", False)
@@ -2171,7 +2167,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             example_index %= len(examples)
         else:
             example_index = 0
-        example_audio_enabled = daily_review and bool(examples)
+        example_audio_enabled = bool(examples)
         stdscr.erase()
         height, width = stdscr.getmaxyx()
         record_label = "" if should_record_results else " 不紀錄"

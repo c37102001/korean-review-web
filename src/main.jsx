@@ -2081,7 +2081,6 @@ function App() {
       label,
       dueOnly: !!options.dueOnly,
       dailyReview: !!options.dailyReview,
-      recordResults: options.recordResults ?? true,
       mode: options.mode || '',
       grammarNote: options.grammarNote || null,
       onComplete: options.onComplete || null,
@@ -2237,7 +2236,6 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
     else if (recognition.length) onPractice(recognition, '每日單字例句聽力', { dueOnly: true, mode: DAILY_RECOGNITION_MODE });
     else onPractice(grammarQuestions, `每日文法例句聽力 · ${grammarSchedule.note.title}`, {
       dueOnly: true,
-      recordResults: false,
       mode: DAILY_GRAMMAR_MODE,
       grammarNote: grammarSchedule.note,
       onComplete: () => onCompleteGrammar(grammarSchedule.note, today),
@@ -2321,7 +2319,6 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
                 </div>
                 <button className="primary small" onClick={() => onPractice(grammarQuestions, `每日文法例句聽力 · ${grammarSchedule.note.title}`, {
                   dueOnly: true,
-                  recordResults: false,
                   mode: DAILY_GRAMMAR_MODE,
                   grammarNote: grammarSchedule.note,
                   onComplete: () => onCompleteGrammar(grammarSchedule.note, today),
@@ -3919,16 +3916,19 @@ function StudyDetails({ item, allItems, onOpenItem }) {
   );
 }
 
+function shouldRecordPracticeResults(practiceSet) {
+  return Boolean(practiceSet?.dailyReview);
+}
+
 function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), onMarkLearned }) {
   const [direction, setDirection] = useState('zh-ko');
   const [source, setSource] = useState('term');
   const [starredOnly, setStarredOnly] = useState(false);
-  const [recordResults, setRecordResults] = useState(set.recordResults ?? true);
   const recognitionMode = set.mode === DAILY_RECOGNITION_MODE;
   const grammarMode = set.mode === DAILY_GRAMMAR_MODE;
   const fixedSource = set.termOnly || set.dueOnly;
   const activeDirection = recognitionMode || grammarMode ? 'ko-zh' : set.dueOnly ? 'zh-ko' : direction;
-  const shouldRecordResults = !grammarMode && (set.dueOnly || recordResults);
+  const shouldRecordResults = shouldRecordPracticeResults(set);
   const [recognitionWordVisible, setRecognitionWordVisible] = useState(false);
   const [started, setStarted] = useState(!!set.dueOnly);
   const [questionQueue, setQuestionQueue] = useState([]);
@@ -4036,10 +4036,6 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), onM
     if (direction === 'ko-zh') setSource('term');
   }, [direction]);
 
-  useEffect(() => {
-    setRecordResults(set.recordResults ?? true);
-  }, [set.label, set.recordResults]);
-
   const finishSession = () => {
     setSessionFinished(true);
     if (!set.onComplete || completionStartedRef.current) return;
@@ -4087,8 +4083,8 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), onM
     else if (set.dueOnly) finishSession();
     else resetSession();
   };
-  // Korean-to-Chinese correct answers are intentionally lightweight: they do
-  // not improve long-term accuracy, while wrong answers still mark the card.
+  // Self-directed tests never alter long-term accuracy. Daily listening rounds
+  // still update their dedicated rotation state in the recognition branch.
   const submit = (correct) => {
     if (recognitionMode) {
       updateStore((current) => recordDailyRecognitionAnswer(current, question, correct));
@@ -4213,7 +4209,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), onM
           {fixedSource ? (
             <div className="fixed-source-note">此測驗只包含單字題。</div>
           ) : direction === 'ko-zh' ? (
-            <div className="fixed-source-note">韓翻中只測驗單字。答對不會寫入長期正確率，答錯仍會記錄為不熟悉。</div>
+            <div className="fixed-source-note">韓翻中只測驗單字，結果不會寫入正確率或間隔排程。</div>
           ) : (
             <div className="segmented">
               <button className={source === 'term' ? 'active' : ''} onClick={() => setSource('term')}>單字 / 片語</button>
@@ -4225,11 +4221,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), onM
             <button className={!starredOnly ? 'active' : ''} onClick={() => setStarredOnly(false)}>全部卡片</button>
             <button className={starredOnly ? 'active' : ''} onClick={() => setStarredOnly(true)}><Star size={16} /> 有星號</button>
           </div>
-          <div className="segmented compact">
-            <button className={recordResults ? 'active' : ''} onClick={() => setRecordResults(true)}>紀錄結果</button>
-            <button className={!recordResults ? 'active' : ''} onClick={() => setRecordResults(false)}>不紀錄</button>
-          </div>
-          {!recordResults && <div className="fixed-source-note muted-note">這次測驗不會改變答對率、間隔排程或今日紀錄。</div>}
+          <div className="fixed-source-note muted-note">自主測驗固定不紀錄，不會改變答對率、間隔排程或每日複習紀錄。</div>
           <p>{sourceQuestions.length} 題可測驗。{set.dueOnly ? '請看中文提示輸入韓文答案。' : '中翻韓只會出打字題，韓翻中會先思考再公佈答案。'}</p>
           <button className="primary wide" disabled={!sourceQuestions.length} onClick={startSession}>開始</button>
         </div>
@@ -5509,6 +5501,7 @@ export {
   resolveImportConflictDraft,
   shouldInitializeDailyRecognition,
   shouldOfferLearnedFolder,
+  shouldRecordPracticeResults,
 };
 
 if (typeof document !== 'undefined') createRoot(document.getElementById('root')).render(<App />);
