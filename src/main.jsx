@@ -368,7 +368,39 @@ function useWordFolders(user) {
     });
   }, [user]);
 
-  return { ...state, save, remove, addWords, removeWords, addWordsToFolders };
+  const createFolderAndAssign = useCallback(async (nameInput, wordIds, additionalFolderIds = []) => {
+    if (!user) throw new Error('尚未登入');
+    const name = String(nameInput || '').trim();
+    if (!name) throw new Error('請輸入新資料夾名稱');
+    if (name === SYSTEM_LEARNED_FOLDER_NAME) throw new Error('「已學習」是系統保留資料夾');
+    const duplicate = state.folders.find((folder) => folder.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+    if (duplicate) throw new Error(`已經有名為「${name}」的資料夾，請直接勾選它`);
+    const ids = [...new Set(wordIds.filter(Boolean).map(String))];
+    if (!ids.length) throw new Error('請先選取要加入的單字');
+    const targetFolderIds = [...new Set(additionalFolderIds.filter(Boolean).map(String))];
+    if (targetFolderIds.length + 1 > 500) throw new Error('這次更新的資料夾數量超過 Firebase 單次批次上限');
+    const now = new Date().toISOString();
+    const folder = normalizeFolder({
+      id: crypto.randomUUID(),
+      name,
+      wordIds: ids,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await retryFirestoreWrite(async () => {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'users', user.uid, 'folders', folder.id), folder);
+      targetFolderIds.forEach((folderId) => batch.set(
+        doc(db, 'users', user.uid, 'folders', folderId),
+        { wordIds: arrayUnion(...ids), updatedAt: serverTimestamp() },
+        { merge: true },
+      ));
+      await batch.commit();
+    });
+    return folder;
+  }, [user, state.folders]);
+
+  return { ...state, save, remove, addWords, removeWords, addWordsToFolders, createFolderAndAssign };
 }
 
 function recordsFromSnapshot(snap) {
@@ -2093,12 +2125,12 @@ function App() {
   const views = {
     home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} recognitionQuestions={todayRecognitionQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} />,
-    notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
+    notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} />,
     practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} onMarkLearned={(itemId) => folders.addWords(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} />,
-    notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
+    notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     folders: <FoldersPage folders={folders.folders} items={items} loading={folders.loading} error={folders.error} onSave={folders.save} onDelete={folders.remove} onOpen={openFolder} />,
-    folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
+    folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
     grammar: <GrammarNotebookPage notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} />,
   };
 
@@ -2408,7 +2440,7 @@ function CalendarPage({ store, items, selectedDate, setSelectedDate, onOpenNotes
   );
 }
 
-function NotesPage({ store, updateStore, items, questions, date, allItems, folders = [], onAssignFolders, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords }) {
+function NotesPage({ store, updateStore, items, questions, date, allItems, folders = [], onAssignFolders, onCreateFolderAndAssign, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords }) {
   const [addOpen, setAddOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [jsonEditOpen, setJsonEditOpen] = useState(false);
@@ -2503,6 +2535,7 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, folde
         folders={folders}
         onSelectionChange={setSelectedIds}
         onAssignFolders={onAssignFolders}
+        onCreateFolderAndAssign={onCreateFolderAndAssign}
         onDeleteRecords={onDeleteRecords}
       />
       <div className="notes-grid">{items.map((item) => (
@@ -4805,9 +4838,10 @@ function WordFolderTags({ itemId, folders = [] }) {
   );
 }
 
-function FolderAssignmentModal({ folders, wordIds, onAssign, onClose }) {
+function FolderAssignmentModal({ folders, wordIds, onAssign, onCreateFolderAndAssign, onClose }) {
   const [selectedFolderIds, setSelectedFolderIds] = useState([]);
-  const [saving, setSaving] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [savingAction, setSavingAction] = useState('');
   const [error, setError] = useState('');
   const toggleFolder = (folderId) => setSelectedFolderIds((current) => (
     current.includes(folderId) ? current.filter((id) => id !== folderId) : [...current, folderId]
@@ -4815,16 +4849,29 @@ function FolderAssignmentModal({ folders, wordIds, onAssign, onClose }) {
   const submit = async (event) => {
     event.preventDefault();
     if (!selectedFolderIds.length) return;
-    setSaving(true);
+    setSavingAction('existing');
     setError('');
     try {
       await onAssign(selectedFolderIds, wordIds);
       onClose(true);
     } catch (saveError) {
       setError(saveError.message || '加入資料夾失敗');
-      setSaving(false);
+      setSavingAction('');
     }
   };
+  const createAndAssign = async () => {
+    if (!newFolderName.trim()) return;
+    setSavingAction('create');
+    setError('');
+    try {
+      await onCreateFolderAndAssign(newFolderName, wordIds, selectedFolderIds);
+      onClose(true);
+    } catch (saveError) {
+      setError(saveError.message || '建立資料夾失敗');
+      setSavingAction('');
+    }
+  };
+  const saving = !!savingAction;
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="assign-folder-title">
       <form className="modal-panel folder-assignment-modal" onSubmit={submit}>
@@ -4842,18 +4889,29 @@ function FolderAssignmentModal({ folders, wordIds, onAssign, onClose }) {
               </label>
             ))}
           </div>
-        ) : <div className="empty small-empty">還沒有資料夾，請先到「資料夾」頁面建立。</div>}
+        ) : <div className="empty small-empty">還沒有資料夾，可以直接在下方建立。</div>}
+        <section className="create-folder-during-assignment">
+          <div>
+            <FolderPlus size={20} />
+            <span><strong>建立新資料夾</strong><small>新資料夾會立即加入這 {wordIds.length} 個單字</small></span>
+          </div>
+          <div className="create-folder-inline-form">
+            <input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); createAndAssign(); } }} maxLength={60} placeholder="輸入新資料夾名稱" disabled={saving} />
+            <button type="button" className="soft-button" disabled={!newFolderName.trim() || saving} onClick={createAndAssign}>{savingAction === 'create' ? '建立中' : '建立並加入'}</button>
+          </div>
+          {!!selectedFolderIds.length && <small>也會同時加入上方已勾選的 {selectedFolderIds.length} 個資料夾。</small>}
+        </section>
         {error && <div className="form-error">{error}</div>}
         <div className="form-actions">
           <button type="button" onClick={() => onClose(false)} disabled={saving}>取消</button>
-          <button className="primary" disabled={!selectedFolderIds.length || saving}>{saving ? '加入中' : '加入所選資料夾'}</button>
+          <button className="primary" disabled={!selectedFolderIds.length || saving}>{savingAction === 'existing' ? '加入中' : '加入所選資料夾'}</button>
         </div>
       </form>
     </div>
   );
 }
 
-function BulkWordActions({ selectedIds, visibleIds, folders, onSelectionChange, onAssignFolders, onDeleteRecords, currentFolder, onRemoveFromCurrentFolder }) {
+function BulkWordActions({ selectedIds, visibleIds, folders, onSelectionChange, onAssignFolders, onCreateFolderAndAssign, onDeleteRecords, currentFolder, onRemoveFromCurrentFolder }) {
   const [assignOpen, setAssignOpen] = useState(false);
   const [busyAction, setBusyAction] = useState('');
   const [error, setError] = useState('');
@@ -4897,7 +4955,7 @@ function BulkWordActions({ selectedIds, visibleIds, folders, onSelectionChange, 
           {!!selectedIds.length && <button type="button" className="text-link muted-link" disabled={!!busyAction} onClick={() => onSelectionChange([])}>清除選取</button>}
         </div>
         <div className="bulk-action-buttons">
-          <button type="button" disabled={!selectedIds.length || !folders.length || !!busyAction} onClick={() => setAssignOpen(true)}><FolderInput size={17} /> 加入資料夾</button>
+          <button type="button" disabled={!selectedIds.length || !!busyAction} onClick={() => setAssignOpen(true)}><FolderInput size={17} /> 加入資料夾</button>
           {currentFolder && <button type="button" disabled={!selectedIds.length || !!busyAction} onClick={removeFromFolder}><X size={17} /> {busyAction === 'remove' ? '移除中' : '僅從這個資料夾移除'}</button>}
           <button type="button" className="danger-soft" disabled={!selectedIds.length || !!busyAction} onClick={permanentlyDelete}><Trash2 size={17} /> {busyAction === 'delete' ? '刪除中' : '永久刪除單字'}</button>
         </div>
@@ -4908,6 +4966,7 @@ function BulkWordActions({ selectedIds, visibleIds, folders, onSelectionChange, 
           folders={folders}
           wordIds={selectedIds}
           onAssign={onAssignFolders}
+          onCreateFolderAndAssign={onCreateFolderAndAssign}
           onClose={(completed) => {
             setAssignOpen(false);
             if (completed) onSelectionChange([]);
@@ -5052,7 +5111,7 @@ function AddExistingWordsModal({ folder, items, onAdd, onClose }) {
   );
 }
 
-function FolderDetailPage({ folder, folders, store, updateStore, items, questions, onSaveFolder, onDeleteFolder, onAddWords, onAssignFolders, onRemoveWords, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords, onBack }) {
+function FolderDetailPage({ folder, folders, store, updateStore, items, questions, onSaveFolder, onDeleteFolder, onAddWords, onAssignFolders, onCreateFolderAndAssign, onRemoveWords, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords, onBack }) {
   const [query, setQuery] = useState('');
   const [pageNumber, setPageNumber] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
@@ -5148,6 +5207,7 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
         folders={folders}
         onSelectionChange={setSelectedIds}
         onAssignFolders={onAssignFolders}
+        onCreateFolderAndAssign={onCreateFolderAndAssign}
         onDeleteRecords={onDeleteRecords}
         currentFolder={folder}
         onRemoveFromCurrentFolder={onRemoveWords}
@@ -5176,7 +5236,7 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
   );
 }
 
-function NotebookPage({ store, updateStore, items, questions, folders = [], onAssignFolders, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords }) {
+function NotebookPage({ store, updateStore, items, questions, folders = [], onAssignFolders, onCreateFolderAndAssign, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords }) {
   const [query, setQuery] = useState('');
   const [type, setType] = useState('全部');
   const [level, setLevel] = useState('全部');
@@ -5316,6 +5376,7 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
         folders={folders}
         onSelectionChange={setSelectedIds}
         onAssignFolders={onAssignFolders}
+        onCreateFolderAndAssign={onCreateFolderAndAssign}
         onDeleteRecords={onDeleteRecords}
       />
       <div className="word-grid">

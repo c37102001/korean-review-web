@@ -1039,6 +1039,61 @@ main {
   color: #78858b;
 }
 
+.create-folder-during-assignment {
+  display: grid;
+  gap: 11px;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid #d9e8e4;
+  border-radius: 12px;
+  background: #f3faf7;
+}
+
+.create-folder-during-assignment > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.create-folder-during-assignment > div:first-child > svg {
+  flex: 0 0 auto;
+  color: #258b7a;
+}
+
+.create-folder-during-assignment > div:first-child span {
+  display: grid;
+  gap: 2px;
+}
+
+.create-folder-during-assignment small {
+  color: #708086;
+}
+
+.create-folder-inline-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 9px;
+}
+
+.create-folder-inline-form input {
+  min-width: 0;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid #d7e3e1;
+  border-radius: 10px;
+  outline: 0;
+  background: #ffffff;
+}
+
+.create-folder-inline-form input:focus {
+  border-color: #43b5a2;
+  box-shadow: 0 0 0 3px rgba(47, 185, 163, 0.14);
+}
+
+.create-folder-inline-form button {
+  min-height: 42px;
+}
+
 .grammar-search {
   display: flex;
   align-items: center;
@@ -3337,6 +3392,14 @@ textarea:focus {
 
   .batch-folder-options {
     grid-template-columns: 1fr;
+  }
+
+  .create-folder-inline-form {
+    grid-template-columns: 1fr;
+  }
+
+  .create-folder-inline-form button {
+    width: 100%;
   }
 
   .notebook-visibility-row {
