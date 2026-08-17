@@ -46,6 +46,18 @@ test('replacing an existing duplicate becomes one update with no second conflict
   assert.ok(records.updateRecords[0].order > 0);
 });
 
+test('keeping an existing duplicate retains its id for folder assignment', () => {
+  const existing = { id: 'existing-id', date: '2026-07-20', ...item('질문', '問題') };
+  const draft = helpers.buildJsonImportDraft(JSON.stringify({ data: [item('질문', '提問')] }), '2026-07-22');
+  draft.conflict = helpers.findImportConflict(draft.entries, [existing]);
+
+  const resolved = helpers.resolveImportConflictDraft(draft, 'existing', [existing]);
+
+  assert.deepEqual(resolved.entries, []);
+  assert.deepEqual(resolved.keptExistingIds, ['existing-id']);
+  assert.equal(resolved.conflict, null);
+});
+
 test('replaced existing cards follow their position in the current JSON batch', () => {
   const existing = { id: 'existing-id', date: '2026-07-22', order: 1, ...item('하나도', '舊資料') };
   const draft = helpers.buildJsonImportDraft(JSON.stringify({ data: [
@@ -257,7 +269,7 @@ test('daily word-example listening wrong answers only affect tomorrow round stat
   assert.deepEqual(next.recognition.pendingWrongIds, [question.id]);
 });
 
-test('well-known daily terms can be postponed for 30 days without losing the answer record', () => {
+test('a fifth correct daily term answer offers the learned folder', () => {
   const question = {
     id: 'term-known',
     itemId: 'card-known',
@@ -267,24 +279,28 @@ test('well-known daily terms can be postponed for 30 days without losing the ans
   };
   const store = {
     attempts: [],
-    stats: { [question.id]: { total: 7, correct: 5, wrong: 2 } },
+    stats: { [question.id]: { total: 6, correct: 4, wrong: 2 } },
     progress: { [question.id]: { stage: 2, nextDue: '2026-08-12' } },
   };
-  assert.equal(helpers.shouldOfferMonthlyReviewSkip(store, question, true, true), true);
-  assert.equal(helpers.shouldOfferMonthlyReviewSkip(store, question, true, false), false);
+  assert.equal(helpers.shouldOfferLearnedFolder(store, question, true, true), true);
+  assert.equal(helpers.shouldOfferLearnedFolder(store, question, true, false), false);
+  assert.equal(helpers.shouldOfferLearnedFolder(store, question, false, true), false);
+});
 
-  const postponed = helpers.recordAnswer(store, question, true, 30);
-  assert.equal(postponed.stats[question.id].total, 8);
-  assert.equal(postponed.stats[question.id].correct, 6);
-  assert.equal(postponed.progress[question.id].stage, 4);
-  const millisecondsPerDay = 24 * 60 * 60 * 1000;
-  assert.equal(
-    (Date.parse(postponed.progress[question.id].nextDue) - Date.parse(postponed.attempts[0].date)) / millisecondsPerDay,
-    30,
+test('learned words are excluded from both daily terms and example listening', () => {
+  const questions = [
+    { id: 'term-a', itemId: 'card-a', kind: 'term' },
+    { id: 'example-a', itemId: 'card-a', kind: 'example' },
+    { id: 'term-b', itemId: 'card-b', kind: 'term' },
+    { id: 'example-b', itemId: 'card-b', kind: 'example' },
+  ];
+  assert.deepEqual(
+    helpers.excludeLearnedQuestions(questions, ['card-a']).map((question) => question.id),
+    ['term-b', 'example-b'],
   );
 });
 
-test('declining the monthly skip keeps the original review progression', () => {
+test('declining the learned-folder offer keeps the original review progression', () => {
   const question = { id: 'term-normal', kind: 'term' };
   const store = {
     attempts: [],
@@ -341,6 +357,32 @@ test('grammar notes normalize searchable content without review fields', () => {
   });
   assert.equal('stats' in note, false);
   assert.equal('progress' in note, false);
+});
+
+test('folders keep unique word id references without copying word content', () => {
+  assert.deepEqual(
+    helpers.normalizeFolder({
+      id: 'folder-1',
+      name: '  交通  ',
+      wordIds: ['word-1', 'word-2', 'word-1', '', null],
+      createdAt: '2026-08-17T00:00:00.000Z',
+    }),
+    {
+      id: 'folder-1',
+      name: '交通',
+      wordIds: ['word-1', 'word-2'],
+      createdAt: '2026-08-17T00:00:00.000Z',
+      updatedAt: '',
+      systemKey: '',
+    },
+  );
+});
+
+test('the learned folder is recognized by its fixed id, system key, or reserved name', () => {
+  assert.equal(helpers.isLearnedFolder({ id: 'system-learned', name: 'Other' }), true);
+  assert.equal(helpers.isLearnedFolder({ id: 'legacy-id', systemKey: 'learned', name: 'Other' }), true);
+  assert.equal(helpers.isLearnedFolder({ id: 'legacy-id', name: '已學習' }), true);
+  assert.equal(helpers.isLearnedFolder({ id: 'folder-1', name: '交通' }), false);
 });
 
 test('grammar examples parse Korean and Chinese lines into separate examples', () => {

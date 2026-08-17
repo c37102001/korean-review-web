@@ -11,7 +11,13 @@ import {
   Download,
   Dumbbell,
   Flame,
+  Folder,
+  FolderInput,
+  FolderOpen,
+  FolderPlus,
   LibraryBig,
+  ListChecks,
+  Link2,
   LogOut,
   NotebookPen,
   Pencil,
@@ -31,7 +37,7 @@ import {
   X,
 } from 'lucide-react';
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { arrayUnion, collection, deleteDoc, deleteField, doc, FieldPath, getDoc, getDocs, onSnapshot, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
+import { arrayRemove, arrayUnion, collection, deleteDoc, deleteField, doc, FieldPath, getDoc, getDocs, onSnapshot, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import { auth, db } from './firebase.js';
 import './styles.css';
 
@@ -39,6 +45,8 @@ const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
 const DAILY_RECOGNITION_LIMIT = 50;
 const DAILY_RECOGNITION_MODE = 'daily-recognition';
 const DAILY_GRAMMAR_MODE = 'daily-grammar';
+const SYSTEM_LEARNED_FOLDER_ID = 'system-learned';
+const SYSTEM_LEARNED_FOLDER_NAME = '已學習';
 const CONTENT_SCHEMA_VERSION = 2;
 const FIRESTORE_SCHEMA_VERSION = 3;
 const PROGRESS_SHARD_COUNT = 16;
@@ -231,6 +239,136 @@ function useGrammarNotes(user) {
   }, [user]);
 
   return { ...state, save, remove, completeReview };
+}
+
+function normalizeFolder(folder, fallbackId = '') {
+  return {
+    id: String(folder?.id || fallbackId),
+    name: String(folder?.name || '').trim(),
+    wordIds: [...new Set((Array.isArray(folder?.wordIds) ? folder.wordIds : []).filter(Boolean).map(String))],
+    createdAt: String(folder?.createdAt || ''),
+    updatedAt: String(folder?.updatedAt || ''),
+    systemKey: String(folder?.systemKey || ''),
+  };
+}
+
+function isLearnedFolder(folder) {
+  return folder?.id === SYSTEM_LEARNED_FOLDER_ID
+    || folder?.systemKey === 'learned'
+    || folder?.name === SYSTEM_LEARNED_FOLDER_NAME;
+}
+
+function defaultLearnedFolder() {
+  const now = new Date().toISOString();
+  return normalizeFolder({
+    id: SYSTEM_LEARNED_FOLDER_ID,
+    name: SYSTEM_LEARNED_FOLDER_NAME,
+    wordIds: [],
+    systemKey: 'learned',
+    createdAt: now,
+    updatedAt: now,
+  }, SYSTEM_LEARNED_FOLDER_ID);
+}
+
+function useWordFolders(user) {
+  const [state, setState] = useState({ folders: [], loading: false, error: '' });
+
+  useEffect(() => {
+    if (!user) {
+      setState({ folders: [], loading: false, error: '' });
+      return undefined;
+    }
+    setState((current) => ({ ...current, loading: true, error: '' }));
+    return onSnapshot(
+      collection(db, 'users', user.uid, 'folders'),
+      { includeMetadataChanges: true },
+      (snapshot) => {
+        if (snapshot.metadata.hasPendingWrites) return;
+        let folders = snapshot.docs
+          .map((documentSnap) => normalizeFolder(documentSnap.data(), documentSnap.id))
+          .filter((folder) => folder.name)
+          .sort((a, b) => Number(isLearnedFolder(b)) - Number(isLearnedFolder(a)) || (b.createdAt || '').localeCompare(a.createdAt || '') || a.name.localeCompare(b.name));
+        if (!folders.some(isLearnedFolder)) {
+          const learnedFolder = defaultLearnedFolder();
+          folders = [learnedFolder, ...folders];
+          retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'folders', SYSTEM_LEARNED_FOLDER_ID), learnedFolder))
+            .catch((error) => setState((current) => ({ ...current, error: `建立已學習資料夾失敗：${error.message}` })));
+        }
+        setState({ folders, loading: false, error: '' });
+      },
+      (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
+    );
+  }, [user]);
+
+  const save = useCallback(async (input) => {
+    if (!user) throw new Error('尚未登入');
+    if (isLearnedFolder(input)) throw new Error('系統資料夾「已學習」無法改名');
+    const name = String(input?.name || '').trim();
+    if (!name) throw new Error('請輸入資料夾名稱');
+    const duplicate = state.folders.find((folder) => folder.name.toLocaleLowerCase() === name.toLocaleLowerCase() && folder.id !== input?.id);
+    if (duplicate) throw new Error(`已經有名為「${name}」的資料夾`);
+    const id = input?.id || crypto.randomUUID();
+    const existing = state.folders.find((folder) => folder.id === id);
+    const now = new Date().toISOString();
+    const folder = normalizeFolder({
+      ...existing,
+      ...input,
+      id,
+      name,
+      wordIds: existing?.wordIds || input?.wordIds || [],
+      createdAt: existing?.createdAt || input?.createdAt || now,
+      updatedAt: now,
+    }, id);
+    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'folders', id), folder));
+    return folder;
+  }, [user, state.folders]);
+
+  const remove = useCallback(async (folderId) => {
+    if (!user) throw new Error('尚未登入');
+    if (isLearnedFolder(state.folders.find((folder) => folder.id === folderId) || { id: folderId })) {
+      throw new Error('系統資料夾「已學習」無法刪除');
+    }
+    await retryFirestoreWrite(() => deleteDoc(doc(db, 'users', user.uid, 'folders', folderId)));
+  }, [user, state.folders]);
+
+  const addWords = useCallback(async (folderId, wordIds) => {
+    if (!user) throw new Error('尚未登入');
+    const ids = [...new Set(wordIds.filter(Boolean).map(String))];
+    if (!ids.length) return;
+    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'folders', folderId), {
+      wordIds: arrayUnion(...ids),
+      updatedAt: serverTimestamp(),
+    }, { merge: true }));
+  }, [user]);
+
+  const removeWords = useCallback(async (folderId, wordIds) => {
+    if (!user) throw new Error('尚未登入');
+    const ids = [...new Set(wordIds.filter(Boolean).map(String))];
+    if (!ids.length) return;
+    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'folders', folderId), {
+      wordIds: arrayRemove(...ids),
+      updatedAt: serverTimestamp(),
+    }, { merge: true }));
+  }, [user]);
+
+  const addWordsToFolders = useCallback(async (folderIds, wordIds) => {
+    if (!user) throw new Error('尚未登入');
+    const targetFolderIds = [...new Set(folderIds.filter(Boolean).map(String))];
+    const ids = [...new Set(wordIds.filter(Boolean).map(String))];
+    if (!targetFolderIds.length || !ids.length) return;
+    if (targetFolderIds.length > 500) throw new Error('一次最多可以更新 500 個資料夾');
+    await retryFirestoreWrite(async () => {
+      const batch = writeBatch(db);
+      targetFolderIds.forEach((folderId) => batch.set(
+        doc(db, 'users', user.uid, 'folders', folderId),
+        { wordIds: arrayUnion(...ids), updatedAt: serverTimestamp() },
+        { merge: true },
+      ));
+      await batch.commit();
+    });
+  }, [user]);
+
+  return { ...state, save, remove, addWords, removeWords, addWordsToFolders };
 }
 
 function recordsFromSnapshot(snap) {
@@ -1153,9 +1291,11 @@ function resolveImportConflictDraft(draft, choice, allItems = []) {
   const conflict = draft.conflict;
   if (!conflict) throw new Error('目前沒有需要處理的衝突');
   const nextEntries = [...draft.entries];
+  const keptExistingIds = [...new Set(draft.keptExistingIds || [])];
   const editedItem = choice === 'edit' ? parseEditedImportItem(conflict.editText, '最終結果') : null;
   if (conflict.type === 'existing') {
     if (choice === 'existing') {
+      keptExistingIds.push(conflict.existing.id);
       nextEntries[conflict.entryIndex] = null;
     } else {
       const item = choice === 'incoming' ? conflict.incoming : choice === 'merge' ? mergeImportItems(conflict.existing, conflict.incoming) : editedItem;
@@ -1183,20 +1323,24 @@ function resolveImportConflictDraft(draft, choice, allItems = []) {
   return {
     ...draft,
     entries: activeEntries,
+    keptExistingIds: [...new Set(keptExistingIds)],
     conflict: nextConflict,
     missingRelated: nextMissingRelated.length ? nextMissingRelated : null,
     message: nextConflict ? '已處理一組重複單字，請繼續處理下一組' : nextMissingRelated.length ? '重複單字已處理，請處理找不到的關聯詞' : '所有問題都已處理，可以匯入',
   };
 }
 
-async function writeLearningRecords(uid, records, onProgress) {
-  if (!records.length) return;
+async function writeLearningRecords(uid, records, onProgress, folderIds = [], additionalFolderWordIds = []) {
+  const uniqueFolderIds = [...new Set(folderIds)].filter(Boolean);
+  const extraWordIds = [...new Set(additionalFolderWordIds)].filter(Boolean);
+  if (!records.length && (!uniqueFolderIds.length || !extraWordIds.length)) return;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     throw new Error('目前網路離線，尚未送出任何資料');
   }
   if (records.length > MAX_ATOMIC_RECORD_WRITES) {
     throw new Error(`一次最多可以寫入 ${MAX_ATOMIC_RECORD_WRITES} 筆單字，請縮小匯入範圍`);
   }
+  if (records.length + uniqueFolderIds.length > 500) throw new Error('單字與資料夾更新超過 Firebase 單次批次上限');
   const lookup = buildRecordLookup(records);
   const normalizedRecords = [];
   for (let index = 0; index < records.length; index += 1) {
@@ -1211,7 +1355,7 @@ async function writeLearningRecords(uid, records, onProgress) {
     normalizedRecords.push({ ...record, item: normalizeItemToV2(record.item, record.id, lookup) });
     if (onProgress) await new Promise((resolve) => setTimeout(resolve, 0));
   }
-  const recordIds = normalizedRecords.map((record) => record.id);
+  const recordIds = [...new Set([...normalizedRecords.map((record) => record.id), ...extraWordIds])];
   if (recordIds.some((recordId) => !recordId)) throw new Error('寫入資料缺少必要的單字 ID');
   if (new Set(recordIds).size !== recordIds.length) throw new Error('寫入資料中含有重複的單字 ID');
   onProgress?.({
@@ -1237,6 +1381,11 @@ async function writeLearningRecords(uid, records, onProgress) {
         doc(db, 'users', uid, 'records', record.id),
         { ...record, updatedAt: serverTimestamp() },
       ));
+      uniqueFolderIds.forEach((folderId) => batch.set(
+        doc(db, 'users', uid, 'folders', folderId),
+        { wordIds: arrayUnion(...recordIds), updatedAt: serverTimestamp() },
+        { merge: true },
+      ));
       await batch.commit();
     });
   } finally {
@@ -1250,12 +1399,29 @@ async function writeLearningRecords(uid, records, onProgress) {
   });
 }
 
-async function writeLearningRecord(uid, record, onProgress) {
-  await writeLearningRecords(uid, [record], onProgress);
+async function writeLearningRecord(uid, record, onProgress, folderIds = []) {
+  await writeLearningRecords(uid, [record], onProgress, folderIds);
 }
 
-async function deleteLearningRecord(uid, recordId) {
-  await deleteDoc(doc(db, 'users', uid, 'records', recordId));
+async function deleteLearningRecords(uid, recordIds, folders = []) {
+  const ids = [...new Set(recordIds.filter(Boolean))];
+  if (!ids.length) return;
+  const affectedFolders = folders.filter((folder) => folder.wordIds.some((wordId) => ids.includes(wordId)));
+  if (ids.length + affectedFolders.length > 500) throw new Error('這次刪除超過 Firebase 單次批次上限，請縮小選取範圍');
+  await retryFirestoreWrite(async () => {
+    const batch = writeBatch(db);
+    ids.forEach((recordId) => batch.delete(doc(db, 'users', uid, 'records', recordId)));
+    affectedFolders.forEach((folder) => batch.set(
+      doc(db, 'users', uid, 'folders', folder.id),
+      { wordIds: arrayRemove(...ids), updatedAt: serverTimestamp() },
+      { merge: true },
+    ));
+    await batch.commit();
+  });
+}
+
+async function deleteLearningRecord(uid, recordId, folders = []) {
+  await deleteLearningRecords(uid, [recordId], folders);
 }
 
 function getStats(store, id) {
@@ -1298,6 +1464,11 @@ function orderReviewQuestions(questions) {
 
 function reviewQuestions(questions) {
   return orderReviewQuestions(questions.filter((question) => question.kind === 'term' || question.kind === 'example'));
+}
+
+function excludeLearnedQuestions(questions, learnedWordIds = []) {
+  const learned = learnedWordIds instanceof Set ? learnedWordIds : new Set(learnedWordIds);
+  return questions.filter((question) => !learned.has(question.itemId));
 }
 
 function dailyReviewQuestions(store, questions, date = todayString()) {
@@ -1535,12 +1706,11 @@ function calculateReviewStreaks(completedReviewDates, today = todayString()) {
   return { current, best };
 }
 
-function recordAnswer(store, question, correct, reviewIntervalOverride = null) {
+function recordAnswer(store, question, correct) {
   const now = new Date().toISOString();
   const previous = getProgress(store, question);
-  const overrideStage = REVIEW_INTERVALS.indexOf(reviewIntervalOverride);
   const stage = correct
-    ? overrideStage >= 0 ? overrideStage : Math.min(previous.stage + 1, REVIEW_INTERVALS.length - 1)
+    ? Math.min(previous.stage + 1, REVIEW_INTERVALS.length - 1)
     : 0;
   return {
     ...store,
@@ -1567,12 +1737,12 @@ function recordAnswer(store, question, correct, reviewIntervalOverride = null) {
   };
 }
 
-function shouldOfferMonthlyReviewSkip(store, question, correct, dailyReview) {
+function shouldOfferLearnedFolder(store, question, correct, dailyReview) {
   return Boolean(
     dailyReview
     && correct
     && question?.kind === 'term'
-    && (store.stats?.[question.id]?.correct || 0) >= 5
+    && (store.stats?.[question.id]?.correct || 0) + 1 >= 5
   );
 }
 
@@ -1788,11 +1958,13 @@ function App() {
   const { loading: authLoading, user } = useAuthUser();
   const [store, updateStore, storeLoading, storeError, markDateComplete] = useFirestoreStore(user);
   const grammar = useGrammarNotes(user);
+  const folders = useWordFolders(user);
   const [page, setPage] = useState('home');
   const [pageStack, setPageStack] = useState([]);
   const [selectedDate, setSelectedDate] = useState(() => todayString());
   const [practiceSet, setPracticeSet] = useState(null);
   const [studySet, setStudySet] = useState(null);
+  const [selectedFolderId, setSelectedFolderId] = useState(null);
   const recognitionInitializationRef = useRef(new Set());
   const allRecords = useMemo(() => {
     const byId = new Map();
@@ -1800,7 +1972,11 @@ function App() {
     return [...byId.values()];
   }, [store.customRecords]);
   const { items, questions } = useMemo(() => normalizeRecords(allRecords), [allRecords]);
-  const dailyQuestions = useMemo(() => reviewQuestions(questions), [questions]);
+  const learnedFolder = useMemo(() => folders.folders.find(isLearnedFolder), [folders.folders]);
+  const learnedWordIds = useMemo(() => new Set(learnedFolder?.wordIds || []), [learnedFolder]);
+  const dailyQuestions = useMemo(() => (
+    excludeLearnedQuestions(reviewQuestions(questions), learnedWordIds)
+  ), [questions, learnedWordIds]);
   const todayDailyQuestions = useMemo(() => dailyReviewQuestions(store, dailyQuestions, todayString()), [store, dailyQuestions]);
   const todayRecognitionSchedule = useMemo(
     () => dailyRecognitionSchedule(store, dailyQuestions, todayString()),
@@ -1882,37 +2058,47 @@ function App() {
     setStudySet({ items: sourceItems, label });
     navChild('study');
   };
-  const addLearningRecords = async (records, onProgress) => {
-    await writeLearningRecords(user.uid, records, onProgress);
+  const addLearningRecords = async (records, onProgress, folderIds = []) => {
+    await writeLearningRecords(user.uid, records, onProgress, folderIds);
   };
   const updateLearningRecord = async (record, onProgress) => {
     await writeLearningRecord(user.uid, record, onProgress);
   };
-  const updateLearningRecords = async (updatedRecords, onProgress) => {
-    await writeLearningRecords(user.uid, updatedRecords, onProgress);
+  const updateLearningRecords = async (updatedRecords, onProgress, folderIds = [], additionalFolderWordIds = []) => {
+    await writeLearningRecords(user.uid, updatedRecords, onProgress, folderIds, additionalFolderWordIds);
   };
-  const deleteLearningRecordFromStore = async (recordId) => {
+  const deleteLearningRecordsFromStore = async (recordIds) => {
+    const ids = [...new Set(recordIds.filter(Boolean))];
+    if (!ids.length) return;
+    await deleteLearningRecords(user.uid, ids, folders.folders);
+    const belongsToDeletedRecord = (entryId) => ids.some((recordId) => entryId === recordId || entryId.startsWith(`${recordId}-`));
     await updateStore((current) => ({
       ...current,
-      customRecords: (current.customRecords || []).filter((record) => record.id !== recordId),
-      stats: Object.fromEntries(Object.entries(current.stats || {}).filter(([id]) => id !== recordId && !id.startsWith(`${recordId}-`))),
-      progress: Object.fromEntries(Object.entries(current.progress || {}).filter(([id]) => id !== recordId && !id.startsWith(`${recordId}-`))),
-      starred: (current.starred || []).filter((id) => id !== recordId),
+      customRecords: (current.customRecords || []).filter((record) => !ids.includes(record.id)),
+      stats: Object.fromEntries(Object.entries(current.stats || {}).filter(([id]) => !belongsToDeletedRecord(id))),
+      progress: Object.fromEntries(Object.entries(current.progress || {}).filter(([id]) => !belongsToDeletedRecord(id))),
+      starred: (current.starred || []).filter((id) => !ids.includes(id)),
     }));
-    await deleteLearningRecord(user.uid, recordId);
+  };
+  const deleteLearningRecordFromStore = async (recordId) => deleteLearningRecordsFromStore([recordId]);
+  const openFolder = (folderId) => {
+    setSelectedFolderId(folderId);
+    navChild('folder');
   };
 
   if (authLoading) return <LoadingScreen text="正在確認登入狀態" />;
   if (!user) return <LoginPage />;
-  if (storeLoading) return <LoadingScreen text="載入資料中" />;
+  if (storeLoading || folders.loading) return <LoadingScreen text="載入資料中" />;
 
   const views = {
-    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} recognitionQuestions={todayRecognitionQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} />,
+    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} recognitionQuestions={todayRecognitionQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} />,
-    notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} />,
+    notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} />,
-    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} />,
-    notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} />,
+    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} onMarkLearned={(itemId) => folders.addWords(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} />,
+    notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
+    folders: <FoldersPage folders={folders.folders} items={items} loading={folders.loading} error={folders.error} onSave={folders.save} onDelete={folders.remove} onOpen={openFolder} />,
+    folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
     grammar: <GrammarNotebookPage notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} />,
   };
 
@@ -1922,11 +2108,13 @@ function App() {
         <button className={`brand brand-button ${page === 'home' ? 'active' : ''}`} onClick={() => navTop('home')}><Sparkles size={24} /> 韓文筆記</button>
         <button className={page === 'calendar' || page === 'notes' ? 'active' : ''} onClick={() => navTop('calendar')}><CalendarDays size={18} /> 日曆</button>
         <button className={page === 'notebook' ? 'active' : ''} onClick={() => navTop('notebook')}><LibraryBig size={18} /> 單字本</button>
+        <button className={page === 'folders' || page === 'folder' ? 'active' : ''} onClick={() => navTop('folders')}><Folder size={18} /> 資料夾</button>
         <button className={page === 'grammar' ? 'active' : ''} onClick={() => navTop('grammar')}><NotebookPen size={18} /> 文法筆記</button>
         <button className="logout-button" onClick={() => signOut(auth)}><LogOut size={18} /> 登出</button>
       </aside>
       <main>
         {storeError && <div className="sync-error">Firebase 同步失敗：{storeError}</div>}
+        {folders.error && <div className="sync-error">資料夾同步失敗：{folders.error}</div>}
         {!!pageStack.length && page !== 'study' && <button className="back-button" onClick={goUp}><ChevronLeft size={18} /> 返回上一層</button>}
         {views[page]}
       </main>
@@ -1996,7 +2184,7 @@ function LoginPage() {
   );
 }
 
-function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQuestions, grammarSchedule, onCompleteGrammar, onPractice, onAddRecords, onUpdateRecord, onWriteRecords }) {
+function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQuestions, grammarSchedule, onCompleteGrammar, onPractice, onAddRecords, onUpdateRecord, onWriteRecords, folders = [] }) {
   const [addOpen, setAddOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const today = todayString();
@@ -2053,6 +2241,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
           date={today}
           lockedDate
           allItems={items}
+          folders={folders}
           onAddRecords={onAddRecords}
           onUpdateRecord={onUpdateRecord}
           onWriteRecords={onWriteRecords}
@@ -2219,19 +2408,25 @@ function CalendarPage({ store, items, selectedDate, setSelectedDate, onOpenNotes
   );
 }
 
-function NotesPage({ store, updateStore, items, questions, date, allItems, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord }) {
+function NotesPage({ store, updateStore, items, questions, date, allItems, folders = [], onAssignFolders, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords }) {
   const [addOpen, setAddOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [jsonEditOpen, setJsonEditOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [viewingItem, setViewingItem] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
   const starredSet = new Set(store.starred || []);
+  const toggleSelected = (itemId) => setSelectedIds((current) => (
+    current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]
+  ));
   const deleteDateItems = async () => {
     if (!items.length) return;
     const confirmed = window.confirm(`確定要刪除 ${date} 的 ${items.length} 筆單字嗎？這不會刪除其他日期的單字。`);
     if (!confirmed) return;
-    await Promise.all(items.map((item) => onDeleteRecord(item.id)));
+    await onDeleteRecords(items.map((item) => item.id));
+    setSelectedIds([]);
   };
+  useEffect(() => setSelectedIds([]), [date]);
   return (
     <section className="page">
       <div className="topbar">
@@ -2264,6 +2459,7 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, onPra
           date={date}
           lockedDate
           allItems={allItems}
+          folders={folders}
           onAddRecords={onAddRecords}
           onUpdateRecord={onUpdateRecord}
           onWriteRecords={onUpdateRecords}
@@ -2301,17 +2497,29 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, onPra
           onClose={() => setViewingItem(null)}
         />
       )}
+      <BulkWordActions
+        selectedIds={selectedIds}
+        visibleIds={items.map((item) => item.id)}
+        folders={folders}
+        onSelectionChange={setSelectedIds}
+        onAssignFolders={onAssignFolders}
+        onDeleteRecords={onDeleteRecords}
+      />
       <div className="notes-grid">{items.map((item) => (
         <NoteCard
           key={item.id}
           item={item}
           allItems={allItems}
+          folders={folders}
           compact
           onOpen={setViewingItem}
           onEdit={setEditingItem}
           onDelete={onDeleteRecord}
           isStarred={starredSet.has(item.id)}
           onToggleStar={() => toggleStarredItem(updateStore, item.id)}
+          selectable
+          selected={selectedIds.includes(item.id)}
+          onToggleSelected={toggleSelected}
         />
       ))}</div>
     </section>
@@ -2332,7 +2540,7 @@ function describeImportError(error) {
   return { code: code || error?.name || 'error', message };
 }
 
-function AddItemsModal({ title, date, lockedDate = false, onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], onClose }) {
+function AddItemsModal({ title, date, lockedDate = false, onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], folders = [], initialFolderIds = [], requiredFolderIds = [], onClose }) {
   const [busy, setBusy] = useState(false);
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
@@ -2348,6 +2556,9 @@ function AddItemsModal({ title, date, lockedDate = false, onAddRecords, onUpdate
           onEditExisting={onEditExisting}
           editItem={editItem}
           allItems={allItems}
+          folders={folders}
+          initialFolderIds={initialFolderIds}
+          requiredFolderIds={requiredFolderIds}
           onBusyChange={setBusy}
           onSaved={onClose}
           compactPanel
@@ -2357,7 +2568,7 @@ function AddItemsModal({ title, date, lockedDate = false, onAddRecords, onUpdate
   );
 }
 
-function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], onSaved, onBusyChange, compactPanel = false }) {
+function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], folders = [], initialFolderIds = [], requiredFolderIds = [], onSaved, onBusyChange, compactPanel = false }) {
   const isEditing = Boolean(editItem);
   const [mode, setMode] = useState('manual');
   const [formDate, setFormDate] = useState(date);
@@ -2371,6 +2582,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
   const [importProgress, setImportProgress] = useState(null);
   const [importLog, setImportLog] = useState([]);
   const [importCompleted, setImportCompleted] = useState(null);
+  const [selectedFolderIds, setSelectedFolderIds] = useState(() => [...new Set([...initialFolderIds, ...requiredFolderIds])]);
   const submissionLockRef = useRef(false);
 
   useEffect(() => {
@@ -2401,13 +2613,21 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
     setImportProgress(null);
     setImportLog([]);
     setImportCompleted(null);
+    setSelectedFolderIds([...new Set([...initialFolderIds, ...requiredFolderIds])]);
     submissionLockRef.current = false;
-  }, [date, editItem]);
+  }, [date, editItem, initialFolderIds.join('|'), requiredFolderIds.join('|')]);
 
-  const commitImportEntries = async (entries, targetDate) => {
+  const commitImportEntries = async (entries, targetDate, keptExistingIds = []) => {
     const activeEntries = entries.filter(Boolean);
     if (!activeEntries.length) {
-      const result = { added: 0, updated: 0, detail: '沒有資料需要寫入；你選擇保留既有單字。' };
+      if (selectedFolderIds.length && keptExistingIds.length) {
+        if (!onWriteRecords) throw new Error('目前無法更新資料夾，請重新開啟視窗再試一次');
+        await onWriteRecords([], reportImportProgress, selectedFolderIds, keptExistingIds);
+      }
+      const detail = selectedFolderIds.length && keptExistingIds.length
+        ? `已將 ${keptExistingIds.length} 筆既有單字加入資料夾，沒有建立重複卡片。`
+        : '沒有資料需要寫入；你選擇保留既有單字。';
+      const result = { added: 0, updated: 0, detail };
       setMessage(result.detail);
       setImportDraft(null);
       setImportCompleted(result);
@@ -2416,7 +2636,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
     }
     if (!onWriteRecords) throw new Error('目前無法執行批次匯入，請重新開啟視窗再試一次');
     const { addRecords, updateRecords } = createRecordsFromImportEntries(activeEntries, targetDate, allItems, lockedDate);
-    await onWriteRecords([...addRecords, ...updateRecords], reportImportProgress);
+    await onWriteRecords([...addRecords, ...updateRecords], reportImportProgress, selectedFolderIds, keptExistingIds);
     setMessage(`已匯入 ${addRecords.length} 筆，更新 ${updateRecords.length} 筆`);
     setJsonText('');
     setImportDraft(null);
@@ -2444,7 +2664,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
       setError('');
       return;
     }
-    await commitImportEntries(activeEntries, draft.targetDate);
+    await commitImportEntries(activeEntries, draft.targetDate, draft.keptExistingIds || []);
   };
 
   const handleContinueImportDraft = async () => {
@@ -2551,6 +2771,15 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
     }));
   };
 
+  const toggleFolder = (folderId) => {
+    if (requiredFolderIds.includes(folderId)) return;
+    setSelectedFolderIds((current) => (
+      current.includes(folderId)
+        ? current.filter((id) => id !== folderId)
+        : [...current, folderId]
+    ));
+  };
+
   const submit = async (event) => {
     event.preventDefault();
     if (submissionLockRef.current) return;
@@ -2609,7 +2838,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
           return;
         }
         const records = createRecordsForDate(targetDate, rawItems, allItems);
-        await onAddRecords(records, reportImportProgress);
+        await onAddRecords(records, reportImportProgress, selectedFolderIds);
         setMessage(`已新增 ${records.length} 筆到 ${targetDate}`);
         setManual(itemToManual());
       }
@@ -2658,6 +2887,25 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
           日期
           <input type="date" value={isEditing ? formDate : lockedDate ? date : formDate} onChange={(event) => setFormDate(event.target.value)} disabled={lockedDate && !isEditing} required />
         </label>
+        {!isEditing && !!folders.length && (
+          <fieldset className="wide-field folder-picker">
+            <legend>加入資料夾（選填）</legend>
+            <div className="folder-picker-options">
+              {folders.map((folder) => (
+                <label key={folder.id}>
+                  <input
+                    type="checkbox"
+                    checked={selectedFolderIds.includes(folder.id)}
+                    disabled={requiredFolderIds.includes(folder.id)}
+                    onChange={() => toggleFolder(folder.id)}
+                  />
+                  <Folder size={16} />
+                  <span>{folder.name}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        )}
         {mode === 'manual' ? (
           <>
             <label>
@@ -3088,18 +3336,18 @@ function EditIconButton({ onClick, label = '編輯' }) {
   );
 }
 
-function DeleteIconButton({ item, onDelete }) {
+function DeleteIconButton({ item, onDelete, label = '刪除', confirmMessage }) {
   if (!onDelete) return null;
   return (
     <button
       className="edit-icon-button delete-icon-button"
       onClick={async (event) => {
         event.stopPropagation();
-        if (!window.confirm(`確定要刪除「${item.ko}」嗎？`)) return;
+        if (!window.confirm(confirmMessage || `確定要刪除「${item.ko}」嗎？`)) return;
         await onDelete(item.id);
       }}
-      aria-label="刪除"
-      title="刪除"
+      aria-label={label}
+      title={label}
     >
       <Trash2 size={15} />
     </button>
@@ -3172,27 +3420,31 @@ function KoreanSpeakButton({ text, label = '播放韓文發音' }) {
   );
 }
 
-function NoteCard({ item, allItems = [], onEdit, onDelete, compact = false, onOpen, onOpenItem, isStarred = false, onToggleStar }) {
+function NoteCard({ item, allItems = [], folders = [], onEdit, onDelete, deleteLabel, deleteConfirmMessage, compact = false, onOpen, onOpenItem, isStarred = false, onToggleStar, selectable = false, selected = false, onToggleSelected }) {
   const examplesCount = itemExamples(item).length;
   const relatedItems = displayRelated(item, allItems);
   return (
-    <article className={`note-card ${compact ? 'compact-card clickable-card' : ''}`} onClick={compact ? () => onOpen(item) : undefined}>
+    <article className={`note-card ${compact ? 'compact-card clickable-card' : ''} ${selected ? 'selected-word-card' : ''}`} onClick={compact ? () => onOpen(item) : undefined}>
       <div className="card-head">
         <h3 className="speakable-heading"><span>{item.ko}</span><KoreanSpeakButton text={item.ko} /></h3>
         <div className="card-actions">
+          {selectable && <label className="word-select-control" title="選取單字" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected} onChange={() => onToggleSelected(item.id)} /><span className="sr-only">選取 {item.ko}</span></label>}
           <StarButton active={isStarred} onClick={onToggleStar} />
           {onEdit && <EditIconButton onClick={() => onEdit(item)} />}
-          <DeleteIconButton item={item} onDelete={onDelete} />
+          <DeleteIconButton item={item} onDelete={onDelete} label={deleteLabel} confirmMessage={deleteConfirmMessage} />
           {item.pos && <span className="badge">{item.pos}</span>}
         </div>
       </div>
       <p className="zh">{item.zh}</p>
       {compact && (
-        <div className="compact-meta">
-          <span>{item.date}</span>
-          {!!examplesCount && <span>{examplesCount} 個例句</span>}
-          {!!item.notes?.length && <span>{item.notes.length} 則筆記</span>}
-        </div>
+        <>
+          <div className="compact-meta">
+            <span>{item.date}</span>
+            {!!examplesCount && <span>{examplesCount} 個例句</span>}
+            {!!item.notes?.length && <span>{item.notes.length} 則筆記</span>}
+          </div>
+          <WordFolderTags itemId={item.id} folders={folders} />
+        </>
       )}
       {!compact && <>
       <CardRichDetails item={item} relatedItems={relatedItems} onOpenItem={onOpenItem} />
@@ -3632,7 +3884,7 @@ function StudyDetails({ item, allItems, onOpenItem }) {
   );
 }
 
-function PracticePage({ store, updateStore, set }) {
+function PracticePage({ store, updateStore, set, onMarkLearned }) {
   const [direction, setDirection] = useState('zh-ko');
   const [source, setSource] = useState('term');
   const [starredOnly, setStarredOnly] = useState(false);
@@ -3655,7 +3907,9 @@ function PracticePage({ store, updateStore, set }) {
   const [sessionFinished, setSessionFinished] = useState(false);
   const [completionError, setCompletionError] = useState('');
   const [completionSaving, setCompletionSaving] = useState(false);
-  const [monthlySkipPrompt, setMonthlySkipPrompt] = useState(false);
+  const [learnedPrompt, setLearnedPrompt] = useState(false);
+  const [learnedPromptSaving, setLearnedPromptSaving] = useState(false);
+  const [learnedPromptError, setLearnedPromptError] = useState('');
   const completionStartedRef = useRef(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [autoPronounce, setAutoPronounce] = useState(true);
@@ -3683,11 +3937,11 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
-    setMonthlySkipPrompt(false);
+    setLearnedPrompt(false);
+    setLearnedPromptError('');
     setRecognitionWordVisible(false);
     setCompletionError('');
     setCompletionSaving(false);
-    setMonthlySkipPrompt(false);
     completionStartedRef.current = false;
   };
   const startSession = () => {
@@ -3708,7 +3962,8 @@ function PracticePage({ store, updateStore, set }) {
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
-    setMonthlySkipPrompt(false);
+    setLearnedPrompt(false);
+    setLearnedPromptError('');
     setRecognitionWordVisible(false);
   };
 
@@ -3782,9 +4037,9 @@ function PracticePage({ store, updateStore, set }) {
   // Used when 確認/Enter auto-grades a typed answer: records the result right
   // away (no manual 答對/答錯 choice) but keeps the question on screen so the
   // outcome is visible until the user presses Enter for the next one.
-  const finalizeTypedGrade = (correct, reviewIntervalOverride = null) => {
+  const finalizeTypedGrade = (correct) => {
     if (shouldRecordResults) {
-      updateStore((current) => recordAnswer(current, question, correct, reviewIntervalOverride));
+      updateStore((current) => recordAnswer(current, question, correct));
     }
     setGraded(true);
     setLastCorrect(correct);
@@ -3792,18 +4047,31 @@ function PracticePage({ store, updateStore, set }) {
     if (autoPronounce) window.setTimeout(() => speakAnswer(question), soundEnabled ? 320 : 0);
   };
   const gradeAndRecord = (correct) => {
-    if (shouldOfferMonthlyReviewSkip(store, question, correct, set.dailyReview)) {
-      setMonthlySkipPrompt(true);
+    if (shouldOfferLearnedFolder(store, question, correct, set.dailyReview)) {
+      setLearnedPrompt(true);
       return;
     }
     finalizeTypedGrade(correct);
   };
-  const resolveMonthlySkip = (skipForMonth) => {
-    setMonthlySkipPrompt(false);
-    finalizeTypedGrade(true, skipForMonth ? 30 : null);
+  const resolveLearnedPrompt = async (markLearned) => {
+    if (learnedPromptSaving) return;
+    setLearnedPromptError('');
+    if (markLearned) {
+      setLearnedPromptSaving(true);
+      try {
+        await onMarkLearned(question.itemId);
+      } catch (error) {
+        setLearnedPromptError(error.message || '加入已學習資料夾失敗');
+        setLearnedPromptSaving(false);
+        return;
+      }
+      setLearnedPromptSaving(false);
+    }
+    setLearnedPrompt(false);
+    finalizeTypedGrade(true);
   };
   const handleConfirm = () => {
-    if (graded || monthlySkipPrompt || !input.trim()) return;
+    if (graded || learnedPrompt || !input.trim()) return;
     const submittedInput = input.trim();
     setInput(submittedInput);
     const checkResult = compareAnswer(submittedInput, question.ko);
@@ -3974,7 +4242,7 @@ function PracticePage({ store, updateStore, set }) {
                   }}
                   placeholder="여기에 한국어를 입력하세요 (Enter 送出)"
                   autoFocus
-                  disabled={graded || monthlySkipPrompt}
+                  disabled={graded || learnedPrompt}
                 />
                 <span className="input-korean-count">{countKoreanLetters(input)}</span>
                 <div className="actions answer-actions">
@@ -4036,18 +4304,19 @@ function PracticePage({ store, updateStore, set }) {
           onToggleStar={grammarMode ? null : () => toggleStarredItem(updateStore, question.source.id)}
         />
       </div>
-      {monthlySkipPrompt && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="monthly-skip-title">
-          <div className="modal-panel monthly-skip-modal">
-            <span className="eyebrow">Review interval</span>
-            <h2 id="monthly-skip-title">一個月內不再出現這題嗎？</h2>
+      {learnedPrompt && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="learned-prompt-title">
+          <div className="modal-panel learned-prompt-modal">
+            <span className="eyebrow">Learned word</span>
+            <h2 id="learned-prompt-title">加入「已學習」單字嗎？</h2>
             <p>
-              「{question.ko}」過去已答對 {store.stats?.[question.id]?.correct || 0} 次。
-              選擇「是」仍會記錄本次答對，但下一次每日測驗會安排在 30 天後。
+              「{question.ko}」這次答對後已累積答對 {(store.stats?.[question.id]?.correct || 0) + 1} 次。
+              加入後將永久排除於每日單字測驗與例句聽力題池，但單字卡仍會保留在單字本。
             </p>
+            {learnedPromptError && <div className="form-error">{learnedPromptError}</div>}
             <div className="actions">
-              <button type="button" onClick={() => resolveMonthlySkip(false)}>否，維持原排程</button>
-              <button type="button" className="primary" autoFocus onClick={() => resolveMonthlySkip(true)}>是，30 天後再出現</button>
+              <button type="button" disabled={learnedPromptSaving} onClick={() => resolveLearnedPrompt(false)}>否，繼續每日測驗</button>
+              <button type="button" className="primary" disabled={learnedPromptSaving} autoFocus onClick={() => resolveLearnedPrompt(true)}>{learnedPromptSaving ? '加入中' : '是，加入已學習'}</button>
             </div>
           </div>
         </div>
@@ -4526,7 +4795,388 @@ function GrammarDetailModal({ note, onEdit, onDelete, onClose }) {
   );
 }
 
-function NotebookPage({ store, updateStore, items, questions, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord }) {
+function WordFolderTags({ itemId, folders = [] }) {
+  const memberships = folders.filter((folder) => folder.wordIds.includes(itemId));
+  if (!memberships.length) return null;
+  return (
+    <div className="word-folder-tags" aria-label="所屬資料夾">
+      {memberships.map((folder) => <span key={folder.id}><Folder size={12} /> {folder.name}</span>)}
+    </div>
+  );
+}
+
+function FolderAssignmentModal({ folders, wordIds, onAssign, onClose }) {
+  const [selectedFolderIds, setSelectedFolderIds] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const toggleFolder = (folderId) => setSelectedFolderIds((current) => (
+    current.includes(folderId) ? current.filter((id) => id !== folderId) : [...current, folderId]
+  ));
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!selectedFolderIds.length) return;
+    setSaving(true);
+    setError('');
+    try {
+      await onAssign(selectedFolderIds, wordIds);
+      onClose(true);
+    } catch (saveError) {
+      setError(saveError.message || '加入資料夾失敗');
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="assign-folder-title">
+      <form className="modal-panel folder-assignment-modal" onSubmit={submit}>
+        <button type="button" className="modal-close" disabled={saving} onClick={() => onClose(false)} aria-label="關閉"><X size={18} /></button>
+        <span className="eyebrow">Batch organize</span>
+        <h2 id="assign-folder-title">將 {wordIds.length} 個單字加入資料夾</h2>
+        <p>可以同時選擇多個資料夾；原本已存在的關聯不會重複。</p>
+        {folders.length ? (
+          <div className="batch-folder-options">
+            {folders.map((folder) => (
+              <label className={selectedFolderIds.includes(folder.id) ? 'selected' : ''} key={folder.id}>
+                <input type="checkbox" checked={selectedFolderIds.includes(folder.id)} onChange={() => toggleFolder(folder.id)} />
+                <Folder size={18} />
+                <span><strong>{folder.name}</strong><small>{isLearnedFolder(folder) ? '加入後排除每日測驗' : `${folder.wordIds.length} 個單字`}</small></span>
+              </label>
+            ))}
+          </div>
+        ) : <div className="empty small-empty">還沒有資料夾，請先到「資料夾」頁面建立。</div>}
+        {error && <div className="form-error">{error}</div>}
+        <div className="form-actions">
+          <button type="button" onClick={() => onClose(false)} disabled={saving}>取消</button>
+          <button className="primary" disabled={!selectedFolderIds.length || saving}>{saving ? '加入中' : '加入所選資料夾'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function BulkWordActions({ selectedIds, visibleIds, folders, onSelectionChange, onAssignFolders, onDeleteRecords, currentFolder, onRemoveFromCurrentFolder }) {
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [busyAction, setBusyAction] = useState('');
+  const [error, setError] = useState('');
+  const selectedSet = new Set(selectedIds);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedSet.has(id));
+  const toggleVisible = () => {
+    if (allVisibleSelected) {
+      const visibleSet = new Set(visibleIds);
+      onSelectionChange(selectedIds.filter((id) => !visibleSet.has(id)));
+    } else {
+      onSelectionChange([...new Set([...selectedIds, ...visibleIds])]);
+    }
+  };
+  const runAction = async (action, handler) => {
+    setBusyAction(action);
+    setError('');
+    try {
+      await handler();
+      onSelectionChange([]);
+    } catch (actionError) {
+      setError(actionError.message || '批次操作失敗');
+    } finally {
+      setBusyAction('');
+    }
+  };
+  const removeFromFolder = () => {
+    if (!window.confirm(`確定要將所選 ${selectedIds.length} 個單字從「${currentFolder.name}」移除嗎？單字本中的卡片會保留。`)) return;
+    runAction('remove', () => onRemoveFromCurrentFolder(currentFolder.id, selectedIds));
+  };
+  const permanentlyDelete = () => {
+    if (!window.confirm(`確定要永久刪除所選 ${selectedIds.length} 個單字嗎？這些卡片也會從單字本與所有資料夾刪除，且無法復原。`)) return;
+    runAction('delete', () => onDeleteRecords(selectedIds));
+  };
+  return (
+    <>
+      <div className={`bulk-word-actions ${selectedIds.length ? 'has-selection' : ''}`}>
+        <div className="bulk-selection-summary">
+          <ListChecks size={19} />
+          <strong>{selectedIds.length ? `已選 ${selectedIds.length} 個` : '批次選取'}</strong>
+          <button type="button" className="text-link" disabled={!visibleIds.length || !!busyAction} onClick={toggleVisible}>{allVisibleSelected ? '取消選取本頁' : '選取本頁'}</button>
+          {!!selectedIds.length && <button type="button" className="text-link muted-link" disabled={!!busyAction} onClick={() => onSelectionChange([])}>清除選取</button>}
+        </div>
+        <div className="bulk-action-buttons">
+          <button type="button" disabled={!selectedIds.length || !folders.length || !!busyAction} onClick={() => setAssignOpen(true)}><FolderInput size={17} /> 加入資料夾</button>
+          {currentFolder && <button type="button" disabled={!selectedIds.length || !!busyAction} onClick={removeFromFolder}><X size={17} /> {busyAction === 'remove' ? '移除中' : '僅從這個資料夾移除'}</button>}
+          <button type="button" className="danger-soft" disabled={!selectedIds.length || !!busyAction} onClick={permanentlyDelete}><Trash2 size={17} /> {busyAction === 'delete' ? '刪除中' : '永久刪除單字'}</button>
+        </div>
+      </div>
+      {error && <div className="form-error bulk-action-error">{error}</div>}
+      {assignOpen && (
+        <FolderAssignmentModal
+          folders={folders}
+          wordIds={selectedIds}
+          onAssign={onAssignFolders}
+          onClose={(completed) => {
+            setAssignOpen(false);
+            if (completed) onSelectionChange([]);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function FolderNameModal({ folder, onSave, onClose }) {
+  const [name, setName] = useState(folder?.name || '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const submit = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      await onSave({ ...folder, name });
+      onClose();
+    } catch (saveError) {
+      setError(saveError.message || '資料夾儲存失敗');
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="folder-name-title">
+      <form className="modal-panel folder-name-modal" onSubmit={submit}>
+        <button type="button" className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
+        <span className="eyebrow">Folder</span>
+        <h2 id="folder-name-title">{folder ? '重新命名資料夾' : '新增資料夾'}</h2>
+        <label>
+          資料夾名稱
+          <input value={name} onChange={(event) => setName(event.target.value)} maxLength={60} autoFocus required />
+        </label>
+        {error && <div className="form-error">{error}</div>}
+        <div className="form-actions"><button className="primary" disabled={saving}>{saving ? '儲存中' : '儲存'}</button></div>
+      </form>
+    </div>
+  );
+}
+
+function FoldersPage({ folders, items, loading, error, onSave, onDelete, onOpen }) {
+  const [editingFolder, setEditingFolder] = useState(undefined);
+  const itemIds = new Set(items.map((item) => item.id));
+  const removeFolder = async (folder) => {
+    if (isLearnedFolder(folder)) return;
+    if (!window.confirm(`確定要刪除資料夾「${folder.name}」嗎？單字本中的單字不會被刪除。`)) return;
+    await onDelete(folder.id);
+  };
+  return (
+    <section className="page">
+      <div className="topbar">
+        <div><span className="eyebrow">Folders</span><h1>資料夾</h1></div>
+        <div className="actions notebook-actions">
+          <button className="primary" onClick={() => setEditingFolder(null)}><FolderPlus size={18} /> 新增資料夾</button>
+        </div>
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      {loading ? <div className="empty">正在載入資料夾...</div> : folders.length ? (
+        <div className="folder-grid">
+          {folders.map((folder) => {
+            const count = folder.wordIds.filter((id) => itemIds.has(id)).length;
+            const previews = folder.wordIds.map((id) => items.find((item) => item.id === id)).filter(Boolean).slice(0, 4);
+            return (
+              <article className="folder-card" key={folder.id} onClick={() => onOpen(folder.id)}>
+                <div className="folder-card-head">
+                  <span className="folder-icon"><FolderOpen size={25} /></span>
+                  {isLearnedFolder(folder) ? <span className="system-folder-badge">系統資料夾</span> : (
+                    <div className="card-actions">
+                      <EditIconButton label="重新命名" onClick={() => setEditingFolder(folder)} />
+                      <button className="edit-icon-button delete-icon-button" title="刪除資料夾" aria-label="刪除資料夾" onClick={(event) => { event.stopPropagation(); removeFolder(folder); }}><Trash2 size={15} /></button>
+                    </div>
+                  )}
+                </div>
+                <h2>{folder.name}</h2>
+                <p>{isLearnedFolder(folder) ? `${count} 個單字 · 不會出現在每日測驗` : `${count} 個單字`}</p>
+                <div className="folder-preview">
+                  {previews.length ? previews.map((item) => <span key={item.id}>{item.ko}</span>) : <span>尚未加入單字</span>}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : <div className="empty folder-empty"><Folder size={32} /><strong>還沒有資料夾</strong><span>建立第一個資料夾，將同類型單字集中學習。</span></div>}
+      {editingFolder !== undefined && <FolderNameModal folder={editingFolder} onSave={onSave} onClose={() => setEditingFolder(undefined)} />}
+    </section>
+  );
+}
+
+function AddExistingWordsModal({ folder, items, onAdd, onClose }) {
+  const [query, setQuery] = useState('');
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const existingIds = new Set(folder.wordIds);
+  const selectedSet = new Set(selectedIds);
+  const results = items
+    .filter((item) => !existingIds.has(item.id))
+    .filter((item) => !query.trim() || itemSearchText(item).includes(query.trim().toLowerCase()))
+    .slice(0, 100);
+  const toggle = (itemId) => setSelectedIds((current) => (
+    current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]
+  ));
+  const save = async () => {
+    if (!selectedIds.length) return;
+    setSaving(true);
+    setError('');
+    try {
+      await onAdd(folder.id, selectedIds);
+      onClose();
+    } catch (saveError) {
+      setError(saveError.message || '加入資料夾失敗');
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="add-existing-title">
+      <div className="modal-panel add-existing-modal">
+        <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
+        <span className="eyebrow">Add reference</span>
+        <h2 id="add-existing-title">加入現有單字到「{folder.name}」</h2>
+        <label className="search folder-word-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋韓文、中文、例句、筆記或相關詞" autoFocus /></label>
+        <div className="existing-word-results">
+          {results.map((item) => (
+            <label className={selectedSet.has(item.id) ? 'selected' : ''} key={item.id}>
+              <input type="checkbox" checked={selectedSet.has(item.id)} onChange={() => toggle(item.id)} />
+              <strong>{item.ko}</strong><span>{item.zh}</span><small>{item.date}</small>
+            </label>
+          ))}
+          {!results.length && <div className="empty">沒有可加入的符合單字</div>}
+        </div>
+        {error && <div className="form-error">{error}</div>}
+        <div className="folder-selection-footer">
+          <span>已選擇 {selectedIds.length} 個單字</span>
+          <button className="primary" disabled={!selectedIds.length || saving} onClick={save}>{saving ? '加入中' : '加入資料夾'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FolderDetailPage({ folder, folders, store, updateStore, items, questions, onSaveFolder, onDeleteFolder, onAddWords, onAssignFolders, onRemoveWords, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords, onBack }) {
+  const [query, setQuery] = useState('');
+  const [pageNumber, setPageNumber] = useState(1);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addExistingOpen, setAddExistingOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+  const [viewingItem, setViewingItem] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const starredSet = new Set(store.starred || []);
+  const toggleSelected = (itemId) => setSelectedIds((current) => (
+    current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]
+  ));
+
+  useEffect(() => setPageNumber(1), [query, folder?.id]);
+  useEffect(() => setSelectedIds([]), [folder?.id]);
+
+  if (!folder) return <section className="page"><div className="empty">找不到這個資料夾，可能已在其他裝置刪除。</div></section>;
+
+  const itemById = new Map(items.map((item) => [item.id, item]));
+  const folderItems = folder.wordIds.map((id) => itemById.get(id)).filter(Boolean);
+  const staleIds = folder.wordIds.filter((id) => !itemById.has(id));
+  const itemQuestionIds = new Map(folderItems.map((item) => [item.id, questions.filter((question) => question.itemId === item.id).map((question) => question.id)]));
+  const enriched = folderItems.map((item) => {
+    const stats = (itemQuestionIds.get(item.id) || [item.id]).map((id) => getStats(store, id));
+    const total = stats.reduce((sum, current) => sum + current.total, 0);
+    const correct = stats.reduce((sum, current) => sum + current.correct, 0);
+    const level = stats.some((current) => current.level === '不熟悉') ? '不熟悉' : stats.some((current) => current.level === '已熟練') ? '已熟練' : stats.some((current) => current.level === '熟悉') ? '熟悉' : '學習中';
+    return { ...item, total, rate: total ? Math.round((correct / total) * 100) : 0, level };
+  }).filter((item) => !query.trim() || itemSearchText(item).includes(query.trim().toLowerCase()));
+  const pageSize = 30;
+  const pageCount = Math.max(1, Math.ceil(enriched.length / pageSize));
+  const pagedItems = enriched.slice((pageNumber - 1) * pageSize, pageNumber * pageSize);
+  const folderItemIds = new Set(folderItems.map((item) => item.id));
+  const folderQuestions = questions.filter((question) => folderItemIds.has(question.itemId));
+  const deleteFolder = async () => {
+    if (isLearnedFolder(folder)) return;
+    if (!window.confirm(`確定要刪除資料夾「${folder.name}」嗎？其中 ${folderItems.length} 個單字仍會保留在單字本。`)) return;
+    await onDeleteFolder(folder.id);
+    onBack();
+  };
+
+  return (
+    <section className="page">
+      <div className="topbar">
+        <div><span className="eyebrow">Folder · {folderItems.length} 個單字</span><h1>{folder.name}</h1></div>
+        <div className="actions notebook-actions">
+          {!isLearnedFolder(folder) && <button onClick={() => setRenameOpen(true)}><Pencil size={18} /> 改名</button>}
+          <button onClick={() => setExportOpen(true)} disabled={!folderItems.length}><Download size={18} /> 匯出 JSON</button>
+          <button onClick={() => setAddExistingOpen(true)}><Link2 size={18} /> 加入現有單字</button>
+          <button onClick={() => setAddOpen(true)}><Plus size={18} /> 新增單字</button>
+          <button onClick={() => onStudy(folderItems, `${folder.name} 學習`)} disabled={!folderItems.length}><BookOpen size={18} /> 學習</button>
+          <button className="primary" onClick={() => onPractice(folderQuestions, `${folder.name} 測驗`)} disabled={!folderQuestions.length}><Dumbbell size={18} /> 測驗</button>
+          {!isLearnedFolder(folder) && <button className="danger-soft" onClick={deleteFolder}><Trash2 size={17} /> 刪除資料夾</button>}
+        </div>
+      </div>
+      <label className="search folder-word-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋這個資料夾中的單字" /></label>
+      {!!staleIds.length && <button className="text-link" onClick={() => onRemoveWords(folder.id, staleIds)}>清理 {staleIds.length} 個不存在的單字 reference</button>}
+      {exportOpen && <ExportJsonModal items={folderItems} title={`匯出 ${folder.name} JSON`} onClose={() => setExportOpen(false)} />}
+      {renameOpen && <FolderNameModal folder={folder} onSave={onSaveFolder} onClose={() => setRenameOpen(false)} />}
+      {addExistingOpen && <AddExistingWordsModal folder={folder} items={items} onAdd={onAddWords} onClose={() => setAddExistingOpen(false)} />}
+      {addOpen && (
+        <AddItemsModal
+          title={`新增單字到 ${folder.name}`}
+          date={todayString()}
+          allItems={items}
+          folders={folders}
+          initialFolderIds={[folder.id]}
+          requiredFolderIds={[folder.id]}
+          onAddRecords={onAddRecords}
+          onUpdateRecord={onUpdateRecord}
+          onWriteRecords={onUpdateRecords}
+          onEditExisting={(item) => { setAddOpen(false); setViewingItem(item); }}
+          onClose={() => setAddOpen(false)}
+        />
+      )}
+      {editingItem && <AddItemsModal title="編輯單字" date={editingItem.date} lockedDate editItem={editingItem} allItems={items} onUpdateRecord={onUpdateRecord} onClose={() => setEditingItem(null)} />}
+      {viewingItem && (
+        <ItemDetailModal
+          item={viewingItem}
+          allItems={items}
+          isStarred={starredSet.has(viewingItem.id)}
+          onToggleStar={() => toggleStarredItem(updateStore, viewingItem.id)}
+          onOpenItem={setViewingItem}
+          onEdit={(item) => { setViewingItem(null); setEditingItem(item); }}
+          onDelete={onDeleteRecord}
+          onClose={() => setViewingItem(null)}
+        />
+      )}
+      <BulkWordActions
+        selectedIds={selectedIds}
+        visibleIds={pagedItems.map((item) => item.id)}
+        folders={folders}
+        onSelectionChange={setSelectedIds}
+        onAssignFolders={onAssignFolders}
+        onDeleteRecords={onDeleteRecords}
+        currentFolder={folder}
+        onRemoveFromCurrentFolder={onRemoveWords}
+      />
+      {pagedItems.length ? <div className="notes-grid">{pagedItems.map((item) => (
+        <NoteCard
+          key={item.id}
+          item={item}
+          allItems={items}
+          folders={folders}
+          compact
+          onOpen={setViewingItem}
+          onEdit={setEditingItem}
+          onDelete={(itemId) => onRemoveWords(folder.id, [itemId])}
+          deleteLabel="從資料夾移除"
+          deleteConfirmMessage={`確定要將「${item.ko}」從資料夾移除嗎？單字本中的卡片不會被刪除。`}
+          isStarred={starredSet.has(item.id)}
+          onToggleStar={() => toggleStarredItem(updateStore, item.id)}
+          selectable
+          selected={selectedIds.includes(item.id)}
+          onToggleSelected={toggleSelected}
+        />
+      ))}</div> : <div className="empty">{query ? '找不到符合的單字' : '這個資料夾還沒有單字'}</div>}
+      {pageCount > 1 && <div className="pagination"><button disabled={pageNumber <= 1} onClick={() => setPageNumber(pageNumber - 1)}><ChevronLeft size={18} /> 上一頁</button><span>{pageNumber} / {pageCount} · 共 {enriched.length} 筆</span><button disabled={pageNumber >= pageCount} onClick={() => setPageNumber(pageNumber + 1)}>下一頁 <ChevronRight size={18} /></button></div>}
+    </section>
+  );
+}
+
+function NotebookPage({ store, updateStore, items, questions, folders = [], onAssignFolders, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords }) {
   const [query, setQuery] = useState('');
   const [type, setType] = useState('全部');
   const [level, setLevel] = useState('全部');
@@ -4537,10 +5187,17 @@ function NotebookPage({ store, updateStore, items, questions, onPractice, onStud
   const [jsonEditOpen, setJsonEditOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [viewingItem, setViewingItem] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [showLearned, setShowLearned] = useState(false);
   const starredSet = new Set(store.starred || []);
+  const learnedWordIds = new Set(folders.find(isLearnedFolder)?.wordIds || []);
+  const notebookItems = showLearned ? items : items.filter((item) => !learnedWordIds.has(item.id));
+  const toggleSelected = (itemId) => setSelectedIds((current) => (
+    current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]
+  ));
   const types = ['全部', ...new Set(items.map((item) => item.pos || '未分類'))];
   const itemQuestionIds = new Map(items.map((item) => [item.id, questions.filter((q) => q.itemId === item.id).map((q) => q.id)]));
-  const enriched = items.map((item) => {
+  const enriched = notebookItems.map((item) => {
     const ids = itemQuestionIds.get(item.id) || [item.id];
     const itemStats = ids.map((id) => getStats(store, id));
     const total = itemStats.reduce((sum, stat) => sum + stat.total, 0);
@@ -4568,6 +5225,11 @@ function NotebookPage({ store, updateStore, items, questions, onPractice, onStud
     setPageNumber(1);
   }, [query, type, level, sort]);
 
+  useEffect(() => {
+    setPageNumber(1);
+    setSelectedIds([]);
+  }, [showLearned]);
+
   return (
     <section className="page">
       <div className="topbar">
@@ -4592,6 +5254,14 @@ function NotebookPage({ store, updateStore, items, questions, onPractice, onStud
           onClose={() => setJsonEditOpen(false)}
         />
       )}
+      <div className="notebook-visibility-row">
+        <span>{showLearned ? `已顯示已學習單字（${learnedWordIds.size} 個）` : `已隱藏已學習單字（${learnedWordIds.size} 個）`}</span>
+        <label className="learned-visibility-toggle">
+          <input type="checkbox" role="switch" checked={showLearned} onChange={(event) => setShowLearned(event.target.checked)} />
+          <i aria-hidden="true" />
+          <strong>{showLearned ? '顯示已學習' : '隱藏已學習'}</strong>
+        </label>
+      </div>
       <div className="filters">
         <label className="search"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜尋單字、例句、筆記或相關詞" /></label>
         <select value={type} onChange={(e) => setType(e.target.value)}>{types.map((option) => <option key={option}>{option}</option>)}</select>
@@ -4603,6 +5273,7 @@ function NotebookPage({ store, updateStore, items, questions, onPractice, onStud
           title="新增單字"
           date={todayString()}
           allItems={items}
+          folders={folders}
           onAddRecords={onAddRecords}
           onUpdateRecord={onUpdateRecord}
           onWriteRecords={onUpdateRecords}
@@ -4639,16 +5310,28 @@ function NotebookPage({ store, updateStore, items, questions, onPractice, onStud
           onClose={() => setViewingItem(null)}
         />
       )}
+      <BulkWordActions
+        selectedIds={selectedIds}
+        visibleIds={pagedItems.map((item) => item.id)}
+        folders={folders}
+        onSelectionChange={setSelectedIds}
+        onAssignFolders={onAssignFolders}
+        onDeleteRecords={onDeleteRecords}
+      />
       <div className="word-grid">
         {pagedItems.map((item) => (
           <WordCard
             key={item.id}
             item={item}
+            folders={folders}
             onEdit={setEditingItem}
             onDelete={onDeleteRecord}
             onOpen={setViewingItem}
             isStarred={starredSet.has(item.id)}
             onToggleStar={() => toggleStarredItem(updateStore, item.id)}
+            selectable
+            selected={selectedIds.includes(item.id)}
+            onToggleSelected={toggleSelected}
           />
         ))}
       </div>
@@ -4666,12 +5349,13 @@ function MiniQuestion({ question, store }) {
   return <div className="mini"><strong>{question.ko}</strong><span>{question.zh}</span><MasteryBadge level={stats.level} /></div>;
 }
 
-function WordCard({ item, onEdit, onDelete, onOpen, isStarred = false, onToggleStar }) {
+function WordCard({ item, folders = [], onEdit, onDelete, onOpen, isStarred = false, onToggleStar, selectable = false, selected = false, onToggleSelected }) {
   return (
-    <article className="word-card clickable-card" onClick={() => onOpen(item)}>
+    <article className={`word-card clickable-card ${selected ? 'selected-word-card' : ''}`} onClick={() => onOpen(item)}>
       <div className="card-head">
         <h3 className="speakable-heading"><span>{item.ko}</span><KoreanSpeakButton text={item.ko} /></h3>
         <div className="card-actions">
+          {selectable && <label className="word-select-control" title="選取單字" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected} onChange={() => onToggleSelected(item.id)} /><span className="sr-only">選取 {item.ko}</span></label>}
           <StarButton active={isStarred} onClick={onToggleStar} />
           <EditIconButton onClick={() => onEdit(item)} />
           <DeleteIconButton item={item} onDelete={onDelete} />
@@ -4680,6 +5364,7 @@ function WordCard({ item, onEdit, onDelete, onOpen, isStarred = false, onToggleS
       </div>
       <p>{item.zh}</p>
       <div className="word-meta"><span>{item.pos || '未分類'}</span><span>{item.date}</span><span>{item.total} 次</span><span>{item.rate}%</span></div>
+      <WordFolderTags itemId={item.id} folders={folders} />
     </article>
   );
 }
@@ -4690,12 +5375,15 @@ export {
   createRecordsFromImportEntries,
   dailyGrammarSchedule,
   dailyRecognitionSchedule,
+  excludeLearnedQuestions,
   findImportConflict,
   isTransientFirestoreError,
   markReviewDateComplete,
   formatGrammarExamplesText,
   formatPairLines,
   normalizeGrammarNote,
+  normalizeFolder,
+  isLearnedFolder,
   normalizeKoreanKey,
   normalizeRecords,
   parseGrammarExamplesText,
@@ -4707,7 +5395,7 @@ export {
   recordsFromSnapshot,
   resolveImportConflictDraft,
   shouldInitializeDailyRecognition,
-  shouldOfferMonthlyReviewSkip,
+  shouldOfferLearnedFolder,
 };
 
 if (typeof document !== 'undefined') createRoot(document.getElementById('root')).render(<App />);

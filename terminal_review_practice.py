@@ -45,6 +45,8 @@ DAILY_RECOGNITION_LIMIT = 50
 DAILY_RECOGNITION_MODE = "daily-recognition"
 DAILY_GRAMMAR_MODE = "daily-grammar"
 DAILY_MIXED_MODE = "daily-mixed"
+SYSTEM_LEARNED_FOLDER_ID = "system-learned"
+SYSTEM_LEARNED_FOLDER_NAME = "已學習"
 KOREAN_NEURAL_VOICE = "ko-KR-SunHiNeural"
 KOREAN_NEURAL_RATE = "-8%"
 
@@ -127,6 +129,54 @@ class FirebaseClient:
             _parse_firestore_fields(doc.get("fields", {})) | {"_docId": _doc_id(doc.get("name", ""))}
             for doc in self._list_documents(["users", session.uid, "records"], session)
         ]
+
+    def list_folders(self, session: AuthSession) -> List[Dict[str, Any]]:
+        return [
+            _parse_firestore_fields(document.get("fields", {}))
+            | {"id": _doc_id(document.get("name", ""))}
+            for document in self._list_documents(["users", session.uid, "folders"], session)
+        ]
+
+    def ensure_learned_folder(self, session: AuthSession, folders: List[Dict[str, Any]]) -> Dict[str, Any]:
+        learned = next((
+            folder for folder in folders
+            if folder.get("id") == SYSTEM_LEARNED_FOLDER_ID
+            or folder.get("systemKey") == "learned"
+            or folder.get("name") == SYSTEM_LEARNED_FOLDER_NAME
+        ), None)
+        if learned:
+            learned["wordIds"] = list(dict.fromkeys(str(item) for item in (learned.get("wordIds") or []) if item))
+            return learned
+        now = utc_now_iso()
+        learned = {
+            "id": SYSTEM_LEARNED_FOLDER_ID,
+            "name": SYSTEM_LEARNED_FOLDER_NAME,
+            "wordIds": [],
+            "systemKey": "learned",
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        payload = {"fields": {key: _to_firestore_value(value) for key, value in learned.items()}}
+        self._request_json(
+            "PATCH",
+            self._document_url(["users", session.uid, "folders", SYSTEM_LEARNED_FOLDER_ID]),
+            payload=payload,
+            session=session,
+        )
+        return learned
+
+    def add_word_to_learned_folder(self, session: AuthSession, folder_id: str, word_id: str) -> None:
+        document_name = f"projects/{self.project_id}/databases/(default)/documents/users/{session.uid}/folders/{folder_id}"
+        commit_url = f"https://firestore.googleapis.com/v1/projects/{self.project_id}/databases/(default)/documents:commit"
+        self._request_json("POST", commit_url, payload={"writes": [{
+            "transform": {
+                "document": document_name,
+                "fieldTransforms": [
+                    {"fieldPath": "wordIds", "appendMissingElements": {"values": [_to_firestore_value(word_id)]}},
+                    {"fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"},
+                ],
+            },
+        }]}, session=session)
 
     def list_grammar_notes(self, session: AuthSession) -> List[Dict[str, Any]]:
         return [
@@ -558,15 +608,21 @@ def load_data(
     client: FirebaseClient,
     session: AuthSession,
 ) -> Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any]]:
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         state_future = executor.submit(client.load_review_state, session)
         records_future = executor.submit(client.list_records, session)
+        folders_future = executor.submit(client.list_folders, session)
         grammar_notes_future = executor.submit(client.list_grammar_notes, session)
         grammar_review_future = executor.submit(client.load_grammar_review, session)
         state = state_future.result()
         records = records_future.result()
+        folders = folders_future.result()
         grammar_note_records = grammar_notes_future.result()
         grammar_review = grammar_review_future.result()
+
+    learned_folder = client.ensure_learned_folder(session, folders)
+    state["learnedWordIds"] = learned_folder.get("wordIds") or []
+    state["learnedFolderId"] = learned_folder.get("id") or SYSTEM_LEARNED_FOLDER_ID
 
     records_by_id: Dict[str, Dict[str, Any]] = {}
     for record in records:
@@ -598,7 +654,8 @@ def order_questions(questions: Iterable[Question]) -> List[Question]:
 
 def daily_due_questions(state: Dict[str, Any], questions: List[Question], date_key: Optional[str] = None) -> List[Question]:
     date_key = date_key or today_string()
-    terms = [question for question in questions if question.kind == "term"]
+    learned_word_ids = set(state.get("learnedWordIds") or [])
+    terms = [question for question in questions if question.kind == "term" and question.item_id not in learned_word_ids]
     return order_questions(due_questions(state, terms, date_key))
 
 
@@ -761,7 +818,8 @@ def daily_recognition_questions(
     date_key: Optional[str] = None,
     limit: int = DAILY_RECOGNITION_LIMIT,
 ) -> List[Question]:
-    examples = [question for question in questions if question.kind == "example"]
+    learned_word_ids = set(state.get("learnedWordIds") or [])
+    examples = [question for question in questions if question.kind == "example" and question.item_id not in learned_word_ids]
     return daily_round_questions(
         state,
         examples,
@@ -776,19 +834,11 @@ def record_answer(
     state: Dict[str, Any],
     question: Question,
     correct: bool,
-    review_interval_override: Optional[int] = None,
 ) -> None:
     now = utc_now_iso()
     previous = get_progress(state, question)
-    override_stage = (
-        REVIEW_INTERVALS.index(review_interval_override)
-        if review_interval_override in REVIEW_INTERVALS
-        else None
-    )
     stage = (
-        override_stage
-        if correct and override_stage is not None
-        else min(int(previous.get("stage", 0)) + 1, len(REVIEW_INTERVALS) - 1)
+        min(int(previous.get("stage", 0)) + 1, len(REVIEW_INTERVALS) - 1)
         if correct
         else 0
     )
@@ -1964,23 +2014,37 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 )
                 continue
             if should_record_results:
-                review_interval_override = None
                 previous_correct = int((state.get("stats") or {}).get(question.id, {}).get("correct", 0))
-                if correct and daily_review and question.kind == "term" and previous_correct >= 5:
+                mark_learned = False
+                if correct and daily_review and question.kind == "term" and previous_correct + 1 >= 5:
                     choice = menu(
                         stdscr,
-                        f"已答對 {previous_correct} 次 | {question.ko}",
+                        f"這次答對後累積 {previous_correct + 1} 次 | {question.ko}",
                         [
-                            ("yes", "是，30 天後再出現"),
-                            ("no", "否，維持原本排程"),
+                            ("yes", "是，加入已學習"),
+                            ("no", "否，繼續每日測驗"),
                         ],
-                        "這次仍會記錄答對；是否讓每日測驗一個月內不再出現？",
+                        "加入後不再出現於每日單字測驗與例句聽力，單字卡仍會保留。",
                     )
                     curses.curs_set(1)
                     if choice == "yes":
-                        review_interval_override = 30
+                        mark_learned = True
                 snapshot = _clone_json(state)
-                record_answer(state, question, correct, review_interval_override)
+                if mark_learned:
+                    try:
+                        client.add_word_to_learned_folder(
+                            session,
+                            str(state.get("learnedFolderId") or SYSTEM_LEARNED_FOLDER_ID),
+                            question.item_id,
+                        )
+                    except RuntimeError as exc:
+                        message = f"加入已學習失敗：{friendly_firebase_error(exc)}"
+                        continue
+                    state["learnedWordIds"] = list(dict.fromkeys([
+                        *(state.get("learnedWordIds") or []),
+                        question.item_id,
+                    ]))
+                record_answer(state, question, correct)
                 if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
                     message = ""
                     continue
@@ -1990,8 +2054,8 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             last_correct = correct
             retry_diff = False
             if should_record_results:
-                if correct and review_interval_override == 30:
-                    message = "答對，已安排 30 天後再複習。按 Enter 或 6 進入下一題。"
+                if correct and mark_learned:
+                    message = "答對，已加入「已學習」，未來每日測驗不再出現。按 Enter 或 6 進入下一題。"
                 else:
                     message = "答對，按 Enter 或 6 進入下一題。" if correct else "答錯，已記錄。按 Enter 或 6 進入下一題。"
             else:
