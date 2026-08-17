@@ -1820,11 +1820,14 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
     input_cursor = 0
     show_hint = False
     message = ""
+    result_message = ""
     partial: Optional[PartialCheckResult] = None
     graded = False
     last_correct: Optional[bool] = None
     typed_attempts = 0
     retry_diff = False
+    example_index = 0
+    pending_example_audio = ""
     ok_attr = curses.A_BOLD
     wrong_attr = curses.A_REVERSE
     curses.curs_set(1)
@@ -1852,11 +1855,22 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         question = questions[idx]
         prompt = question.zh if config["direction"] == "zh-ko" else question.ko
         answer = question.ko if config["direction"] == "zh-ko" else question.zh
+        examples = card_examples(question.source) if question.kind == "term" else []
+        if examples:
+            example_index %= len(examples)
+        else:
+            example_index = 0
+        example_audio_enabled = daily_review and bool(examples)
         stdscr.erase()
         height, width = stdscr.getmaxyx()
         record_label = "" if should_record_results else " 不紀錄"
         star_help = " 0=星號" if allow_star else ""
-        draw_line(stdscr, 1, 2, f"測驗{record_label} | {title} | {idx + 1}/{len(questions)}  Esc=返回{star_help} 8=答案 4/6=上下題 +=檢查 Enter=送出", curses.A_BOLD)
+        answer_visible = show_hint or graded
+        if answer_visible and example_audio_enabled:
+            controls = f"Esc=返回{star_help} 7=例句 +=下一句 4/6=上下題 Enter={'下一題' if graded else '送出'}"
+        else:
+            controls = f"Esc=返回{star_help} 8=答案 4/6=上下題 +=檢查 Enter={'下一題' if graded else '送出'}"
+        draw_line(stdscr, 1, 2, f"測驗{record_label} | {title} | {idx + 1}/{len(questions)}  {controls}", curses.A_BOLD)
         length_hint = f"  ({count_korean_letters(answer)} 個韓文字)" if config["direction"] == "zh-ko" else ""
         star_prefix = f"{'★' if question.source.is_starred else '☆'} " if allow_star else ""
         y = draw_wrapped(stdscr, 2, 2, width - 4, f"{star_prefix}題目: {prompt}{length_hint}")
@@ -1868,13 +1882,20 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         draw_line(stdscr, input_y, count_x, f"{count_korean_letters(user_input)} 個韓文字", curses.A_DIM)
         message_y = input_y + 1
         if (show_hint or graded) and question.kind == "term":
-            examples = card_examples(question.source)
             if examples:
                 draw_line(stdscr, message_y, 2, "例句:", curses.A_DIM)
                 message_y += 1
-                for example in examples:
+                for index, example in enumerate(examples):
+                    marker = "▶" if index == example_index else " "
                     text = " / ".join(part for part in (example.get("ko"), example.get("zh")) if part)
-                    message_y = draw_wrapped(stdscr, message_y, 4, width - 6, text, curses.A_DIM)
+                    message_y = draw_wrapped(
+                        stdscr,
+                        message_y,
+                        4,
+                        width - 6,
+                        f"{marker} {index + 1}. {text}",
+                        curses.A_BOLD if index == example_index else curses.A_DIM,
+                    )
         if retry_diff or (graded and last_correct is False):
             draw_answer_diff(stdscr, message_y, 2, user_input, answer, wrong_attr)
             message_y += 1
@@ -1883,6 +1904,20 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         cursor_x = positions[min(input_cursor, len(positions) - 1)]
         stdscr.move(min(height - 1, input_y), min(width - 1, cursor_x))
         update_curses_screen(stdscr)
+        if pending_example_audio:
+            audio_action = pending_example_audio
+            pending_example_audio = ""
+            if speak_korean(examples[example_index]["ko"]):
+                action_label = {
+                    "auto": "已自動播放",
+                    "replay": "已重播",
+                    "next": "已切換並播放",
+                }[audio_action]
+                audio_message = f"{action_label}例句 {example_index + 1}/{len(examples)}。"
+            else:
+                audio_message = "無法播放例句語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+            message = " ".join(part for part in (result_message, audio_message) if part)
+            continue
         key = stdscr.get_wch()
         if key == "\x1b":
             curses.curs_set(0)
@@ -1902,7 +1937,10 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 last_correct = None
                 typed_attempts = 0
                 retry_diff = False
+                example_index = 0
+                pending_example_audio = ""
                 message = ""
+                result_message = ""
                 continue
             user_input = user_input.strip()
             input_cursor = min(input_cursor, len(user_input))
@@ -1958,6 +1996,9 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                     message = "答對，按 Enter 或 6 進入下一題。" if correct else "答錯，已記錄。按 Enter 或 6 進入下一題。"
             else:
                 message = "答對，未紀錄。按 Enter 或 6 進入下一題。" if correct else "答錯，未紀錄。按 Enter 或 6 進入下一題。"
+            result_message = message
+            if example_audio_enabled:
+                pending_example_audio = "auto"
             continue
         if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
             if graded:
@@ -1988,9 +2029,19 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                     continue
                 message = "已打星號" if question.source.is_starred else "已取消星號"
             elif key == "8":
-                show_hint = not show_hint
+                revealing_answer = not show_hint
+                show_hint = revealing_answer
+                if revealing_answer and example_audio_enabled:
+                    pending_example_audio = "auto"
+            elif key == "7" and answer_visible and example_audio_enabled:
+                pending_example_audio = "replay"
             elif key == "+":
+                if answer_visible and example_audio_enabled:
+                    example_index = (example_index + 1) % len(examples)
+                    pending_example_audio = "next"
+                    continue
                 if graded:
+                    message = "這張單字卡沒有其他可播放的例句。"
                     continue
                 user_input = user_input.strip()
                 input_cursor = min(input_cursor, len(user_input))
@@ -2006,7 +2057,10 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 last_correct = None
                 typed_attempts = 0
                 retry_diff = False
+                example_index = 0
+                pending_example_audio = ""
                 message = ""
+                result_message = ""
             elif key == "6":
                 if require_answer_before_next and not graded:
                     message = "請先送出這一題的答案。"
@@ -2024,7 +2078,10 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 last_correct = None
                 typed_attempts = 0
                 retry_diff = False
+                example_index = 0
+                pending_example_audio = ""
                 message = ""
+                result_message = ""
             elif key.isprintable():
                 if graded:
                     continue
