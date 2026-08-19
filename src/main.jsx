@@ -3546,26 +3546,29 @@ function NoteCard({ item, allItems = [], folders = [], onEdit, onDelete, deleteL
   );
 }
 
-function CardRichDetails({ item, relatedItems = [], onOpenItem }) {
+function CardRichDetails({ item, relatedItems = [], onOpenItem, showChinese = true }) {
+  const visibleMeanings = showChinese
+    ? item.meanings || []
+    : (item.meanings || []).filter((meaning) => (meaning.examples || []).some((example) => example.ko));
   return (
     <div className="rich-details">
-      {!!item.meanings?.length && (
+      {!!visibleMeanings.length && (
         <section className="detail-section meanings-section">
-          <div className="detail-section-title"><span>意思</span><small>{item.meanings.length} 個</small></div>
+          <div className="detail-section-title"><span>{showChinese ? '意思' : '例句'}</span><small>{visibleMeanings.length} 組</small></div>
           <div className="meaning-list">
-            {item.meanings.map((meaning, index) => (
+            {visibleMeanings.map((meaning, index) => (
               <article key={meaning.id} className="meaning-block">
                 <div className="meaning-head">
                   <span>{index + 1}</span>
-                  <strong>{meaning.zh}</strong>
+                  {showChinese && <strong>{meaning.zh}</strong>}
                 </div>
-                {meaning.pattern && <div className="meaning-pattern">{meaning.pattern}</div>}
+                {showChinese && meaning.pattern && <div className="meaning-pattern">{meaning.pattern}</div>}
                 {!!meaning.examples?.length && (
                   <div className="example-list">
                     {meaning.examples.map((ex) => (
                       <div key={ex.id || ex.ko} className="example-row">
                         <p className="example-ko"><span>{ex.ko}</span><KoreanSpeakButton text={ex.ko} /></p>
-                        <p className="example-zh">{ex.zh}</p>
+                        {showChinese && <p className="example-zh">{ex.zh}</p>}
                       </div>
                     ))}
                   </div>
@@ -3575,7 +3578,7 @@ function CardRichDetails({ item, relatedItems = [], onOpenItem }) {
           </div>
         </section>
       )}
-      {!!item.notes?.length && (
+      {showChinese && !!item.notes?.length && (
         <section className="detail-section note-section">
           <div className="detail-section-title"><span>筆記</span></div>
           <div className="note-list">
@@ -3583,7 +3586,7 @@ function CardRichDetails({ item, relatedItems = [], onOpenItem }) {
           </div>
         </section>
       )}
-      {!!relatedItems.length && (
+      {showChinese && !!relatedItems.length && (
         <section className="detail-section related-section">
           <div className="detail-section-title"><span>相關詞</span></div>
           <div className="tags rich-tags">
@@ -3709,6 +3712,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   const [playVoice, setPlayVoice] = useState(true);
   const [playExampleVoice, setPlayExampleVoice] = useState(false);
   const [voiceRepeatCount, setVoiceRepeatCount] = useState(1);
+  const [showChinese, setShowChinese] = useState(false);
   const [autoPlayCycle, setAutoPlayCycle] = useState(0);
   const [starredOnly, setStarredOnly] = useState(false);
   const [instantReset, setInstantReset] = useState(false);
@@ -3728,28 +3732,29 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   const ordered = useMemo(() => (random ? shuffleItems(filtered, shuffleSeed) : filtered), [filtered, random, shuffleSeed]);
   const item = ordered[index % Math.max(ordered.length, 1)];
   const isStarred = !!item && (store.starred || []).includes(item.id);
-  const frontText = frontSide === 'ko' ? item?.ko : item?.zh;
+  const frontShowsChinese = frontSide === 'zh' && showChinese;
+  const frontText = frontShowsChinese ? item?.zh : item?.ko;
   const backText = frontSide === 'ko' ? item?.zh : item?.ko;
-  const frontLang = frontSide === 'ko' ? 'ko-KR' : 'zh-TW';
+  const frontLang = frontShowsChinese ? 'zh-TW' : 'ko-KR';
   const backLang = frontSide === 'ko' ? 'zh-TW' : 'ko-KR';
+  const visibleBackText = frontSide === 'ko' && !showChinese ? item?.ko : backText;
+  const visibleBackLang = frontSide === 'ko' && !showChinese ? 'ko-KR' : backLang;
   const autoPlaySpeechSequence = useMemo(() => {
     if (!item) return [];
-    const cycle = [
-      { text: item.ko, lang: 'ko-KR', face: frontSide === 'ko' ? 'front' : 'back' },
-      { text: item.zh, lang: 'zh-TW', face: frontSide === 'zh' ? 'front' : 'back' },
-    ];
+    const cycle = [{ text: item.ko, lang: 'ko-KR', face: frontSide === 'ko' || !showChinese ? 'front' : 'back' }];
+    if (showChinese) cycle.push({ text: item.zh, lang: 'zh-TW', face: frontSide === 'zh' ? 'front' : 'back' });
     if (playExampleVoice) {
       itemExamples(item).forEach((example) => {
         if (example.ko) cycle.push({ text: example.ko, lang: 'ko-KR', face: 'back' });
-        if (example.zh) cycle.push({ text: example.zh, lang: 'zh-TW', face: 'back' });
+        if (showChinese && example.zh) cycle.push({ text: example.zh, lang: 'zh-TW', face: 'back' });
       });
     }
     return Array.from({ length: voiceRepeatCount }, () => cycle).flat();
-  }, [item, frontSide, playExampleVoice, voiceRepeatCount]);
+  }, [item, frontSide, playExampleVoice, showChinese, voiceRepeatCount]);
   const toggleCard = () => {
     const next = !flipped;
     setFlipped(next);
-    if (playVoice) speakText(next ? backText : frontText, next ? backLang : frontLang);
+    if (playVoice) speakText(next ? visibleBackText : frontText, next ? visibleBackLang : frontLang);
   };
   const moveToIndex = (nextIndex) => {
     if (flipped) {
@@ -3777,6 +3782,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
 
   useLayoutEffect(() => {
     setFlipped(false);
+    setShowChinese(false);
   }, [item?.id]);
 
   useEffect(() => {
@@ -3897,7 +3903,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [item?.id, autoPlay, flipped, playVoice, frontSide, index, ordered.length]);
+  }, [item?.id, autoPlay, flipped, playVoice, frontSide, showChinese, index, ordered.length]);
 
   if (!filtered.length) return <section className="page"><div className="empty">沒有可學習的卡片。</div></section>;
   return (
@@ -3935,17 +3941,39 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
           </div>
           <div className="flash-face front">
             <span>{index + 1} / {ordered.length}</span>
-            <strong>{frontText}</strong>
-            <small>{frontSide === 'ko' ? item.pos || '未分類' : '點擊看韓文'}</small>
+            <strong>{frontShowsChinese ? item.ko : frontText}</strong>
+            {frontShowsChinese && <span className="flashcard-translation">{item.zh}</span>}
+            {frontSide === 'zh' && (
+              <button
+                className="card-chinese-toggle"
+                aria-pressed={showChinese}
+                onClick={(event) => { event.stopPropagation(); setShowChinese((current) => !current); }}
+              >
+                {showChinese ? <EyeOff size={16} /> : <Eye size={16} />} {showChinese ? '隱藏中文' : '顯示中文'}
+              </button>
+            )}
+            <small>{frontShowsChinese ? '點擊看韓文' : showChinese ? item.pos || '未分類' : '點擊查看韓文例句'}</small>
             <button className="card-speak-btn" onClick={(e) => { e.stopPropagation(); speakText(frontText, frontLang); }} aria-label="播放發音"><Volume2 size={18} /></button>
           </div>
           <div className="flash-face back">
             <div className="flash-back-content" onClick={(event) => event.stopPropagation()}>
               <div className="flash-back-answer">
-                <strong>{backText}</strong>
-                <button className="card-speak-btn" onClick={(e) => { e.stopPropagation(); speakText(backText, backLang); }} aria-label="播放發音"><Volume2 size={18} /></button>
+                <div className="flash-back-answer-copy">
+                  <strong>{item.ko}</strong>
+                  {frontSide === 'ko' && showChinese && <span>{item.zh}</span>}
+                  {frontSide === 'ko' && (
+                    <button
+                      className="card-chinese-toggle"
+                      aria-pressed={showChinese}
+                      onClick={(event) => { event.stopPropagation(); setShowChinese((current) => !current); }}
+                    >
+                      {showChinese ? <EyeOff size={16} /> : <Eye size={16} />} {showChinese ? '隱藏中文' : '顯示中文'}
+                    </button>
+                  )}
+                </div>
+                <button className="card-speak-btn" onClick={(e) => { e.stopPropagation(); speakText(visibleBackText, visibleBackLang); }} aria-label="播放發音"><Volume2 size={18} /></button>
               </div>
-              <StudyDetails item={item} allItems={currentItems} onOpenItem={jumpToItem} />
+              <StudyDetails item={item} allItems={currentItems} onOpenItem={jumpToItem} showChinese={showChinese} />
             </div>
           </div>
         </div>
@@ -3966,13 +3994,15 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   );
 }
 
-function StudyDetails({ item, allItems, onOpenItem }) {
+function StudyDetails({ item, allItems, onOpenItem, showChinese }) {
   const relatedItems = displayRelated(item, allItems);
-  const hasDetails = item.meanings?.length || item.notes?.length || relatedItems.length;
-  if (!hasDetails) return <div className="empty">這張卡片沒有額外例句或補充說明。</div>;
+  const hasDetails = showChinese
+    ? item.meanings?.length || item.notes?.length || relatedItems.length
+    : itemExamples(item).some((example) => example.ko);
+  if (!hasDetails) return <div className="empty">這張卡片沒有韓文例句。</div>;
   return (
     <div className="study-details">
-      <CardRichDetails item={item} relatedItems={relatedItems} onOpenItem={onOpenItem} />
+      <CardRichDetails item={item} relatedItems={relatedItems} onOpenItem={onOpenItem} showChinese={showChinese} />
     </div>
   );
 }

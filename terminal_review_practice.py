@@ -9,7 +9,8 @@ Optional .env values:
   TERMINAL_PRACTICE_PASSWORD=your-password
 
 Core keys:
-  . toggle automatic audio, 0 toggle star, 8 show/hide answer or details, 4 previous, 6 next,
+  . toggle automatic audio, 0 toggle star, 5 show/hide Chinese in study mode,
+  8 show/hide answer or details, 4 previous, 6 next,
   + partial check, Enter submit answer, Esc back.
 """
 
@@ -2017,6 +2018,7 @@ def run_grammar_practice(
 def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[str, Any], client: FirebaseClient, session: AuthSession) -> None:
     idx = 0
     show_details = False
+    show_chinese = False
     example_index = 0
     message = ""
     spoken_card_id = ""
@@ -2027,9 +2029,11 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             return
         card = cards[idx]
         stdscr.clear()
-        draw_line(stdscr, 1, 2, f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回 {auto_audio_control_label()} 0=星號 9=單字 7=例句 +=下一例句 8=詳情 4/6=上下張", curses.A_BOLD)
+        draw_line(stdscr, 1, 2, f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回 {auto_audio_control_label()} 0=星號 5=中文 9=單字 7=例句 +=下一例句 8=詳情 4/6=上下張", curses.A_BOLD)
         draw_line(stdscr, 2, 2, f"{'★' if card.is_starred else '☆'} {card.ko}", curses.A_BOLD)
-        y = draw_wrapped(stdscr, 3, 2, stdscr.getmaxyx()[1] - 4, card.zh)
+        y = 3
+        if show_chinese:
+            y = draw_wrapped(stdscr, y, 2, stdscr.getmaxyx()[1] - 4, card.zh)
         examples = card_examples(card)
         if examples:
             example_index %= len(examples)
@@ -2039,16 +2043,22 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             draw_line(stdscr, y, 2, "例句:", curses.A_DIM)
             y += 1
             for current_index, example in enumerate(examples):
-                text = " / ".join(part for part in (example.get("ko"), example.get("zh")) if part)
+                visible_parts = [example.get("ko", "")]
+                if show_chinese:
+                    visible_parts.append(example.get("zh", ""))
+                text = " / ".join(part for part in visible_parts if part)
                 marker = "▶ " if current_index == example_index else "  "
                 attr = curses.A_BOLD if current_index == example_index else curses.A_DIM
                 y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, marker + text, attr)
         if show_details:
             for meaning in card.meanings:
-                detail = f"- {meaning.get('zh', '')}"
+                detail_parts = []
+                if show_chinese and meaning.get("zh"):
+                    detail_parts.append(str(meaning.get("zh")))
                 if meaning.get("pattern"):
-                    detail += f" · {meaning.get('pattern')}"
-                y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, detail)
+                    detail_parts.append(str(meaning.get("pattern")))
+                if detail_parts:
+                    y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, f"- {' · '.join(detail_parts)}")
             for note in card.notes:
                 y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, f"筆記: {note}", curses.A_DIM)
         if message:
@@ -2075,6 +2085,9 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             message = "已打星號" if card.is_starred else "已取消星號"
         elif key == "8":
             show_details = not show_details
+        elif key == "5":
+            show_chinese = not show_chinese
+            message = "已顯示中文。" if show_chinese else "已隱藏中文。"
         elif key == "9":
             message = (
                 "已重播韓文單字。"
@@ -2094,11 +2107,15 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
         elif key == "4":
             idx = max(0, idx - 1)
             show_details = False
+            show_chinese = False
             example_index = 0
+            message = ""
         elif key == "6":
             idx = min(len(cards) - 1, idx + 1)
             show_details = False
+            show_chinese = False
             example_index = 0
+            message = ""
 
 
 def run_daily_recognition(

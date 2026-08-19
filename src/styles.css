@@ -1629,6 +1629,15 @@ main {
   text-align: center;
 }
 
+.flash-face > .flashcard-translation,
+.flash-back-answer-copy > span {
+  font-size: clamp(20px, 3vw, 30px);
+  line-height: 1.35;
+  color: #33434b;
+  font-weight: 850;
+  text-align: center;
+}
+
 .flash-face > span,
 .flash-face > small {
   color: #677680;
@@ -1649,6 +1658,25 @@ main {
   gap: 14px;
   padding: 2px 52px 24px;
   text-align: center;
+}
+
+.flash-back-answer-copy {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.card-chinese-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid rgba(46, 87, 85, 0.12);
+  border-radius: 10px;
+  color: #42615f;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 5px 14px rgba(58, 73, 84, 0.1);
+  font-size: 13px;
 }
 
 .flash-back-answer .card-speak-btn {
