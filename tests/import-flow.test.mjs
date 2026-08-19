@@ -294,6 +294,29 @@ test('only explicit daily review tests record accuracy results', () => {
   assert.equal(helpers.shouldRecordPracticeResults({}), false);
 });
 
+test('today wrong review contains only unique term questions failed on that date', () => {
+  const source = { index: 0 };
+  const questions = [
+    { id: 'term-a', itemId: 'card-a', date: '2026-08-19', kind: 'term', source },
+    { id: 'term-b', itemId: 'card-b', date: '2026-08-19', kind: 'term', source: { index: 1 } },
+    { id: 'example-a', itemId: 'card-a', date: '2026-08-19', kind: 'example', source },
+  ];
+  const store = {
+    attempts: [
+      { questionId: 'term-a', correct: false, date: '2026-08-19' },
+      { questionId: 'term-a', correct: false, date: '2026-08-19' },
+      { questionId: 'term-b', correct: true, date: '2026-08-19' },
+      { questionId: 'example-a', correct: false, date: '2026-08-19' },
+      { questionId: 'term-b', correct: false, date: '2026-08-18' },
+    ],
+  };
+
+  assert.deepEqual(
+    helpers.dailyWrongTermQuestions(store, questions, '2026-08-19').map((question) => question.id),
+    ['term-a'],
+  );
+});
+
 test('learned words are excluded from both daily terms and example listening', () => {
   const questions = [
     { id: 'term-a', itemId: 'card-a', kind: 'term' },

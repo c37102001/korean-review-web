@@ -45,6 +45,7 @@ DAILY_RECOGNITION_LIMIT = 50
 DAILY_RECOGNITION_MODE = "daily-recognition"
 DAILY_GRAMMAR_MODE = "daily-grammar"
 DAILY_MIXED_MODE = "daily-mixed"
+DAILY_WRONG_REVIEW_MODE = "daily-wrong-review"
 SYSTEM_LEARNED_FOLDER_ID = "system-learned"
 SYSTEM_LEARNED_FOLDER_NAME = "已學習"
 KOREAN_NEURAL_VOICE = "ko-KR-SunHiNeural"
@@ -682,6 +683,26 @@ def daily_due_questions(state: Dict[str, Any], questions: List[Question], date_k
     learned_word_ids = set(state.get("learnedWordIds") or [])
     terms = [question for question in questions if question.kind == "term" and question.item_id not in learned_word_ids]
     return order_questions(due_questions(state, terms, date_key))
+
+
+def daily_wrong_term_questions(
+    state: Dict[str, Any],
+    questions: List[Question],
+    date_key: Optional[str] = None,
+) -> List[Question]:
+    date_key = date_key or today_string()
+    learned_word_ids = set(state.get("learnedWordIds") or [])
+    term_by_id = {
+        question.id: question
+        for question in questions
+        if question.kind == "term" and question.item_id not in learned_word_ids
+    }
+    wrong_ids = {
+        str(attempt.get("questionId") or "")
+        for attempt in (state.get("attempts") or [])
+        if attempt_date(attempt) == date_key and attempt.get("correct") is False
+    }
+    return order_questions(term_by_id[question_id] for question_id in wrong_ids if question_id in term_by_id)
 
 
 def daily_grammar_questions(
@@ -1668,17 +1689,20 @@ def due_task_menu(
     grammar_task: Tuple[Optional[GrammarNote], List[Question]],
 ) -> Optional[Tuple[str, List[Question]]]:
     due = daily_due_questions(state, questions)
+    wrong_review = [] if due else daily_wrong_term_questions(state, questions)
     recognition = daily_recognition_questions(state, questions)
     grammar_note, grammar_questions = grammar_task
     grouped: Dict[str, List[Question]] = {}
     for question in due:
         grouped.setdefault(question.date, []).append(question)
-    if not grouped and not recognition and not grammar_questions:
+    if not grouped and not recognition and not grammar_questions and not wrong_review:
         wait_message(stdscr, "今日複習題", "今天的測驗已全部完成。")
         return None
     options = []
     if due:
         options.append((DAILY_MIXED_MODE, f"全部到期單字（混合隨機） · {len(due)} 題"))
+    if wrong_review:
+        options.append((DAILY_WRONG_REVIEW_MODE, f"今日答錯題目（不紀錄，可重複） · {len(wrong_review)} 題"))
     if recognition:
         options.append((DAILY_RECOGNITION_MODE, f"每日單字例句聽力 · 剩餘 {len(recognition)} 題"))
     if grammar_note and grammar_questions:
@@ -1693,6 +1717,10 @@ def due_task_menu(
         return selected, grammar_questions
     if selected == DAILY_MIXED_MODE:
         shuffled = list(due)
+        random.shuffle(shuffled)
+        return selected, shuffled
+    if selected == DAILY_WRONG_REVIEW_MODE:
+        shuffled = list(wrong_review)
         random.shuffle(shuffled)
         return selected, shuffled
     shuffled = list(grouped[selected])
@@ -2780,6 +2808,36 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                             grammar_review = client.save_grammar_review(session, grammar_note)
                         except RuntimeError as exc:
                             wait_message(stdscr, "文法進度儲存失敗", friendly_firebase_error(exc))
+                elif task_type == DAILY_WRONG_REVIEW_MODE:
+                    while True:
+                        completed_wrong_review = run_practice(
+                            stdscr,
+                            "今日答錯題目",
+                            selected,
+                            {
+                                "direction": "zh-ko",
+                                "source": "term",
+                                "starred": False,
+                                "random": True,
+                                "record_results": False,
+                                "enforce_answer_length": True,
+                                "daily_review": False,
+                            },
+                            state,
+                            client,
+                            session,
+                        )
+                        if not completed_wrong_review:
+                            break
+                        replay = menu(
+                            stdscr,
+                            "今日答錯題目已完成",
+                            [("again", "再練一次"), ("back", "返回主選單")],
+                            "這組練習不會寫入答對率或間隔排程。",
+                        )
+                        if replay != "again":
+                            break
+                        random.shuffle(selected)
                 else:
                     run_practice(
                         stdscr,

@@ -1510,6 +1510,22 @@ function dailyReviewQuestions(store, questions, date = todayString()) {
   return orderReviewQuestions(dueQuestions(store, terms, date));
 }
 
+function dailyWrongTermQuestions(store, questions, date = todayString()) {
+  const termById = new Map(
+    questions
+      .filter((question) => question.kind === 'term')
+      .map((question) => [question.id, question]),
+  );
+  const wrongIds = new Set(
+    (store.attempts || [])
+      .filter((attempt) => attemptDate(attempt) === date && attempt.correct === false)
+      .map((attempt) => attempt.questionId),
+  );
+  return orderReviewQuestions(
+    [...wrongIds].map((questionId) => termById.get(questionId)).filter(Boolean),
+  );
+}
+
 function seedFromString(text) {
   return [...text].reduce((seed, char) => ((seed * 31) + char.charCodeAt(0)) % 233280, 17);
 }
@@ -2018,6 +2034,10 @@ function App() {
     excludeLearnedQuestions(reviewQuestions(questions), learnedWordIds)
   ), [questions, learnedWordIds]);
   const todayDailyQuestions = useMemo(() => dailyReviewQuestions(store, dailyQuestions, todayString()), [store, dailyQuestions]);
+  const todayWrongQuestions = useMemo(
+    () => dailyWrongTermQuestions(store, dailyQuestions, todayString()),
+    [store.attempts, dailyQuestions],
+  );
   const todayRecognitionSchedule = useMemo(
     () => dailyRecognitionSchedule(store, dailyQuestions, todayString()),
     [store.attempts, store.recognition, dailyQuestions],
@@ -2088,6 +2108,7 @@ function App() {
       dueOnly: !!options.dueOnly,
       dailyReview: !!options.dailyReview,
       grammarOnly: !!options.grammarOnly,
+      repeatable: !!options.repeatable,
       mode: options.mode || '',
       grammarNote: options.grammarNote || null,
       onComplete: options.onComplete || null,
@@ -2131,7 +2152,7 @@ function App() {
   if (storeLoading || folders.loading) return <LoadingScreen text="載入資料中" />;
 
   const views = {
-    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} recognitionQuestions={todayRecognitionQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} />,
+    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} recognitionQuestions={todayRecognitionQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} />,
     notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} />,
@@ -2224,11 +2245,12 @@ function LoginPage() {
   );
 }
 
-function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQuestions, grammarSchedule, onCompleteGrammar, onPractice, onAddRecords, onUpdateRecord, onWriteRecords, folders = [] }) {
+function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestionsForToday, recognitionQuestions, grammarSchedule, onCompleteGrammar, onPractice, onAddRecords, onUpdateRecord, onWriteRecords, folders = [] }) {
   const [addOpen, setAddOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const today = todayString();
   const due = dueQuestionsForToday;
+  const wrongReview = due.length ? [] : wrongQuestionsForToday;
   const recognition = recognitionQuestions;
   const grammarQuestions = grammarSchedule.questions;
   const totalPending = due.length + recognition.length + grammarQuestions.length;
@@ -2307,6 +2329,20 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
         <div className="panel">
           <div className="panel-title"><h2>測驗任務</h2><span>{tasks.length || recognition.length || grammarQuestions.length ? '未完成任務會保留' : '目前沒有待完成任務'}</span></div>
           <div className="task-list">
+            {!!wrongReview.length && (
+              <div className="task-card wrong-review-task-card">
+                <div>
+                  <span className="badge danger">自主加強</span>
+                  <h3>今日答錯題目</h3>
+                  <p>今日答錯的 {wrongReview.length} 個單字 · 不紀錄結果，可重複練習</p>
+                </div>
+                <button className="primary small" onClick={() => onPractice(
+                  wrongReview,
+                  '今日答錯題目',
+                  { dueOnly: true, repeatable: true },
+                )}>開始</button>
+              </div>
+            )}
             {!!recognition.length && (
               <div className="task-card recognition-task-card">
                 <div>
@@ -2346,7 +2382,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, recognitionQu
                 )}>開始</button>
               </div>
             ))}
-            {!tasks.length && !recognition.length && !grammarQuestions.length && <div className="empty">今天的測驗已完成。你可以從日曆或單字本主動測驗。</div>}
+            {!tasks.length && !recognition.length && !grammarQuestions.length && !wrongReview.length && <div className="empty">今天的測驗已完成。你可以從日曆或單字本主動測驗。</div>}
           </div>
         </div>
         <div className="panel">
@@ -4285,6 +4321,9 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), onM
           <span className="eyebrow">Test complete</span>
           <h1>{`${set.label} 已完成`}</h1>
           <p>這一組的 {questionQueue.length} 題已全部作答。</p>
+          {set.repeatable && (
+            <button className="primary wide" onClick={startSession}><RotateCcw size={18} /> 再練一次</button>
+          )}
           {completionSaving && <p>正在儲存今日文法進度...</p>}
           {completionError && (
             <>
@@ -5593,6 +5632,7 @@ export {
   createRecordsFromImportEntries,
   dailyGrammarSchedule,
   dailyRecognitionSchedule,
+  dailyWrongTermQuestions,
   excludeLearnedQuestions,
   findImportConflict,
   isTransientFirestoreError,
