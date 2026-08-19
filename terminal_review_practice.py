@@ -9,7 +9,7 @@ Optional .env values:
   TERMINAL_PRACTICE_PASSWORD=your-password
 
 Core keys:
-  . quick-add a word, 0 toggle star, 8 show/hide answer or details, 4 previous, 6 next,
+  . toggle automatic audio, 0 toggle star, 8 show/hide answer or details, 4 previous, 6 next,
   + partial check, Enter submit answer, Esc back.
 """
 
@@ -106,15 +106,7 @@ class PartialCheckResult:
     missing_space_before_raw_indices: set[int]
 
 
-@dataclass
-class QuickAddContext:
-    client: "FirebaseClient"
-    session: AuthSession
-    cards: List[Card]
-    questions: List[Question]
-
-
-_QUICK_ADD_CONTEXT: Optional[QuickAddContext] = None
+_AUTO_PLAY_AUDIO = True
 
 
 class FirebaseClient:
@@ -140,20 +132,6 @@ class FirebaseClient:
             _parse_firestore_fields(doc.get("fields", {})) | {"_docId": _doc_id(doc.get("name", ""))}
             for doc in self._list_documents(["users", session.uid, "records"], session)
         ]
-
-    def create_record(self, session: AuthSession, record: Dict[str, Any]) -> None:
-        record_id = str(record.get("id") or "")
-        if not record_id:
-            raise ValueError("Record id is required")
-        fields = {key: _to_firestore_value(value) for key, value in record.items()}
-        fields["updatedAt"] = {"timestampValue": utc_now_iso()}
-        payload = {"fields": fields}
-        self._request_json(
-            "PATCH",
-            self._document_url(["users", session.uid, "records", record_id]),
-            payload=payload,
-            session=session,
-        )
 
     def list_folders(self, session: AuthSession) -> List[Dict[str, Any]]:
         return [
@@ -729,27 +707,32 @@ def daily_grammar_questions(
             eligible[0],
         )
 
-    source = Card(
-        id=note.id,
-        date="",
-        ko=note.title,
-        zh="",
-        pos="文法",
-        notes=[note.notes] if note.notes else [],
-    )
-    questions = [
-        Question(
-            id=f"grammar:{note.id}:{example['id']}",
-            item_id=note.id,
+    return note, grammar_practice_questions([note])
+
+
+def grammar_practice_questions(notes: Iterable[GrammarNote]) -> List[Question]:
+    questions: List[Question] = []
+    for note in notes:
+        source = Card(
+            id=note.id,
             date="",
-            kind="grammar-example",
-            ko=example["ko"],
-            zh=example["zh"],
-            source=source,
+            ko=note.title,
+            zh="",
+            pos="文法",
+            meanings=[{"zh": "", "examples": list(note.examples)}],
+            notes=[note.notes] if note.notes else [],
         )
-        for example in note.examples
-    ]
-    return note, questions
+        for example in note.examples:
+            questions.append(Question(
+                id=f"grammar:{note.id}:{example['id']}",
+                item_id=note.id,
+                date="",
+                kind="grammar-example",
+                ko=example["ko"],
+                zh=example["zh"],
+                source=source,
+            ))
+    return questions
 
 
 def seed_from_string(text: str) -> int:
@@ -1351,168 +1334,23 @@ def set_cursor_visibility(visibility: int) -> int:
         return 0
 
 
-def parse_quick_add_examples(text: str) -> List[Dict[str, str]]:
-    if not text.strip():
-        return []
-    examples: List[Dict[str, str]] = []
-    for index, segment in enumerate(text.split(";"), 1):
-        segment = segment.strip()
-        if not segment:
-            continue
-        if "|" not in segment:
-            raise ValueError(f"第 {index} 句缺少 |，格式需要是「韓文 | 中文」")
-        ko, zh = (part.strip() for part in segment.split("|", 1))
-        if not ko or not zh:
-            raise ValueError(f"第 {index} 句的韓文和中文都不能空白")
-        examples.append({"ko": ko, "zh": zh})
-    return examples
-
-
-def build_quick_add_record(ko: str, zh: str, examples: List[Dict[str, str]]) -> Dict[str, Any]:
-    date_key = today_string()
-    record_id = f"{date_key}-custom-{uuid.uuid4()}"
-    now = utc_now_iso()
-    meaning_id = f"{record_id}-0"
-    return {
-        "id": record_id,
-        "date": date_key,
-        "order": int(time.time() * 1_000_000),
-        "item": {
-            "ko": ko.strip(),
-            "meanings": [{
-                "id": meaning_id,
-                "zh": zh.strip(),
-                "examples": [
-                    {"id": f"{meaning_id}-ex-{index}", "ko": example["ko"], "zh": example["zh"]}
-                    for index, example in enumerate(examples)
-                ],
-            }],
-            "related": [],
-        },
-        "createdAt": now,
-        "updatedAt": now,
-    }
-
-
-def append_runtime_record(record: Dict[str, Any], cards: List[Card], questions: List[Question]) -> None:
-    new_cards, new_questions = normalize_records([record], {"starred": []})
-    cards.extend(new_cards)
-    cards.sort(key=lambda card: (card.date, card.order, card.id))
-    for index, card in enumerate(cards):
-        card.index = index
-    questions[:] = order_questions([*questions, *new_questions])
-
-
-def _tail_by_cell_width(text: str, max_cells: int) -> str:
-    result: List[str] = []
-    width = 0
-    for character in reversed(text):
-        character_width = _cell_width(character)
-        if result and width + character_width > max_cells:
-            break
-        result.append(character)
-        width += character_width
-    return "".join(reversed(result))
-
-
-def quick_add_word(stdscr: curses.window, context: QuickAddContext) -> bool:
-    fields = ["", "", ""]
-    labels = ["韓文", "中文", "例句"]
-    field_index = 0
-    error_message = ""
-    previous_cursor = set_cursor_visibility(1)
-    while True:
-        stdscr.erase()
-        height, width = stdscr.getmaxyx()
-        draw_line(stdscr, 1, 2, "快速新增單字", curses.A_BOLD)
-        draw_line(stdscr, 2, 2, "Enter=下一步／完成  Esc=取消", curses.A_DIM)
-        summary_y = 4
-        for index, label in enumerate(labels):
-            marker = "»" if index == field_index else " "
-            value = fields[index] if fields[index] else "（尚未填寫）"
-            draw_line(
-                stdscr,
-                summary_y + index,
-                2,
-                f"{marker} {label}: {value}",
-                curses.A_BOLD if index == field_index else curses.A_DIM,
-            )
-        hint = (
-            "韓文為必填。"
-            if field_index == 0
-            else "中文為必填。"
-            if field_index == 1
-            else "選填；格式：韓文1 | 中文1; 韓文2 | 中文2"
-        )
-        draw_wrapped(stdscr, 8, 2, width - 4, hint, curses.A_DIM)
-        prompt = f"輸入{labels[field_index]}: "
-        available = max(1, width - 4 - _text_cell_width(prompt))
-        visible_value = _tail_by_cell_width(fields[field_index], available)
-        draw_line(stdscr, 10, 2, prompt + visible_value)
-        if error_message:
-            draw_wrapped(stdscr, 12, 2, width - 4, error_message, curses.A_BOLD)
-        cursor_x = min(width - 1, 2 + _text_cell_width(prompt) + _text_cell_width(visible_value))
-        try:
-            stdscr.move(min(height - 1, 10), cursor_x)
-        except curses.error:
-            pass
-        update_curses_screen(stdscr)
-        key = stdscr.get_wch()
-        if key == "\x1b" or key == 27:
-            set_cursor_visibility(previous_cursor)
-            return False
-        if key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13):
-            value = fields[field_index].strip()
-            if field_index < 2 and not value:
-                error_message = f"{labels[field_index]}不能空白。"
-                continue
-            fields[field_index] = value
-            if field_index < 2:
-                if field_index == 0:
-                    normalized = unicodedata.normalize("NFC", value).casefold()
-                    duplicate = next((card for card in context.cards if unicodedata.normalize("NFC", card.ko).casefold() == normalized), None)
-                    if duplicate:
-                        error_message = f"「{duplicate.ko}」已存在於 {duplicate.date}，請直接編輯既有單字卡。"
-                        continue
-                field_index += 1
-                error_message = ""
-                continue
-            try:
-                examples = parse_quick_add_examples(value)
-                record = build_quick_add_record(fields[0], fields[1], examples)
-                draw_line(stdscr, 14, 2, "正在儲存到 Firebase...", curses.A_BOLD)
-                update_curses_screen(stdscr)
-                context.client.create_record(context.session, record)
-                append_runtime_record(record, context.cards, context.questions)
-            except ValueError as exc:
-                error_message = str(exc)
-                continue
-            except RuntimeError as exc:
-                error_message = friendly_firebase_error(exc)
-                continue
-            stdscr.erase()
-            draw_line(stdscr, 2, 2, f"已新增：{fields[0]} · {fields[1]}", curses.A_BOLD)
-            draw_line(stdscr, 4, 2, "正在返回原本畫面...", curses.A_DIM)
-            update_curses_screen(stdscr)
-            time.sleep(0.45)
-            set_cursor_visibility(previous_cursor)
-            return True
-        if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
-            fields[field_index] = fields[field_index][:-1]
-            error_message = ""
-            continue
-        if isinstance(key, str) and key.isprintable():
-            fields[field_index] += key
-            error_message = ""
-
-
 def read_terminal_key(stdscr: curses.window, *, wide: bool = False) -> Any:
+    global _AUTO_PLAY_AUDIO
     key = stdscr.get_wch() if wide else stdscr.getch()
-    is_quick_add = key == "." if isinstance(key, str) else key == ord(".")
-    if is_quick_add and _QUICK_ADD_CONTEXT is not None:
-        quick_add_word(stdscr, _QUICK_ADD_CONTEXT)
+    is_audio_toggle = key == "." if isinstance(key, str) else key == ord(".")
+    if is_audio_toggle:
+        _AUTO_PLAY_AUDIO = not _AUTO_PLAY_AUDIO
+        height, width = stdscr.getmaxyx()
+        status = f"自動播放語音：{'開啟' if _AUTO_PLAY_AUDIO else '關閉'}"
+        draw_line(stdscr, height - 1, max(0, width - _text_cell_width(status) - 3), status, curses.A_BOLD)
+        stdscr.refresh()
+        time.sleep(0.45)
         return curses.KEY_RESIZE
     return key
+
+
+def auto_audio_control_label() -> str:
+    return f".=自動語音:{'開' if _AUTO_PLAY_AUDIO else '關'}"
 
 
 def wait_message(stdscr: curses.window, title: str, message: str) -> None:
@@ -1614,6 +1452,9 @@ def run_grammar_note_detail(
     stdscr: curses.window,
     notes: List[GrammarNote],
     start_index: int,
+    state: Dict[str, Any],
+    client: FirebaseClient,
+    session: AuthSession,
 ) -> None:
     note_index = start_index
     example_index = 0
@@ -1637,7 +1478,7 @@ def run_grammar_note_detail(
             2,
             (
                 f"文法筆記 | {note_index + 1}/{len(notes)}  Esc=列表 "
-                "4/6=前後篇 7=播放例句 9=下一例句 ↑↓=捲動"
+                "P=練習 4/6=前後篇 7=播放例句 9=下一例句 ↑↓=捲動"
             ),
             curses.A_BOLD,
         )
@@ -1704,6 +1545,10 @@ def run_grammar_note_detail(
             example_index = 0
             scroll_offset = 0
             message = ""
+        elif key.lower() == "p":
+            run_grammar_practice(stdscr, [note], state, client, session)
+            set_cursor_visibility(0)
+            message = ""
         elif key in ("7", "9"):
             if not examples:
                 message = "這篇文法筆記沒有韓文例句。"
@@ -1716,21 +1561,104 @@ def run_grammar_note_detail(
                 message = "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
 
 
-def run_grammar_notebook(stdscr: curses.window, grammar_notes: List[GrammarNote]) -> None:
+def run_grammar_notebook(
+    stdscr: curses.window,
+    grammar_notes: List[GrammarNote],
+    state: Dict[str, Any],
+    client: FirebaseClient,
+    session: AuthSession,
+) -> None:
     if not grammar_notes:
         wait_message(stdscr, "文法筆記", "目前還沒有文法筆記。")
         return
     notes = sorted(grammar_notes, key=lambda note: (note.created_at, note.id), reverse=True)
-    by_id = {note.id: index for index, note in enumerate(notes)}
+    selected_ids: set[str] = set()
+    cursor = 0
+    message = ""
+    set_cursor_visibility(0)
+    stdscr.keypad(True)
     while True:
-        selected = menu(
-            stdscr,
-            "文法筆記 | 選擇文法",
-            [(note.id, f"{note.title} · {len(note.examples)} 個例句") for note in notes],
+        stdscr.erase()
+        height, _ = stdscr.getmaxyx()
+        visible_count = max(1, height - 5)
+        start = max(0, min(cursor - visible_count + 1, len(notes) - visible_count))
+        visible_notes = notes[start:start + visible_count]
+        selected_examples = sum(
+            len(note.examples) for note in notes if note.id in selected_ids
         )
-        if selected is None:
+        draw_line(
+            stdscr,
+            1,
+            2,
+            f"文法筆記 | 已選 {len(selected_ids)} 篇 · {selected_examples} 句",
+            curses.A_BOLD,
+        )
+        draw_line(
+            stdscr,
+            2,
+            2,
+            "↑↓=移動 Enter=查看 Space=勾選 P=練習已選 A=全選 C=清除 Esc=返回",
+            curses.A_DIM,
+        )
+        for row, note in enumerate(visible_notes, 3):
+            note_index = start + row - 3
+            marker = "[✓]" if note.id in selected_ids else "[ ]"
+            label = f"{marker} {note.title} · {len(note.examples)} 個例句"
+            draw_line(
+                stdscr,
+                row,
+                2,
+                ("» " if note_index == cursor else "  ") + label,
+                curses.A_REVERSE if note_index == cursor else 0,
+            )
+        footer = message
+        if len(notes) > visible_count:
+            footer = f"{footer}  {cursor + 1}/{len(notes)}".strip()
+        if footer:
+            draw_line(stdscr, height - 1, 2, footer, curses.A_BOLD)
+        update_curses_screen(stdscr)
+
+        key = read_terminal_key(stdscr, wide=True)
+        if isinstance(key, int) and 0 <= key <= 255:
+            key = chr(key)
+        if key == "\x1b":
             return
-        run_grammar_note_detail(stdscr, notes, by_id[selected])
+        if key == curses.KEY_UP:
+            cursor = (cursor - 1) % len(notes)
+            message = ""
+            continue
+        if key == curses.KEY_DOWN:
+            cursor = (cursor + 1) % len(notes)
+            message = ""
+            continue
+        if key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13):
+            run_grammar_note_detail(stdscr, notes, cursor, state, client, session)
+            set_cursor_visibility(0)
+            message = ""
+            continue
+        if not isinstance(key, str):
+            continue
+        if key == " ":
+            note_id = notes[cursor].id
+            if note_id in selected_ids:
+                selected_ids.remove(note_id)
+            else:
+                selected_ids.add(note_id)
+            message = ""
+        elif key.lower() == "a":
+            selected_ids = {note.id for note in notes}
+            message = "已選取全部文法筆記。"
+        elif key.lower() == "c":
+            selected_ids.clear()
+            message = "已清除選取。"
+        elif key.lower() == "p":
+            selected_notes = [note for note in notes if note.id in selected_ids]
+            if not selected_notes:
+                message = "請先用 Space 勾選至少一篇文法筆記。"
+                continue
+            run_grammar_practice(stdscr, selected_notes, state, client, session)
+            set_cursor_visibility(0)
+            message = ""
 
 
 def due_task_menu(
@@ -1834,11 +1762,236 @@ def filtered_questions(questions: List[Question], config: Dict[str, Any]) -> Lis
     return result
 
 
+def grammar_practice_setup_menu(stdscr: curses.window, title: str) -> Optional[Dict[str, Any]]:
+    direction = "zh-ko"
+    random_order = True
+    row = 0
+    set_cursor_visibility(0)
+    while True:
+        rows = [
+            f"方向: {'中翻韓' if direction == 'zh-ko' else '韓翻中'}",
+            f"順序: {'隨機' if random_order else '依原順序'}",
+            "開始",
+        ]
+        stdscr.erase()
+        draw_line(stdscr, 1, 2, f"文法例句練習設定 | {title}", curses.A_BOLD)
+        draw_line(
+            stdscr,
+            2,
+            2,
+            "↑↓=項目 ←→=切換 Enter=開始 Esc=返回 · 自主練習不紀錄",
+            curses.A_DIM,
+        )
+        for index, label in enumerate(rows):
+            draw_line(
+                stdscr,
+                3 + index,
+                2,
+                ("» " if index == row else "  ") + label,
+                curses.A_REVERSE if index == row else 0,
+            )
+        update_curses_screen(stdscr)
+        key = read_terminal_key(stdscr)
+        if key == 27:
+            return None
+        if key == curses.KEY_UP:
+            row = (row - 1) % len(rows)
+        elif key == curses.KEY_DOWN:
+            row = (row + 1) % len(rows)
+        elif key in (curses.KEY_LEFT, curses.KEY_RIGHT):
+            if row == 0:
+                direction = "ko-zh" if direction == "zh-ko" else "zh-ko"
+            elif row == 1:
+                random_order = not random_order
+        elif key in (curses.KEY_ENTER, 10, 13):
+            return {"direction": direction, "random": random_order}
+
+
+def run_grammar_recall_practice(
+    stdscr: curses.window,
+    title: str,
+    questions: List[Question],
+) -> bool:
+    if not questions:
+        wait_message(stdscr, "文法例句練習", "所選文法筆記沒有完整例句。")
+        return False
+    index = 0
+    revealed = False
+    graded: Dict[str, bool] = {}
+    message = ""
+    scroll_offset = 0
+    spoken_question_id = ""
+    set_cursor_visibility(0)
+    stdscr.keypad(True)
+    while True:
+        question = questions[index]
+        is_graded = question.id in graded
+        if is_graded:
+            revealed = True
+        stdscr.erase()
+        height, width = stdscr.getmaxyx()
+        draw_line(
+            stdscr,
+            1,
+            2,
+            (
+                f"韓翻中 · 不紀錄 | {title} | {index + 1}/{len(questions)}  "
+                f"Esc=返回 {auto_audio_control_label()} 7=發音 8=答案 4/6=上下題 1=答錯 2=答對 ↑↓=捲動"
+            ),
+            curses.A_BOLD,
+        )
+        detail_start = draw_wrapped(stdscr, 2, 2, width - 4, f"題目: {question.ko}", curses.A_BOLD)
+        detail_lines: List[Tuple[str, int, int]] = []
+
+        def append_detail(text: str, indent: int = 0, attr: int = 0) -> None:
+            line_width = max(1, width - 4 - indent)
+            for line in _split_by_cell_width(text, line_width):
+                detail_lines.append((line, indent, attr))
+
+        if not revealed:
+            append_detail("請先在心中回答中文，再按 8 公佈答案。", attr=curses.A_DIM)
+        else:
+            append_detail(f"答案: {question.zh}", attr=curses.A_BOLD)
+            append_detail(f"文法: {question.source.ko}", attr=curses.A_BOLD)
+            for note in question.source.notes:
+                append_detail(f"筆記: {note}", indent=2, attr=curses.A_DIM)
+            append_detail(f"韓文: {question.ko}", indent=2)
+            append_detail(f"中文: {question.zh}", indent=2, attr=curses.A_DIM)
+            if not is_graded:
+                append_detail("請按 1（答錯）或 2（答對）自評。", attr=curses.A_BOLD)
+
+        visible_rows = max(1, height - detail_start - 2)
+        scroll_offset = min(scroll_offset, max(0, len(detail_lines) - visible_rows))
+        for row_number, (line, indent, attr) in enumerate(
+            detail_lines[scroll_offset:scroll_offset + visible_rows],
+            detail_start,
+        ):
+            draw_line(stdscr, row_number, 2 + indent, line, attr)
+        footer = message
+        if is_graded:
+            footer = f"{'答對' if graded[question.id] else '答錯'}，未紀錄。按 Enter 或 6 進入下一題。"
+        elif revealed and not footer:
+            footer = "1=答錯  2=答對"
+        if len(detail_lines) > visible_rows:
+            footer = (
+                f"{footer}  內容 {scroll_offset + 1}-"
+                f"{min(len(detail_lines), scroll_offset + visible_rows)}/{len(detail_lines)}"
+            ).strip()
+        if footer:
+            draw_line(stdscr, height - 1, 2, footer, curses.A_BOLD)
+        update_curses_screen(stdscr)
+
+        if _AUTO_PLAY_AUDIO and not revealed and spoken_question_id != question.id:
+            spoken_question_id = question.id
+            message = (
+                "已自動播放韓文題目。"
+                if speak_korean(question.ko)
+                else "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+            )
+            continue
+
+        key = read_terminal_key(stdscr, wide=True)
+        if isinstance(key, int) and 0 <= key <= 255:
+            key = chr(key)
+        if key == "\x1b":
+            return False
+        if key == curses.KEY_UP:
+            scroll_offset = max(0, scroll_offset - 1)
+            continue
+        if key == curses.KEY_DOWN:
+            scroll_offset += 1
+            continue
+        if key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13):
+            if not is_graded:
+                message = "請先公佈答案並選擇答對或答錯。"
+                continue
+            if index == len(questions) - 1:
+                wait_message(stdscr, "完成", "這組文法例句練習已完成。")
+                return True
+            index += 1
+            revealed = questions[index].id in graded
+            message = ""
+            scroll_offset = 0
+            continue
+        if not isinstance(key, str):
+            continue
+        if key == "7":
+            message = "已播放韓文例句。" if speak_korean(question.ko) else "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+        elif key == "8":
+            revealed = True
+            message = ""
+            scroll_offset = 0
+        elif key in ("1", "2"):
+            if not revealed:
+                message = "請先按 8 公佈答案。"
+            elif is_graded:
+                message = "這題已完成評分。"
+            else:
+                graded[question.id] = key == "2"
+                message = ""
+        elif key == "4":
+            index = max(0, index - 1)
+            revealed = questions[index].id in graded
+            message = ""
+            scroll_offset = 0
+        elif key == "6":
+            if not is_graded:
+                message = "請先公佈答案並選擇答對或答錯。"
+            elif index == len(questions) - 1:
+                wait_message(stdscr, "完成", "這組文法例句練習已完成。")
+                return True
+            else:
+                index += 1
+                revealed = questions[index].id in graded
+                message = ""
+                scroll_offset = 0
+
+
+def run_grammar_practice(
+    stdscr: curses.window,
+    notes: List[GrammarNote],
+    state: Dict[str, Any],
+    client: FirebaseClient,
+    session: AuthSession,
+) -> None:
+    questions = grammar_practice_questions(notes)
+    if not questions:
+        wait_message(stdscr, "文法例句練習", "所選文法筆記沒有完整例句。")
+        return
+    title = notes[0].title if len(notes) == 1 else f"已選 {len(notes)} 篇文法"
+    config = grammar_practice_setup_menu(stdscr, title)
+    if not config:
+        return
+    active_questions = list(questions)
+    if config["random"]:
+        random.shuffle(active_questions)
+    if config["direction"] == "ko-zh":
+        run_grammar_recall_practice(stdscr, title, active_questions)
+        return
+    run_practice(
+        stdscr,
+        title,
+        active_questions,
+        {
+            "direction": "zh-ko",
+            "source": "all",
+            "starred": False,
+            "random": False,
+            "record_results": False,
+            "allow_star": False,
+        },
+        state,
+        client,
+        session,
+    )
+
+
 def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[str, Any], client: FirebaseClient, session: AuthSession) -> None:
     idx = 0
     show_details = False
     example_index = 0
     message = ""
+    spoken_card_id = ""
     set_cursor_visibility(0)
     while True:
         if not cards:
@@ -1846,7 +1999,7 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             return
         card = cards[idx]
         stdscr.clear()
-        draw_line(stdscr, 1, 2, f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回 0=星號 7=例句 +=下一例句 8=詳情 4/6=上下張", curses.A_BOLD)
+        draw_line(stdscr, 1, 2, f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回 {auto_audio_control_label()} 0=星號 9=單字 7=例句 +=下一例句 8=詳情 4/6=上下張", curses.A_BOLD)
         draw_line(stdscr, 2, 2, f"{'★' if card.is_starred else '☆'} {card.ko}", curses.A_BOLD)
         y = draw_wrapped(stdscr, 3, 2, stdscr.getmaxyx()[1] - 4, card.zh)
         examples = card_examples(card)
@@ -1873,6 +2026,14 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
         if message:
             draw_line(stdscr, y, 2, message, curses.A_BOLD)
         stdscr.refresh()
+        if _AUTO_PLAY_AUDIO and spoken_card_id != card.id:
+            spoken_card_id = card.id
+            message = (
+                "已自動播放韓文單字。"
+                if speak_korean(card.ko)
+                else "無法播放單字語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+            )
+            continue
         key = read_terminal_key(stdscr, wide=True)
         if key == "\x1b":
             return
@@ -1886,6 +2047,12 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             message = "已打星號" if card.is_starred else "已取消星號"
         elif key == "8":
             show_details = not show_details
+        elif key == "9":
+            message = (
+                "已重播韓文單字。"
+                if speak_korean(card.ko)
+                else "無法播放單字語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+            )
         elif key in ("7", "+"):
             if not examples:
                 message = "這張單字卡沒有可播放的韓文例句。"
@@ -1944,7 +2111,7 @@ def run_daily_recognition(
             stdscr,
             1,
             2,
-            f"{'文法聽力' if grammar_mode else '例句聽力'} | {title} | {idx + 1}/{len(questions)}  Esc=返回{star_help} 7={audio_label} 8=揭露 4/6=上下題 1=答錯 2=答對 ↑↓=捲動",
+            f"{'文法聽力' if grammar_mode else '例句聽力'} | {title} | {idx + 1}/{len(questions)}  Esc=返回 {auto_audio_control_label()}{star_help} 7={audio_label} 8=揭露 4/6=上下題 1=答錯 2=答對 ↑↓=捲動",
             curses.A_BOLD,
         )
         if grammar_mode:
@@ -2016,7 +2183,7 @@ def run_daily_recognition(
         if footer:
             draw_line(stdscr, height - 1, 2, footer, curses.A_BOLD)
         update_curses_screen(stdscr)
-        if not word_visible and not graded and spoken_question_id != question.id:
+        if _AUTO_PLAY_AUDIO and not word_visible and not graded and spoken_question_id != question.id:
             spoken_question_id = question.id
             if not speak_korean(question.ko):
                 message = "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
@@ -2056,12 +2223,19 @@ def run_daily_recognition(
                 continue
             message = "已打星號" if card.is_starred else "已取消星號"
         elif key == "8":
+            was_revealed = revealed
             if not graded:
                 if grammar_mode:
                     word_visible, revealed = next_recognition_reveal_state(True, word_visible, revealed)
                 else:
                     word_visible, revealed = True, True
             message = ""
+            if _AUTO_PLAY_AUDIO and not grammar_mode and not was_revealed and revealed:
+                message = (
+                    "已自動播放所屬韓文單字。"
+                    if speak_korean(card.ko)
+                    else "無法播放單字語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+                )
             scroll_offset = 0
         elif key == "7":
             if not speak_korean(question.ko):
@@ -2135,6 +2309,8 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
     retry_diff = False
     example_index = 0
     pending_example_audio = ""
+    pending_word_audio = False
+    spoken_question_id = ""
     ok_attr = curses.A_BOLD
     wrong_attr = curses.A_REVERSE
     set_cursor_visibility(1)
@@ -2160,9 +2336,15 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             set_cursor_visibility(0)
             return False
         question = questions[idx]
+        answer_word = question.source.ko if question.source.pos != "文法" else ""
         prompt = question.zh if config["direction"] == "zh-ko" else question.ko
         answer = question.ko if config["direction"] == "zh-ko" else question.zh
-        examples = card_examples(question.source) if question.kind == "term" else []
+        if question.kind == "term":
+            examples = card_examples(question.source)
+        elif question.kind == "grammar-example":
+            examples = [{"ko": question.ko, "zh": question.zh}]
+        else:
+            examples = []
         if examples:
             example_index %= len(examples)
         else:
@@ -2175,10 +2357,12 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         answer_visible = show_hint or graded
         learned_help = " -=已學習" if answer_visible and daily_review and question.kind == "term" else ""
         if answer_visible and example_audio_enabled:
-            controls = f"Esc=返回{star_help}{learned_help} 7=例句 +=下一句 4/6=上下題 Enter={'下一題' if graded else '送出'}"
+            example_controls = "7=例句" if question.kind == "grammar-example" else "7=例句 +=下一句"
+            controls = f"Esc=返回{star_help}{learned_help} {example_controls} 4/6=上下題 Enter={'下一題' if graded else '送出'}"
         else:
-            controls = f"Esc=返回{star_help}{learned_help} 8=答案 4/6=上下題 +=檢查 Enter={'下一題' if graded else '送出'}"
-        draw_line(stdscr, 1, 2, f"測驗{record_label} | {title} | {idx + 1}/{len(questions)}  {controls}", curses.A_BOLD)
+            prompt_audio_help = " 7=題目" if config["direction"] == "ko-zh" and not answer_visible else ""
+            controls = f"Esc=返回{star_help}{learned_help}{prompt_audio_help} 8=答案 4/6=上下題 +=檢查 Enter={'下一題' if graded else '送出'}"
+        draw_line(stdscr, 1, 2, f"測驗{record_label} | {title} | {idx + 1}/{len(questions)}  {auto_audio_control_label()} {controls}", curses.A_BOLD)
         length_hint = f"  ({count_korean_letters(answer)} 個韓文字)" if config["direction"] == "zh-ko" else ""
         star_prefix = f"{'★' if question.source.is_starred else '☆'} " if allow_star else ""
         y = draw_wrapped(stdscr, 2, 2, width - 4, f"{star_prefix}題目: {prompt}{length_hint}")
@@ -2189,7 +2373,14 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         count_x = max(positions[-1] + 2, width - 18)
         draw_line(stdscr, input_y, count_x, f"{count_korean_letters(user_input)} 個韓文字", curses.A_DIM)
         message_y = input_y + 1
-        if (show_hint or graded) and question.kind == "term":
+        if (show_hint or graded) and question.kind == "grammar-example":
+            draw_line(stdscr, message_y, 2, f"文法: {question.source.ko}", curses.A_BOLD)
+            message_y += 1
+            for note in question.source.notes:
+                message_y = draw_wrapped(stdscr, message_y, 4, width - 6, f"筆記: {note}", curses.A_DIM)
+            message_y = draw_wrapped(stdscr, message_y, 4, width - 6, f"韓文: {question.ko}")
+            message_y = draw_wrapped(stdscr, message_y, 4, width - 6, f"中文: {question.zh}", curses.A_DIM)
+        elif (show_hint or graded) and question.kind == "term":
             if examples:
                 draw_line(stdscr, message_y, 2, "例句:", curses.A_DIM)
                 message_y += 1
@@ -2212,12 +2403,19 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         cursor_x = positions[min(input_cursor, len(positions) - 1)]
         stdscr.move(min(height - 1, input_y), min(width - 1, cursor_x))
         update_curses_screen(stdscr)
+        if pending_word_audio:
+            pending_word_audio = False
+            if speak_korean(answer_word):
+                word_audio_message = "已自動播放韓文單字。"
+            else:
+                word_audio_message = "無法播放單字語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+            message = " ".join(part for part in (result_message, word_audio_message) if part)
+            continue
         if pending_example_audio:
             audio_action = pending_example_audio
             pending_example_audio = ""
             if speak_korean(examples[example_index]["ko"]):
                 action_label = {
-                    "auto": "已自動播放",
                     "replay": "已重播",
                     "next": "已切換並播放",
                 }[audio_action]
@@ -2225,6 +2423,14 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             else:
                 audio_message = "無法播放例句語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
             message = " ".join(part for part in (result_message, audio_message) if part)
+            continue
+        if _AUTO_PLAY_AUDIO and config["direction"] == "ko-zh" and not answer_visible and spoken_question_id != question.id:
+            spoken_question_id = question.id
+            message = (
+                "已自動播放韓文題目。"
+                if speak_korean(question.ko)
+                else "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+            )
             continue
         key = read_terminal_key(stdscr, wide=True)
         if key == "\x1b":
@@ -2247,6 +2453,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 retry_diff = False
                 example_index = 0
                 pending_example_audio = ""
+                pending_word_audio = False
                 message = ""
                 result_message = ""
                 continue
@@ -2260,7 +2467,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                     message = length_warning
                     continue
             correct = normalize_text(user_input) == normalize_text(answer)
-            if not correct and question.kind == "example" and config["direction"] == "zh-ko" and typed_attempts == 0:
+            if not correct and question.kind in ("example", "grammar-example") and config["direction"] == "zh-ko" and typed_attempts == 0:
                 typed_attempts = 1
                 retry_diff = True
                 partial = None
@@ -2311,8 +2518,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             else:
                 message = "答對，未紀錄。按 Enter 或 6 進入下一題。" if correct else "答錯，未紀錄。按 Enter 或 6 進入下一題。"
             result_message = message
-            if example_audio_enabled:
-                pending_example_audio = "auto"
+            pending_word_audio = _AUTO_PLAY_AUDIO and bool(answer_word)
             continue
         if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
             if graded:
@@ -2360,12 +2566,22 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             elif key == "8":
                 revealing_answer = not show_hint
                 show_hint = revealing_answer
-                if revealing_answer and example_audio_enabled:
-                    pending_example_audio = "auto"
-            elif key == "7" and answer_visible and example_audio_enabled:
-                pending_example_audio = "replay"
-            elif key == "+":
+                if revealing_answer:
+                    pending_word_audio = _AUTO_PLAY_AUDIO and bool(answer_word)
+            elif key == "7" and (
+                (answer_visible and example_audio_enabled)
+                or (config["direction"] == "ko-zh" and not answer_visible)
+            ):
                 if answer_visible and example_audio_enabled:
+                    pending_example_audio = "replay"
+                elif config["direction"] == "ko-zh" and not answer_visible:
+                    message = (
+                        "已重播韓文題目。"
+                        if speak_korean(question.ko)
+                        else "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+                    )
+            elif key == "+":
+                if answer_visible and example_audio_enabled and question.kind != "grammar-example":
                     example_index = (example_index + 1) % len(examples)
                     pending_example_audio = "next"
                     continue
@@ -2388,6 +2604,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 retry_diff = False
                 example_index = 0
                 pending_example_audio = ""
+                pending_word_audio = False
                 message = ""
                 result_message = ""
             elif key == "6":
@@ -2409,6 +2626,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 retry_diff = False
                 example_index = 0
                 pending_example_audio = ""
+                pending_word_audio = False
                 message = ""
                 result_message = ""
             elif key.isprintable():
@@ -2486,14 +2704,11 @@ def run_folder_notebook(
 
 
 def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: AuthSession) -> None:
-    global _QUICK_ADD_CONTEXT
-    _QUICK_ADD_CONTEXT = None
     try:
         state, cards, questions, grammar_notes, grammar_review = load_data(client, session)
     except RuntimeError as exc:
         wait_message(stdscr, "載入失敗", str(exc))
         return
-    _QUICK_ADD_CONTEXT = QuickAddContext(client, session, cards, questions)
     skip_round_initialization = False
     while True:
         if not skip_round_initialization:
@@ -2524,15 +2739,13 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 ("refresh", "重新同步"),
                 ("quit", "離開"),
             ],
-            "↑↓=移動 Enter=選擇 .=快速新增單字 Esc=離開",
+            "↑↓=移動 Enter=選擇 .=切換自動語音 Esc=離開",
         )
         if choice in (None, "quit"):
-            _QUICK_ADD_CONTEXT = None
             return
         if choice == "refresh":
             try:
                 state, cards, questions, grammar_notes, grammar_review = load_data(client, session)
-                _QUICK_ADD_CONTEXT = QuickAddContext(client, session, cards, questions)
                 skip_round_initialization = False
             except RuntimeError as exc:
                 wait_message(stdscr, "同步失敗", str(exc))
@@ -2615,7 +2828,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
         elif choice == "folders":
             run_folder_notebook(stdscr, cards, questions, state, client, session)
         elif choice == "grammar":
-            run_grammar_notebook(stdscr, grammar_notes)
+            run_grammar_notebook(stdscr, grammar_notes, state, client, session)
 
 
 def clear_plain_screen() -> None:

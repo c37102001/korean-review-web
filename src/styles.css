@@ -740,8 +740,9 @@ main {
   gap: 8px;
 }
 
-.folder-picker-options label {
-  display: flex;
+.form-grid .folder-picker-options label {
+  display: inline-flex;
+  width: auto;
   flex-direction: row;
   align-items: center;
   gap: 7px;
@@ -749,6 +750,17 @@ main {
   border-radius: 8px;
   background: #f1f6f5;
   cursor: pointer;
+}
+
+.form-grid .folder-picker-options input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  box-shadow: none;
+  accent-color: #20a58f;
 }
 
 .folder-picker-options input,
@@ -1077,6 +1089,11 @@ main {
   box-shadow: 0 14px 36px rgba(58, 73, 84, 0.1);
 }
 
+.grammar-card.selected {
+  border-color: #52baa9;
+  box-shadow: 0 0 0 2px rgba(47, 185, 163, 0.18), 0 16px 38px rgba(58, 73, 84, 0.12);
+}
+
 .grammar-card h2 {
   margin: 0;
   color: #26383f;
@@ -1220,6 +1237,11 @@ main {
   margin-top: 22px;
   padding-top: 18px;
   border-top: 1px solid #e5ebea;
+}
+
+.grammar-detail-practice {
+  color: #ffffff;
+  background: linear-gradient(135deg, #ff7b54, #ffb547);
 }
 
 .grammar-detail-section h3 {
@@ -2446,7 +2468,7 @@ textarea:focus {
 
 .filters {
   display: grid;
-  grid-template-columns: 1fr 170px 150px 170px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 18px;
 }
@@ -3085,6 +3107,32 @@ textarea:focus {
   background: transparent;
 }
 
+.word-search-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.filter-search-tools {
+  grid-column: 1 / -1;
+}
+
+.search-scope.segmented {
+  min-width: 208px;
+  gap: 4px;
+  margin: 0;
+  padding: 4px;
+  border-radius: 14px;
+}
+
+.search-scope.segmented button {
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .word-card {
   display: grid;
   gap: 12px;
@@ -3327,6 +3375,15 @@ textarea:focus {
   .meaning-editor-card,
   .practice-layout {
     grid-template-columns: 1fr;
+  }
+
+  .word-search-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .search-scope.segmented {
+    width: 100%;
+    min-width: 0;
   }
 
   .existing-word-results > label {

@@ -1639,6 +1639,19 @@ function nextRecognitionRevealState(listeningMode, wordVisible, revealed) {
   return { wordVisible: true, revealed: true };
 }
 
+function grammarPracticeQuestions(notes) {
+  return notes.flatMap((note) => (note.examples || [])
+    .filter((example) => example.ko?.trim() && example.zh?.trim())
+    .map((example, index) => ({
+      id: `grammar:${note.id}:${example.id || index}`,
+      itemId: note.id,
+      kind: 'grammar-example',
+      ko: example.ko.trim(),
+      zh: example.zh.trim(),
+      source: note,
+    })));
+}
+
 function dailyGrammarSchedule(notes, review, date = todayString()) {
   if (review?.completedDate === date) return { note: null, questions: [] };
   const eligible = notes
@@ -1665,14 +1678,7 @@ function dailyGrammarSchedule(notes, review, date = todayString()) {
 
   return {
     note,
-    questions: note.examples.map((example, index) => ({
-      id: `grammar:${note.id}:${example.id || index}`,
-      itemId: note.id,
-      kind: 'grammar-example',
-      ko: example.ko,
-      zh: example.zh,
-      source: note,
-    })),
+    questions: grammarPracticeQuestions([note]),
   };
 }
 
@@ -2081,6 +2087,7 @@ function App() {
       label,
       dueOnly: !!options.dueOnly,
       dailyReview: !!options.dailyReview,
+      grammarOnly: !!options.grammarOnly,
       mode: options.mode || '',
       grammarNote: options.grammarNote || null,
       onComplete: options.onComplete || null,
@@ -2132,7 +2139,7 @@ function App() {
     notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     folders: <FoldersPage folders={folders.folders} items={items} loading={folders.loading} error={folders.error} onSave={folders.save} onDelete={folders.remove} onOpen={openFolder} />,
     folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
-    grammar: <GrammarNotebookPage notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} />,
+    grammar: <GrammarNotebookPage notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} onPractice={startPractice} />,
   };
 
   return (
@@ -3352,6 +3359,24 @@ function itemSearchText(item) {
   ].filter(Boolean).join(' ').toLowerCase();
 }
 
+function itemMatchesSearch(item, query, scope = 'all') {
+  const normalizedQuery = normalizeKoreanKey(query).toLocaleLowerCase();
+  if (!normalizedQuery) return true;
+  if (scope === 'word') {
+    return normalizeKoreanKey(item.ko).toLocaleLowerCase().includes(normalizedQuery);
+  }
+  return itemSearchText(item).normalize('NFC').includes(normalizedQuery);
+}
+
+function SearchScopeControl({ value, onChange }) {
+  return (
+    <div className="search-scope segmented" aria-label="搜尋範圍">
+      <button type="button" className={value === 'all' ? 'active' : ''} aria-pressed={value === 'all'} onClick={() => onChange('all')}>全部內容</button>
+      <button type="button" className={value === 'word' ? 'active' : ''} aria-pressed={value === 'word'} onClick={() => onChange('word')}>單字本身</button>
+    </div>
+  );
+}
+
 function EditIconButton({ onClick, label = '編輯' }) {
   return (
     <button
@@ -3920,13 +3945,21 @@ function shouldRecordPracticeResults(practiceSet) {
   return Boolean(practiceSet?.dailyReview);
 }
 
+function shouldAutoPronouncePracticePrompt({ started, recognitionMode, grammarMode, activeDirection, autoPronounce, recognitionWordVisible, question }) {
+  if (!started || !question) return false;
+  if (recognitionMode || grammarMode) return !recognitionWordVisible;
+  return activeDirection === 'ko-zh' && autoPronounce;
+}
+
 function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), onMarkLearned }) {
   const [direction, setDirection] = useState('zh-ko');
   const [source, setSource] = useState('term');
   const [starredOnly, setStarredOnly] = useState(false);
+  const [randomOrder, setRandomOrder] = useState(true);
   const recognitionMode = set.mode === DAILY_RECOGNITION_MODE;
   const grammarMode = set.mode === DAILY_GRAMMAR_MODE;
-  const fixedSource = set.termOnly || set.dueOnly;
+  const grammarPracticeMode = !!set.grammarOnly;
+  const fixedSource = set.termOnly || set.dueOnly || grammarPracticeMode;
   const activeDirection = recognitionMode || grammarMode ? 'ko-zh' : set.dueOnly ? 'zh-ko' : direction;
   const shouldRecordResults = shouldRecordPracticeResults(set);
   const [recognitionWordVisible, setRecognitionWordVisible] = useState(false);
@@ -3955,13 +3988,14 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), onM
     const starredSet = new Set(store.starred || []);
     const applyStarFilter = (list) => (starredOnly ? list.filter((q) => starredSet.has(q.itemId)) : list);
     if (recognitionMode || grammarMode) return set.questions;
+    if (grammarPracticeMode) return set.questions.filter((q) => q.kind === 'grammar-example');
     if (set.dueOnly) return orderReviewQuestions(set.questions);
     if (direction === 'ko-zh') return applyStarFilter(set.questions.filter((q) => q.kind === 'term'));
     const activeSource = set.termOnly ? 'term' : source;
     const filtered = set.questions.filter((q) => activeSource === 'all' || q.kind === activeSource);
     const orderedFiltered = activeSource === 'all' ? orderReviewQuestions(filtered) : filtered;
     return applyStarFilter(orderedFiltered);
-  }, [set.questions, source, direction, set.termOnly, set.dueOnly, recognitionMode, grammarMode, store, starredOnly]);
+  }, [set.questions, source, direction, set.termOnly, set.dueOnly, recognitionMode, grammarMode, grammarPracticeMode, store, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
   const isDailyWordQuestion = Boolean(question && !grammarMode && (set.dailyReview || recognitionMode));
@@ -3987,9 +4021,12 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), onM
     completionStartedRef.current = false;
   };
   const startSession = () => {
-    const nextQuestions = recognitionMode || grammarMode
+    const orderedQuestions = recognitionMode || grammarMode
       ? sourceQuestions
-      : set.dueOnly ? shuffleReviewQuestionsByKind(sourceQuestions) : shuffleItems(sourceQuestions, Date.now());
+      : set.dueOnly ? shuffleReviewQuestionsByKind(sourceQuestions) : sourceQuestions;
+    const nextQuestions = !set.dueOnly && randomOrder
+      ? shuffleItems(orderedQuestions, Date.now())
+      : orderedQuestions;
     if (!nextQuestions.length) {
       resetSession();
       return;
@@ -4026,11 +4063,18 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), onM
   }, [set.dueOnly, recognitionMode, grammarMode, sourceQuestions, questionQueue.length]);
 
   useEffect(() => {
-    const audioFirst = recognitionMode || grammarMode;
-    if (!started || !audioFirst || recognitionWordVisible || !question) return undefined;
+    if (!shouldAutoPronouncePracticePrompt({
+      started,
+      recognitionMode,
+      grammarMode,
+      activeDirection,
+      autoPronounce,
+      recognitionWordVisible,
+      question,
+    })) return undefined;
     const timer = window.setTimeout(() => speakAnswer(question), 180);
     return () => window.clearTimeout(timer);
-  }, [started, recognitionMode, grammarMode, recognitionWordVisible, question?.id]);
+  }, [started, recognitionMode, grammarMode, activeDirection, autoPronounce, recognitionWordVisible, question?.id]);
 
   useEffect(() => {
     if (direction === 'ko-zh') setSource('term');
@@ -4207,7 +4251,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), onM
             <button className={direction === 'ko-zh' ? 'active' : ''} onClick={() => setDirection('ko-zh')}>韓翻中</button>
           </div>
           {fixedSource ? (
-            <div className="fixed-source-note">此測驗只包含單字題。</div>
+            <div className="fixed-source-note">{grammarPracticeMode ? '此練習包含所選文法筆記的全部例句。' : '此測驗只包含單字題。'}</div>
           ) : direction === 'ko-zh' ? (
             <div className="fixed-source-note">韓翻中只測驗單字，結果不會寫入正確率或間隔排程。</div>
           ) : (
@@ -4217,9 +4261,13 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), onM
               <button className={source === 'all' ? 'active' : ''} onClick={() => setSource('all')}>全部</button>
             </div>
           )}
-          <div className="segmented compact">
+          {!grammarPracticeMode && <div className="segmented compact">
             <button className={!starredOnly ? 'active' : ''} onClick={() => setStarredOnly(false)}>全部卡片</button>
             <button className={starredOnly ? 'active' : ''} onClick={() => setStarredOnly(true)}><Star size={16} /> 有星號</button>
+          </div>}
+          <div className="segmented compact">
+            <button className={!randomOrder ? 'active' : ''} onClick={() => setRandomOrder(false)}>依原順序</button>
+            <button className={randomOrder ? 'active' : ''} onClick={() => setRandomOrder(true)}><Shuffle size={16} /> 隨機順序</button>
           </div>
           <div className="fixed-source-note muted-note">自主測驗固定不紀錄，不會改變答對率、間隔排程或每日複習紀錄。</div>
           <p>{sourceQuestions.length} 題可測驗。{set.dueOnly ? '請看中文提示輸入韓文答案。' : '中翻韓只會出打字題，韓翻中會先思考再公佈答案。'}</p>
@@ -4267,11 +4315,11 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), onM
         <div className="practice-shell">
           <div className="progress-line"><span style={{ width: `${((index + 1) / queue.length) * 100}%` }} /></div>
           <div className="quiz-meta quiz-meta-row">
-            <span>{index + 1} / {queue.length} · {grammarMode ? '文法例句聽力' : recognitionMode ? '單字例句聽力' : activeDirection === 'zh-ko' ? '中翻韓' : '韓翻中'}</span>
+            <span>{index + 1} / {queue.length} · {grammarMode ? '文法例句聽力' : grammarPracticeMode ? '文法例句練習' : recognitionMode ? '單字例句聽力' : activeDirection === 'zh-ko' ? '中翻韓' : '韓翻中'}</span>
             <div className="quiz-options">
               <button className={soundEnabled ? 'selected-soft' : ''} onClick={() => setSoundEnabled((enabled) => !enabled)}>{soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />} 音效</button>
               {!recognitionMode && !grammarMode && <button className={autoPronounce ? 'selected-soft' : ''} onClick={() => setAutoPronounce((enabled) => !enabled)}>{autoPronounce ? <Volume2 size={16} /> : <VolumeX size={16} />} 自動發音</button>}
-              <button disabled={!recognitionMode && !grammarMode && !revealed && !graded} onClick={() => speakAnswer(question)}><Volume2 size={16} /> {recognitionMode || grammarMode ? '重播' : '發音'}</button>
+              <button disabled={!recognitionMode && !grammarMode && activeDirection !== 'ko-zh' && !revealed && !graded} onClick={() => speakAnswer(question)}><Volume2 size={16} /> {recognitionMode || grammarMode || activeDirection === 'ko-zh' ? '重播' : '發音'}</button>
             </div>
           </div>
           {activeDirection === 'zh-ko' ? (
@@ -4357,7 +4405,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), onM
           onWrong={() => submit(false)}
           onNext={goNext}
           isStarred={(store.starred || []).includes(question.source?.id)}
-          onToggleStar={grammarMode ? null : () => toggleStarredItem(updateStore, question.source.id)}
+          onToggleStar={grammarMode || grammarPracticeMode ? null : () => toggleStarredItem(updateStore, question.source.id)}
           canMarkLearned={isDailyWordQuestion}
           isLearned={isCurrentWordLearned}
           learnedSaving={directLearnedSaving}
@@ -4643,16 +4691,44 @@ function TextSpeakButton({ text, lang, label }) {
   );
 }
 
-function GrammarNotebookPage({ notes, loading, error, onSave, onDelete }) {
+function GrammarNotebookPage({ notes, loading, error, onSave, onDelete, onPractice }) {
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
   const [actionError, setActionError] = useState('');
   const filtered = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase('zh-TW');
     if (!keyword) return notes;
     return notes.filter((note) => grammarNoteSearchText(note).includes(keyword));
   }, [notes, query]);
+  useEffect(() => {
+    const existingIds = new Set(notes.map((note) => note.id));
+    setSelectedIds((current) => current.filter((id) => existingIds.has(id)));
+  }, [notes]);
+  const selectedNotes = notes.filter((note) => selectedIds.includes(note.id));
+  const selectedQuestions = grammarPracticeQuestions(selectedNotes);
+  const filteredIds = filtered.map((note) => note.id);
+  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.includes(id));
+  const toggleSelected = (noteId) => setSelectedIds((current) => (
+    current.includes(noteId) ? current.filter((id) => id !== noteId) : [...current, noteId]
+  ));
+  const toggleFiltered = () => setSelectedIds((current) => {
+    if (allFilteredSelected) {
+      const filteredSet = new Set(filteredIds);
+      return current.filter((id) => !filteredSet.has(id));
+    }
+    return [...new Set([...current, ...filteredIds])];
+  });
+  const startGrammarPractice = (targetNotes, label) => {
+    const questions = grammarPracticeQuestions(targetNotes);
+    if (!questions.length) {
+      setActionError('所選文法筆記沒有可練習的完整例句');
+      return;
+    }
+    setActionError('');
+    onPractice(questions, label, { grammarOnly: true });
+  };
 
   const deleteNote = async (note) => {
     if (!window.confirm(`確定要刪除「${note.title}」嗎？`)) return;
@@ -4660,6 +4736,7 @@ function GrammarNotebookPage({ notes, loading, error, onSave, onDelete }) {
     try {
       await onDelete(note.id);
       if (viewing?.id === note.id) setViewing(null);
+      setSelectedIds((current) => current.filter((id) => id !== note.id));
     } catch (deleteError) {
       setActionError(deleteError.message || '刪除文法筆記失敗');
     }
@@ -4670,6 +4747,7 @@ function GrammarNotebookPage({ notes, loading, error, onSave, onDelete }) {
       <div className="topbar">
         <div><span className="eyebrow">Grammar Notes</span><h1>文法筆記</h1></div>
         <div className="actions notebook-actions">
+          <button disabled={!selectedQuestions.length} onClick={() => startGrammarPractice(selectedNotes, `已選 ${selectedNotes.length} 個文法`)}><Dumbbell size={18} /> 練習已選 {selectedIds.length ? `(${selectedIds.length})` : ''}</button>
           <button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 新增文法</button>
         </div>
       </div>
@@ -4677,7 +4755,19 @@ function GrammarNotebookPage({ notes, loading, error, onSave, onDelete }) {
         <Search size={18} />
         <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋標題、筆記或例句" />
       </label>
-      {(error || actionError) && <div className="sync-error">Firebase 同步失敗：{actionError || error}</div>}
+      <div className={`bulk-word-actions grammar-bulk-actions ${selectedIds.length ? 'has-selection' : ''}`}>
+        <div className="bulk-selection-summary">
+          <ListChecks size={19} />
+          <strong>{selectedIds.length ? `已選 ${selectedIds.length} 個文法` : '選取文法筆記'}</strong>
+          <button type="button" className="text-link" disabled={!filteredIds.length} onClick={toggleFiltered}>{allFilteredSelected ? '取消選取搜尋結果' : '選取搜尋結果'}</button>
+          {!!selectedIds.length && <button type="button" className="text-link muted-link" onClick={() => setSelectedIds([])}>清除選取</button>}
+        </div>
+        <div className="bulk-action-buttons">
+          <button type="button" className="primary" disabled={!selectedQuestions.length} onClick={() => startGrammarPractice(selectedNotes, `已選 ${selectedNotes.length} 個文法`)}><Dumbbell size={17} /> 練習 {selectedQuestions.length || 0} 個例句</button>
+        </div>
+      </div>
+      {actionError && <div className="form-error">{actionError}</div>}
+      {error && <div className="sync-error">Firebase 同步失敗：{error}</div>}
       {loading ? (
         <div className="panel grammar-empty">載入文法筆記中...</div>
       ) : filtered.length ? (
@@ -4689,6 +4779,8 @@ function GrammarNotebookPage({ notes, loading, error, onSave, onDelete }) {
               onOpen={setViewing}
               onEdit={setEditing}
               onDelete={deleteNote}
+              selected={selectedIds.includes(note.id)}
+              onToggleSelected={toggleSelected}
             />
           ))}
         </div>
@@ -4713,6 +4805,10 @@ function GrammarNotebookPage({ notes, loading, error, onSave, onDelete }) {
             setEditing(note);
           }}
           onDelete={deleteNote}
+          onPractice={(note) => {
+            setViewing(null);
+            startGrammarPractice([note], note.title);
+          }}
           onClose={() => setViewing(null)}
         />
       )}
@@ -4720,12 +4816,16 @@ function GrammarNotebookPage({ notes, loading, error, onSave, onDelete }) {
   );
 }
 
-function GrammarNoteCard({ note, onOpen, onEdit, onDelete }) {
+function GrammarNoteCard({ note, onOpen, onEdit, onDelete, selected = false, onToggleSelected }) {
   return (
-    <article className="grammar-card clickable-card" onClick={() => onOpen(note)}>
+    <article className={`grammar-card clickable-card ${selected ? 'selected' : ''}`} onClick={() => onOpen(note)}>
       <div className="card-head">
         <h2>{note.title}</h2>
         <div className="card-actions">
+          <label className="word-select-control" title="選取文法" onClick={(event) => event.stopPropagation()}>
+            <input type="checkbox" checked={selected} onChange={() => onToggleSelected(note.id)} />
+            <span className="sr-only">選取 {note.title}</span>
+          </label>
           <EditIconButton onClick={() => onEdit(note)} label="編輯文法" />
           <button
             type="button"
@@ -4824,7 +4924,7 @@ function GrammarEditorModal({ note, onSave, onClose }) {
   );
 }
 
-function GrammarDetailModal({ note, onEdit, onDelete, onClose }) {
+function GrammarDetailModal({ note, onEdit, onDelete, onPractice, onClose }) {
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key === 'Escape' && !event.isComposing) onClose();
@@ -4840,6 +4940,7 @@ function GrammarDetailModal({ note, onEdit, onDelete, onClose }) {
         <div className="grammar-detail-head">
           <div><span className="eyebrow">Grammar Note</span><h2>{note.title}</h2></div>
           <div className="card-actions">
+            <button className="small grammar-detail-practice" disabled={!grammarPracticeQuestions([note]).length} onClick={() => onPractice(note)}><Dumbbell size={16} /> 練習</button>
             <EditIconButton onClick={() => onEdit(note)} label="編輯文法" />
             <button className="edit-icon-button delete-icon-button" onClick={() => onDelete(note)} aria-label="刪除文法" title="刪除文法"><Trash2 size={15} /></button>
           </div>
@@ -5103,6 +5204,7 @@ function FoldersPage({ folders, items, loading, error, onSave, onDelete, onOpen 
 
 function AddExistingWordsModal({ folder, items, onAdd, onClose }) {
   const [query, setQuery] = useState('');
+  const [searchScope, setSearchScope] = useState('all');
   const [selectedIds, setSelectedIds] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -5110,7 +5212,7 @@ function AddExistingWordsModal({ folder, items, onAdd, onClose }) {
   const selectedSet = new Set(selectedIds);
   const results = items
     .filter((item) => !existingIds.has(item.id))
-    .filter((item) => !query.trim() || itemSearchText(item).includes(query.trim().toLowerCase()))
+    .filter((item) => itemMatchesSearch(item, query, searchScope))
     .slice(0, 100);
   const toggle = (itemId) => setSelectedIds((current) => (
     current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]
@@ -5133,7 +5235,10 @@ function AddExistingWordsModal({ folder, items, onAdd, onClose }) {
         <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
         <span className="eyebrow">Add reference</span>
         <h2 id="add-existing-title">加入現有單字到「{folder.name}」</h2>
-        <label className="search folder-word-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋韓文、中文、例句、筆記或相關詞" autoFocus /></label>
+        <div className="word-search-tools folder-word-search">
+          <label className="search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchScope === 'word' ? '只搜尋韓文單字本身' : '搜尋韓文、中文、例句、筆記或相關詞'} autoFocus /></label>
+          <SearchScopeControl value={searchScope} onChange={setSearchScope} />
+        </div>
         <div className="existing-word-results">
           {results.map((item) => (
             <label className={selectedSet.has(item.id) ? 'selected' : ''} key={item.id}>
@@ -5155,6 +5260,7 @@ function AddExistingWordsModal({ folder, items, onAdd, onClose }) {
 
 function FolderDetailPage({ folder, folders, store, updateStore, items, questions, onSaveFolder, onDeleteFolder, onAddWords, onAssignFolders, onCreateFolderAndAssign, onRemoveWords, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords, onBack }) {
   const [query, setQuery] = useState('');
+  const [searchScope, setSearchScope] = useState('all');
   const [pageNumber, setPageNumber] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
   const [addExistingOpen, setAddExistingOpen] = useState(false);
@@ -5168,7 +5274,7 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
     current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]
   ));
 
-  useEffect(() => setPageNumber(1), [query, folder?.id]);
+  useEffect(() => setPageNumber(1), [query, searchScope, folder?.id]);
   useEffect(() => setSelectedIds([]), [folder?.id]);
 
   if (!folder) return <section className="page"><div className="empty">找不到這個資料夾，可能已在其他裝置刪除。</div></section>;
@@ -5183,7 +5289,7 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
     const correct = stats.reduce((sum, current) => sum + current.correct, 0);
     const level = stats.some((current) => current.level === '不熟悉') ? '不熟悉' : stats.some((current) => current.level === '已熟練') ? '已熟練' : stats.some((current) => current.level === '熟悉') ? '熟悉' : '學習中';
     return { ...item, total, rate: total ? Math.round((correct / total) * 100) : 0, level };
-  }).filter((item) => !query.trim() || itemSearchText(item).includes(query.trim().toLowerCase()));
+  }).filter((item) => itemMatchesSearch(item, query, searchScope));
   const pageSize = 30;
   const pageCount = Math.max(1, Math.ceil(enriched.length / pageSize));
   const pagedItems = enriched.slice((pageNumber - 1) * pageSize, pageNumber * pageSize);
@@ -5210,7 +5316,10 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
           {!isLearnedFolder(folder) && <button className="danger-soft" onClick={deleteFolder}><Trash2 size={17} /> 刪除資料夾</button>}
         </div>
       </div>
-      <label className="search folder-word-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋這個資料夾中的單字" /></label>
+      <div className="word-search-tools folder-word-search">
+        <label className="search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchScope === 'word' ? '只搜尋韓文單字本身' : '搜尋這個資料夾中的全部卡片內容'} /></label>
+        <SearchScopeControl value={searchScope} onChange={setSearchScope} />
+      </div>
       {!!staleIds.length && <button className="text-link" onClick={() => onRemoveWords(folder.id, staleIds)}>清理 {staleIds.length} 個不存在的單字 reference</button>}
       {exportOpen && <ExportJsonModal items={folderItems} title={`匯出 ${folder.name} JSON`} onClose={() => setExportOpen(false)} />}
       {renameOpen && <FolderNameModal folder={folder} onSave={onSaveFolder} onClose={() => setRenameOpen(false)} />}
@@ -5280,6 +5389,7 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
 
 function NotebookPage({ store, updateStore, items, questions, folders = [], onAssignFolders, onCreateFolderAndAssign, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords }) {
   const [query, setQuery] = useState('');
+  const [searchScope, setSearchScope] = useState('all');
   const [type, setType] = useState('全部');
   const [level, setLevel] = useState('全部');
   const [sort, setSort] = useState('default');
@@ -5308,7 +5418,7 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
     const levelValue = itemStats.some((stat) => stat.level === '不熟悉') ? '不熟悉' : itemStats.some((stat) => stat.level === '已熟練') ? '已熟練' : itemStats.some((stat) => stat.level === '熟悉') ? '熟悉' : '學習中';
     return { ...item, total, rate, level: levelValue };
   }).filter((item) => {
-    const matchesQuery = !query || itemSearchText(item).includes(query.toLowerCase());
+    const matchesQuery = itemMatchesSearch(item, query, searchScope);
     const matchesType = type === '全部' || item.pos === type;
     const matchesLevel = level === '全部' || item.level === level;
     return matchesQuery && matchesType && matchesLevel;
@@ -5325,7 +5435,7 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
 
   useEffect(() => {
     setPageNumber(1);
-  }, [query, type, level, sort]);
+  }, [query, searchScope, type, level, sort]);
 
   useEffect(() => {
     setPageNumber(1);
@@ -5367,7 +5477,10 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
         />
       )}
       <div className="filters">
-        <label className="search"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜尋單字、例句、筆記或相關詞" /></label>
+        <div className="word-search-tools filter-search-tools">
+          <label className="search"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={searchScope === 'word' ? '只搜尋韓文單字本身' : '搜尋單字、例句、筆記或相關詞'} /></label>
+          <SearchScopeControl value={searchScope} onChange={setSearchScope} />
+        </div>
         <select value={type} onChange={(e) => setType(e.target.value)}>{types.map((option) => <option key={option}>{option}</option>)}</select>
         <select value={level} onChange={(e) => setLevel(e.target.value)}>{['全部', '不熟悉', '學習中', '熟悉', '已熟練'].map((option) => <option key={option}>{option}</option>)}</select>
         <select value={sort} onChange={(e) => setSort(e.target.value)}><option value="default">最新加入優先</option><option value="rate">答對率低優先</option></select>
@@ -5487,8 +5600,10 @@ export {
   formatGrammarExamplesText,
   formatPairLines,
   normalizeGrammarNote,
+  grammarPracticeQuestions,
   normalizeFolder,
   isLearnedFolder,
+  itemMatchesSearch,
   normalizeKoreanKey,
   normalizeRecords,
   parseGrammarExamplesText,
@@ -5501,6 +5616,7 @@ export {
   resolveImportConflictDraft,
   shouldInitializeDailyRecognition,
   shouldOfferLearnedFolder,
+  shouldAutoPronouncePracticePrompt,
   shouldRecordPracticeResults,
 };
 

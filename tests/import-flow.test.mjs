@@ -486,6 +486,91 @@ test('daily grammar review continues into newly added notes before wrapping', ()
   assert.equal(wrapped.note.id, 'grammar-1');
 });
 
+test('selected grammar notes combine every complete example into one practice set', () => {
+  const notes = [
+    {
+      id: 'grammar-a',
+      title: '文法 A',
+      examples: [
+        { id: 'a-1', ko: '첫 문장입니다.', zh: '第一句。' },
+        { id: 'a-2', ko: '둘째 문장입니다.', zh: '第二句。' },
+      ],
+    },
+    {
+      id: 'grammar-b',
+      title: '文法 B',
+      examples: [
+        { id: 'b-1', ko: '세 번째 문장입니다.', zh: '第三句。' },
+        { id: 'incomplete', ko: '한국어만', zh: '' },
+      ],
+    },
+  ];
+
+  const questions = helpers.grammarPracticeQuestions(notes);
+  assert.deepEqual(questions.map((question) => question.id), [
+    'grammar:grammar-a:a-1',
+    'grammar:grammar-a:a-2',
+    'grammar:grammar-b:b-1',
+  ]);
+  assert.ok(questions.every((question) => question.kind === 'grammar-example'));
+  assert.equal(questions[2].source, notes[1]);
+});
+
+test('Korean-to-Chinese questions auto-pronounce when each prompt appears', () => {
+  const base = {
+    started: true,
+    recognitionMode: false,
+    grammarMode: false,
+    recognitionWordVisible: false,
+    question: { id: 'question-1', ko: '한국어' },
+  };
+  assert.equal(helpers.shouldAutoPronouncePracticePrompt({
+    ...base,
+    activeDirection: 'ko-zh',
+    autoPronounce: true,
+  }), true);
+  assert.equal(helpers.shouldAutoPronouncePracticePrompt({
+    ...base,
+    activeDirection: 'ko-zh',
+    autoPronounce: false,
+  }), false);
+  assert.equal(helpers.shouldAutoPronouncePracticePrompt({
+    ...base,
+    activeDirection: 'zh-ko',
+    autoPronounce: true,
+  }), false);
+  assert.equal(helpers.shouldAutoPronouncePracticePrompt({
+    ...base,
+    recognitionMode: true,
+    activeDirection: 'ko-zh',
+    autoPronounce: false,
+  }), true);
+});
+
+test('word-only search ignores matches that appear only inside card details', () => {
+  const weather = {
+    ko: '날씨',
+    zh: '天氣',
+    notes: ['시장附近的天氣'],
+    meanings: [{
+      zh: '天氣',
+      examples: [{ ko: '시장에 비가 와요.', zh: '市場下雨。' }],
+    }],
+    related: [],
+  };
+  const market = {
+    ko: '시장',
+    zh: '市場',
+    meanings: [{ zh: '市場', examples: [] }],
+    related: [],
+  };
+
+  assert.equal(helpers.itemMatchesSearch(weather, '장', 'all'), true);
+  assert.equal(helpers.itemMatchesSearch(weather, '장', 'word'), false);
+  assert.equal(helpers.itemMatchesSearch(market, '장', 'word'), true);
+  assert.equal(helpers.itemMatchesSearch(market, '장'.normalize('NFD'), 'word'), true);
+});
+
 test('daily grammar review stays completed for the day and skips incomplete examples', () => {
   const notes = [{
     id: 'grammar-1',
