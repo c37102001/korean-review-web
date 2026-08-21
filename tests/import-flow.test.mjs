@@ -594,6 +594,91 @@ test('word-only search ignores matches that appear only inside card details', ()
   assert.equal(helpers.itemMatchesSearch(market, '장'.normalize('NFD'), 'word'), true);
 });
 
+test('saved speech voices resolve only within the requested language', () => {
+  const voices = [
+    { name: 'Natural', lang: 'en-US', voiceURI: 'english-natural' },
+    { name: 'Natural', lang: 'ko-KR', voiceURI: 'korean-natural' },
+    { name: 'Korean backup', lang: 'ko_KR', voiceURI: 'korean-backup' },
+  ];
+
+  assert.equal(
+    helpers.findPreferredSpeechVoice(voices, { voiceURI: 'korean-natural' }, 'ko-KR'),
+    voices[1],
+  );
+  assert.equal(
+    helpers.findPreferredSpeechVoice(voices, { name: 'Korean backup', lang: 'ko-KR' }, 'ko-KR'),
+    voices[2],
+  );
+  assert.equal(
+    helpers.findPreferredSpeechVoice(voices, { name: 'Natural', lang: 'en-US' }, 'ko-KR'),
+    null,
+  );
+  assert.equal(helpers.findPreferredSpeechVoice(voices, null, 'ko-KR'), null);
+});
+
+test('study Chinese visibility follows the global default and per-card reveal', () => {
+  assert.equal(helpers.shouldShowStudyChinese(true, false), false);
+  assert.equal(helpers.shouldShowStudyChinese(true, true), true);
+  assert.equal(helpers.shouldShowStudyChinese(false, false), true);
+  assert.equal(helpers.shouldShowStudyChinese(false, true), true);
+});
+
+test('study autoplay follows the global Chinese visibility order', () => {
+  const card = {
+    ko: '날씨',
+    zh: '天氣',
+    meanings: [{
+      zh: '天氣',
+      examples: [{ ko: '오늘 날씨가 좋아요.', zh: '今天天氣很好。' }],
+    }],
+  };
+
+  const hidden = helpers.buildStudyAutoPlaySpeechSequence(card, { hideChineseInitially: true });
+  assert.deepEqual(hidden.map(({ text, face }) => [text, face]), [
+    ['날씨', 'front'],
+    ['오늘 날씨가 좋아요.', 'back'],
+  ]);
+
+  const visible = helpers.buildStudyAutoPlaySpeechSequence(card, { hideChineseInitially: false });
+  assert.deepEqual(visible.map(({ text, face }) => [text, face]), [
+    ['날씨', 'front'],
+    ['天氣', 'back'],
+    ['오늘 날씨가 좋아요.', 'back'],
+    ['今天天氣很好。', 'back'],
+  ]);
+
+  const repeated = helpers.buildStudyAutoPlaySpeechSequence(card, {
+    hideChineseInitially: true,
+    voiceRepeatCount: 2,
+  });
+  assert.deepEqual(repeated.map(({ text, face }) => [text, face]), [
+    ['날씨', 'front'],
+    ['오늘 날씨가 좋아요.', 'back'],
+    ['날씨', 'front'],
+    ['오늘 날씨가 좋아요.', 'back'],
+  ]);
+
+  assert.equal(
+    helpers.buildStudyAutoPlaySpeechSequence(card, { voiceRepeatCount: 99 }).length,
+    hidden.length * 3,
+  );
+});
+
+test('selected folders combine word references in folder order without duplicates', () => {
+  const folders = [
+    { id: 'folder-a', wordIds: ['word-1', 'word-2'] },
+    { id: 'folder-b', wordIds: ['word-2', 'word-3'] },
+    { id: 'folder-c', wordIds: ['word-4'] },
+  ];
+
+  assert.deepEqual(
+    helpers.selectedFolderWordIds(folders, ['folder-a', 'folder-b']),
+    ['word-1', 'word-2', 'word-3'],
+  );
+  assert.deepEqual(helpers.selectedFolderWordIds(folders, ['folder-c']), ['word-4']);
+  assert.deepEqual(helpers.selectedFolderWordIds(folders, []), []);
+});
+
 test('daily grammar review stays completed for the day and skips incomplete examples', () => {
   const notes = [{
     id: 'grammar-1',

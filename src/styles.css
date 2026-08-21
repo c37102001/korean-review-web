@@ -652,6 +652,15 @@ main {
   box-shadow: 0 18px 42px rgba(58, 73, 84, 0.14);
 }
 
+.folder-card.selected {
+  border-color: #52baa9;
+  box-shadow: 0 0 0 2px rgba(47, 185, 163, 0.18), 0 16px 38px rgba(58, 73, 84, 0.12);
+}
+
+.folder-bulk-actions {
+  margin-bottom: 18px;
+}
+
 .folder-card-head,
 .folder-selection-footer {
   display: flex;
@@ -2560,6 +2569,167 @@ textarea:focus {
   margin-top: 20px;
 }
 
+.voice-settings-panel {
+  width: min(760px, 100%);
+}
+
+.voice-settings-head {
+  padding-right: 48px;
+  margin-bottom: 20px;
+}
+
+.voice-settings-head h2 {
+  margin-bottom: 8px;
+  color: #26383f;
+  font-size: 28px;
+}
+
+.voice-settings-head p {
+  margin-bottom: 0;
+  color: #65737a;
+  line-height: 1.6;
+}
+
+.voice-language-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.voice-language-section {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #dfeae8;
+  border-radius: 16px;
+  background: #f9fcfb;
+}
+
+.voice-language-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.voice-language-head h3 {
+  margin: 0;
+  color: #294047;
+  font-size: 18px;
+}
+
+.voice-language-head span {
+  flex: 0 0 auto;
+  color: #718087;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.voice-sample {
+  min-height: 50px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-left: 3px solid #ffad55;
+  border-radius: 10px;
+  background: #fff7e9;
+  color: #45565d;
+  font-weight: 750;
+  line-height: 1.55;
+}
+
+.voice-options {
+  display: grid;
+  gap: 7px;
+  max-height: min(310px, 38vh);
+  overflow-y: auto;
+  padding-right: 3px;
+}
+
+.voice-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px 7px 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.voice-option.selected {
+  border-color: #82cfc0;
+  background: #eaf8f4;
+}
+
+.voice-option label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.voice-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #20aa91;
+}
+
+.voice-option label > span {
+  display: grid;
+  min-width: 0;
+}
+
+.voice-option strong,
+.voice-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-option strong {
+  color: #2f4249;
+  font-size: 14px;
+}
+
+.voice-option small {
+  margin-top: 2px;
+  color: #748188;
+  font-size: 11px;
+}
+
+.voice-preview-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  color: #158873;
+  background: #edf8f5;
+  box-shadow: none;
+}
+
+.voice-preview-button:hover {
+  color: #ffffff;
+  background: #26af96;
+}
+
+.voice-empty {
+  padding: 14px;
+  border-radius: 12px;
+  background: #f4f6f6;
+  color: #6d7b81;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.voice-settings-actions {
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
 .export-panel {
   width: min(920px, 100%);
 }
@@ -3736,5 +3906,190 @@ textarea:focus {
 
   .answer-placeholder {
     min-height: 180px;
+  }
+}
+
+@media (max-width: 600px) {
+  .modal-backdrop:has(.voice-settings-panel) {
+    align-items: end;
+    padding: 8px;
+  }
+
+  .voice-settings-panel {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    padding: 18px;
+    border-radius: 20px;
+  }
+
+  .voice-settings-head {
+    margin-bottom: 14px;
+  }
+
+  .voice-settings-head h2 {
+    font-size: 24px;
+  }
+
+  .voice-settings-head p {
+    font-size: 14px;
+  }
+
+  .voice-language-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .voice-language-section {
+    padding: 13px;
+  }
+
+  .voice-sample {
+    min-height: 0;
+  }
+
+  .voice-options {
+    max-height: 220px;
+  }
+
+  .voice-settings-actions {
+    flex-direction: row !important;
+  }
+
+  .voice-settings-actions button {
+    flex: 1;
+  }
+
+  .modal-backdrop:has(.detail-panel) {
+    padding: 8px;
+  }
+
+  .detail-panel {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    padding: 16px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    border-radius: 20px;
+  }
+
+  .detail-panel .note-card {
+    min-width: 0;
+    padding-top: 0;
+  }
+
+  .detail-panel .card-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding-right: 0;
+  }
+
+  .detail-panel .card-head h3 {
+    width: 100%;
+    min-width: 0;
+    padding-right: 48px;
+    margin: 0;
+    font-size: 32px;
+    line-height: 1.2;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+
+  .detail-panel .speakable-heading > span {
+    min-width: 0;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+
+  .detail-panel .card-actions {
+    min-width: 0;
+    padding-right: 48px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .detail-panel .zh {
+    margin-top: 10px;
+    font-size: 18px;
+    line-height: 1.5;
+  }
+
+  .detail-panel .rich-details {
+    gap: 14px;
+    margin-top: 14px;
+  }
+
+  .detail-panel .meanings-section {
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .detail-panel .meaning-list {
+    gap: 14px;
+  }
+
+  .detail-panel .meaning-block {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .detail-panel .meaning-block + .meaning-block {
+    padding-top: 14px;
+    border-top: 1px solid #e5eceb;
+  }
+
+  .detail-panel .meaning-head {
+    min-width: 0;
+  }
+
+  .detail-panel .meaning-head strong {
+    min-width: 0;
+    font-size: 18px;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+
+  .detail-panel .meaning-pattern {
+    max-width: calc(100% - 36px);
+    margin-left: 36px;
+  }
+
+  .detail-panel .example-list {
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .detail-panel .example-row {
+    min-width: 0;
+    padding: 11px 12px;
+  }
+
+  .detail-panel .example-ko {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    font-size: 16px;
+    line-height: 1.55;
+  }
+
+  .detail-panel .example-ko > span,
+  .detail-panel .example-zh {
+    min-width: 0;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+
+  .detail-panel .example-zh {
+    font-size: 15px;
+    line-height: 1.55;
+  }
+
+  .detail-panel .note-section,
+  .detail-panel .related-section {
+    padding: 12px;
+    border-radius: 14px;
   }
 }

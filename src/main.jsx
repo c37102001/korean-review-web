@@ -54,6 +54,11 @@ const FIRESTORE_SCHEMA_VERSION = 3;
 const PROGRESS_SHARD_COUNT = 16;
 const MAX_ATOMIC_RECORD_WRITES = 450;
 const PUNCTUATION_RE = /[^\p{L}\p{N}\s]/gu;
+const SPEECH_VOICE_STORAGE_KEY = 'korean-review-speech-voices-v1';
+const SPEECH_SAMPLE_TEXT = {
+  ko: '오늘도 즐겁게 한국어를 공부해요.',
+  zh: '今天也一起開心地學習韓文。',
+};
 
 const toDateKey = (date) => {
   const year = date.getFullYear();
@@ -252,6 +257,19 @@ function normalizeFolder(folder, fallbackId = '') {
     updatedAt: String(folder?.updatedAt || ''),
     systemKey: String(folder?.systemKey || ''),
   };
+}
+
+function selectedFolderWordIds(folders, selectedFolderIds) {
+  const selectedSet = new Set(selectedFolderIds || []);
+  const seen = new Set();
+  return (folders || []).flatMap((folder) => {
+    if (!selectedSet.has(folder.id)) return [];
+    return (folder.wordIds || []).filter((wordId) => {
+      if (!wordId || seen.has(wordId)) return false;
+      seen.add(wordId);
+      return true;
+    });
+  });
 }
 
 function isLearnedFolder(folder) {
@@ -1916,21 +1934,64 @@ function MasteryBadge({ level }) {
   return <span className={`badge mastery-${level}`}>{level}</span>;
 }
 
-function speakText(text, lang) {
+function normalizeSpeechLanguage(lang) {
+  return String(lang || '').replaceAll('_', '-').toLowerCase();
+}
+
+function speechLanguageKey(lang) {
+  return normalizeSpeechLanguage(lang).startsWith('zh') ? 'zh' : 'ko';
+}
+
+function findPreferredSpeechVoice(voices, preference, lang) {
+  if (!preference || !Array.isArray(voices)) return null;
+  const languageKey = speechLanguageKey(lang);
+  const candidates = voices.filter((voice) => normalizeSpeechLanguage(voice?.lang).startsWith(languageKey));
+  return candidates.find((voice) => preference.voiceURI && voice.voiceURI === preference.voiceURI)
+    || candidates.find((voice) => (
+      voice.name === preference.name
+      && normalizeSpeechLanguage(voice.lang) === normalizeSpeechLanguage(preference.lang)
+    ))
+    || null;
+}
+
+function readSpeechVoicePreferences() {
+  if (typeof window === 'undefined') return {};
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(SPEECH_VOICE_STORAGE_KEY) || '{}');
+    return stored && typeof stored === 'object' ? stored : {};
+  } catch {
+    return {};
+  }
+}
+
+function configureSpeechUtterance(utterance, lang, voiceOverride = undefined) {
+  utterance.lang = lang;
+  utterance.rate = normalizeSpeechLanguage(lang).startsWith('ko') ? 0.9 : 1;
+  const selectedVoice = voiceOverride === undefined
+    ? findPreferredSpeechVoice(
+      window.speechSynthesis.getVoices(),
+      readSpeechVoicePreferences()[speechLanguageKey(lang)],
+      lang,
+    )
+    : voiceOverride;
+  if (selectedVoice) {
+    utterance.voice = selectedVoice;
+    utterance.lang = selectedVoice.lang || lang;
+  }
+  return utterance;
+}
+
+function speakText(text, lang, voiceOverride = undefined) {
   if (!('speechSynthesis' in window) || !text) return;
   window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = lang;
-  utterance.rate = lang.startsWith('ko') ? 0.9 : 1;
+  const utterance = configureSpeechUtterance(new SpeechSynthesisUtterance(text), lang, voiceOverride);
   window.speechSynthesis.speak(utterance);
 }
 
 function speakTextAndWait(text, lang) {
   if (!('speechSynthesis' in window) || !text) return Promise.resolve();
   return new Promise((resolve) => {
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = lang;
-    utterance.rate = lang.startsWith('ko') ? 0.9 : 1;
+    const utterance = configureSpeechUtterance(new SpeechSynthesisUtterance(text), lang);
     let settled = false;
     const finish = () => {
       if (settled) return;
@@ -1950,12 +2011,37 @@ function waitFor(milliseconds) {
 }
 
 function speakAnswer(question) {
-  if (!('speechSynthesis' in window) || !question?.ko) return;
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(question.ko);
-  utterance.lang = 'ko-KR';
-  utterance.rate = 0.9;
-  window.speechSynthesis.speak(utterance);
+  speakText(question?.ko, 'ko-KR');
+}
+
+function shouldShowStudyChinese(hideChineseInitially, cardChineseRevealed) {
+  return !hideChineseInitially || cardChineseRevealed;
+}
+
+function buildStudyAutoPlaySpeechSequence(item, {
+  frontSide = 'ko',
+  hideChineseInitially = true,
+  playExampleVoice = true,
+  voiceRepeatCount = 1,
+} = {}) {
+  if (!item) return [];
+  const repeatCount = Math.min(3, Math.max(1, Number(voiceRepeatCount) || 1));
+  const includeChinese = !hideChineseInitially;
+  const cycle = [{
+    text: item.ko,
+    lang: 'ko-KR',
+    face: frontSide === 'ko' || hideChineseInitially ? 'front' : 'back',
+  }];
+  if (includeChinese && item.zh) {
+    cycle.push({ text: item.zh, lang: 'zh-TW', face: frontSide === 'zh' ? 'front' : 'back' });
+  }
+  if (playExampleVoice) {
+    itemExamples(item).forEach((example) => {
+      if (example.ko) cycle.push({ text: example.ko, lang: 'ko-KR', face: 'back' });
+      if (includeChinese && example.zh) cycle.push({ text: example.zh, lang: 'zh-TW', face: 'back' });
+    });
+  }
+  return Array.from({ length: repeatCount }, () => cycle).flat();
 }
 
 function playResultSound(correct) {
@@ -2158,7 +2244,7 @@ function App() {
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} />,
     practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} learnedWordIds={learnedWordIds} onMarkLearned={(itemId) => folders.addWords(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} />,
     notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
-    folders: <FoldersPage folders={folders.folders} items={items} loading={folders.loading} error={folders.error} onSave={folders.save} onDelete={folders.remove} onOpen={openFolder} />,
+    folders: <FoldersPage folders={folders.folders} items={items} questions={questions} loading={folders.loading} error={folders.error} onSave={folders.save} onDelete={folders.remove} onOpen={openFolder} onStudy={startStudy} onPractice={startPractice} />,
     folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
     grammar: <GrammarNotebookPage notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} onPractice={startPractice} />,
   };
@@ -2245,9 +2331,144 @@ function LoginPage() {
   );
 }
 
+function VoiceSettingsModal({ onClose }) {
+  const speechSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
+  const [voices, setVoices] = useState([]);
+  const [preferences, setPreferences] = useState(() => {
+    const stored = readSpeechVoicePreferences();
+    return { ko: stored.ko || null, zh: stored.zh || null };
+  });
+
+  useEffect(() => {
+    if (!speechSupported) return undefined;
+    const refreshVoices = () => setVoices(window.speechSynthesis.getVoices());
+    refreshVoices();
+    window.speechSynthesis.addEventListener('voiceschanged', refreshVoices);
+    return () => {
+      window.speechSynthesis.removeEventListener('voiceschanged', refreshVoices);
+      window.speechSynthesis.cancel();
+    };
+  }, [speechSupported]);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  const close = () => {
+    window.speechSynthesis?.cancel();
+    onClose();
+  };
+  const voicePreference = (voice) => ({
+    name: voice.name,
+    lang: voice.lang,
+    voiceURI: voice.voiceURI,
+  });
+  const preferenceMatches = (preference, voice) => Boolean(preference && (
+    (preference.voiceURI && preference.voiceURI === voice.voiceURI)
+    || (
+      preference.name === voice.name
+      && normalizeSpeechLanguage(preference.lang) === normalizeSpeechLanguage(voice.lang)
+    )
+  ));
+  const chooseVoice = (languageKey, lang, voice) => {
+    setPreferences((current) => ({
+      ...current,
+      [languageKey]: voice ? voicePreference(voice) : null,
+    }));
+    speakText(SPEECH_SAMPLE_TEXT[languageKey], lang, voice);
+  };
+  const save = () => {
+    window.localStorage.setItem(SPEECH_VOICE_STORAGE_KEY, JSON.stringify(preferences));
+    close();
+  };
+  const groups = [
+    { key: 'ko', label: '韓文語音', lang: 'ko-KR' },
+    { key: 'zh', label: '中文語音', lang: 'zh-TW' },
+  ];
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="voice-settings-title">
+      <div className="modal-panel voice-settings-panel">
+        <button className="modal-close" onClick={close} aria-label="關閉"><X size={18} /></button>
+        <div className="voice-settings-head">
+          <span className="eyebrow">Speech</span>
+          <h2 id="voice-settings-title">語音設定</h2>
+          <p>設定只儲存在這台裝置，選擇語音時會立即試聽。</p>
+        </div>
+
+        {!speechSupported ? (
+          <div className="voice-empty">這個瀏覽器不支援網頁語音播放。</div>
+        ) : (
+          <div className="voice-language-list">
+            {groups.map((group) => {
+              const languageVoices = voices
+                .filter((voice) => normalizeSpeechLanguage(voice.lang).startsWith(group.key))
+                .sort((left, right) => Number(right.default) - Number(left.default) || left.name.localeCompare(right.name));
+              return (
+                <section className="voice-language-section" key={group.key}>
+                  <div className="voice-language-head">
+                    <h3>{group.label}</h3>
+                    <span>{languageVoices.length} 種</span>
+                  </div>
+                  <p className="voice-sample" lang={group.lang}>{SPEECH_SAMPLE_TEXT[group.key]}</p>
+                  <div className="voice-options">
+                    <div className={`voice-option ${!preferences[group.key] ? 'selected' : ''}`}>
+                      <label>
+                        <input
+                          type="radio"
+                          name={`voice-${group.key}`}
+                          checked={!preferences[group.key]}
+                          onChange={() => chooseVoice(group.key, group.lang, null)}
+                        />
+                        <span><strong>系統預設</strong><small>由瀏覽器自動選擇</small></span>
+                      </label>
+                      <button className="voice-preview-button" onClick={() => speakText(SPEECH_SAMPLE_TEXT[group.key], group.lang, null)} aria-label={`試聽${group.label}系統預設`} title="試聽"><Volume2 size={17} /></button>
+                    </div>
+                    {languageVoices.map((voice) => {
+                      const selected = preferenceMatches(preferences[group.key], voice);
+                      return (
+                        <div className={`voice-option ${selected ? 'selected' : ''}`} key={`${voice.voiceURI}-${voice.lang}`}>
+                          <label>
+                            <input
+                              type="radio"
+                              name={`voice-${group.key}`}
+                              checked={selected}
+                              onChange={() => chooseVoice(group.key, group.lang, voice)}
+                            />
+                            <span>
+                              <strong>{voice.name}</strong>
+                              <small>{voice.lang} · {voice.localService === false ? '網路語音' : '裝置語音'}{voice.default ? ' · 預設' : ''}</small>
+                            </span>
+                          </label>
+                          <button className="voice-preview-button" onClick={() => speakText(SPEECH_SAMPLE_TEXT[group.key], group.lang, voice)} aria-label={`試聽 ${voice.name}`} title="試聽"><Volume2 size={17} /></button>
+                        </div>
+                      );
+                    })}
+                    {!languageVoices.length && <div className="voice-empty">這台裝置沒有可用的{group.label}。</div>}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="actions voice-settings-actions">
+          <button onClick={close}>取消</button>
+          <button className="primary" onClick={save} disabled={!speechSupported}>儲存設定</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestionsForToday, recognitionQuestions, grammarSchedule, onCompleteGrammar, onPractice, onAddRecords, onUpdateRecord, onWriteRecords, folders = [] }) {
   const [addOpen, setAddOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
   const today = todayString();
   const due = dueQuestionsForToday;
   const wrongReview = due.length ? [] : wrongQuestionsForToday;
@@ -2281,6 +2502,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
           <div className="actions">
             <button className="primary" disabled={!totalPending} onClick={startNextDailyTask}><Dumbbell size={18} /> 開始今日測驗</button>
             <button onClick={() => setAddOpen(true)}><Plus size={18} /> 快速新增單字</button>
+            <button onClick={() => setVoiceSettingsOpen(true)}><Volume2 size={18} /> 語音設定</button>
           </div>
         </div>
         <div className="hero-meter">
@@ -2324,6 +2546,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
           onClose={() => setEditingItem(null)}
         />
       )}
+      {voiceSettingsOpen && <VoiceSettingsModal onClose={() => setVoiceSettingsOpen(false)} />}
 
       <div className="split">
         <div className="panel">
@@ -3710,9 +3933,10 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   const [shuffleSeed, setShuffleSeed] = useState(Date.now());
   const [autoPlay, setAutoPlay] = useState(false);
   const [playVoice, setPlayVoice] = useState(true);
-  const [playExampleVoice, setPlayExampleVoice] = useState(false);
+  const [playExampleVoice, setPlayExampleVoice] = useState(true);
   const [voiceRepeatCount, setVoiceRepeatCount] = useState(1);
-  const [showChinese, setShowChinese] = useState(false);
+  const [hideChineseInitially, setHideChineseInitially] = useState(true);
+  const [cardChineseRevealed, setCardChineseRevealed] = useState(false);
   const [autoPlayCycle, setAutoPlayCycle] = useState(0);
   const [starredOnly, setStarredOnly] = useState(false);
   const [instantReset, setInstantReset] = useState(false);
@@ -3732,6 +3956,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   const ordered = useMemo(() => (random ? shuffleItems(filtered, shuffleSeed) : filtered), [filtered, random, shuffleSeed]);
   const item = ordered[index % Math.max(ordered.length, 1)];
   const isStarred = !!item && (store.starred || []).includes(item.id);
+  const showChinese = shouldShowStudyChinese(hideChineseInitially, cardChineseRevealed);
   const frontShowsChinese = frontSide === 'zh' && showChinese;
   const frontText = frontShowsChinese ? item?.zh : item?.ko;
   const backText = frontSide === 'ko' ? item?.zh : item?.ko;
@@ -3739,18 +3964,12 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   const backLang = frontSide === 'ko' ? 'zh-TW' : 'ko-KR';
   const visibleBackText = frontSide === 'ko' && !showChinese ? item?.ko : backText;
   const visibleBackLang = frontSide === 'ko' && !showChinese ? 'ko-KR' : backLang;
-  const autoPlaySpeechSequence = useMemo(() => {
-    if (!item) return [];
-    const cycle = [{ text: item.ko, lang: 'ko-KR', face: frontSide === 'ko' || !showChinese ? 'front' : 'back' }];
-    if (showChinese) cycle.push({ text: item.zh, lang: 'zh-TW', face: frontSide === 'zh' ? 'front' : 'back' });
-    if (playExampleVoice) {
-      itemExamples(item).forEach((example) => {
-        if (example.ko) cycle.push({ text: example.ko, lang: 'ko-KR', face: 'back' });
-        if (showChinese && example.zh) cycle.push({ text: example.zh, lang: 'zh-TW', face: 'back' });
-      });
-    }
-    return Array.from({ length: voiceRepeatCount }, () => cycle).flat();
-  }, [item, frontSide, playExampleVoice, showChinese, voiceRepeatCount]);
+  const autoPlaySpeechSequence = useMemo(() => buildStudyAutoPlaySpeechSequence(item, {
+    frontSide,
+    hideChineseInitially,
+    playExampleVoice,
+    voiceRepeatCount,
+  }), [item, frontSide, hideChineseInitially, playExampleVoice, voiceRepeatCount]);
   const toggleCard = () => {
     const next = !flipped;
     setFlipped(next);
@@ -3762,6 +3981,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
       window.requestAnimationFrame(() => setInstantReset(false));
     }
     setFlipped(false);
+    setCardChineseRevealed(false);
     setIndex(nextIndex);
   };
   const goPrev = () => {
@@ -3782,12 +4002,13 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
 
   useLayoutEffect(() => {
     setFlipped(false);
-    setShowChinese(false);
+    setCardChineseRevealed(false);
   }, [item?.id]);
 
   useEffect(() => {
     setIndex(0);
     setFlipped(false);
+    setCardChineseRevealed(false);
   }, [filter, random, shuffleSeed, frontSide, starredOnly]);
 
   useEffect(() => {
@@ -3859,6 +4080,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
         if (cancelled) return;
         await waitFor(450);
         if (!cancelled) {
+          setCardChineseRevealed(false);
           setIndex((current) => (current + 1) % ordered.length);
           setAutoPlayCycle((current) => current + 1);
           setFlipped(false);
@@ -3868,6 +4090,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
     } else {
       flipTimer = window.setTimeout(() => setFlipped(true), 1800);
       nextTimer = window.setTimeout(() => {
+        setCardChineseRevealed(false);
         setIndex((current) => (current + 1) % ordered.length);
         setAutoPlayCycle((current) => current + 1);
         setFlipped(false);
@@ -3919,9 +4142,20 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
         <button title="自動播放期間保持螢幕開啟" className={autoPlay ? 'selected-soft' : ''} onClick={() => setAutoPlay(!autoPlay)}>{autoPlay ? <Pause size={16} /> : <Play size={16} />} 自動</button>
         <button className={playVoice ? 'selected-soft' : ''} onClick={() => setPlayVoice(!playVoice)}>{playVoice ? <Volume2 size={16} /> : <VolumeX size={16} />} 語音</button>
         <button disabled={!playVoice} className={playExampleVoice && playVoice ? 'selected-soft' : ''} onClick={() => setPlayExampleVoice((current) => !current)}><Volume2 size={16} /> 例句語音</button>
+        <button
+          className={!hideChineseInitially ? 'selected-soft' : ''}
+          aria-pressed={!hideChineseInitially}
+          onClick={() => {
+            setHideChineseInitially((current) => !current);
+            setCardChineseRevealed(false);
+          }}
+        >
+          {hideChineseInitially ? <EyeOff size={16} /> : <Eye size={16} />}
+          {hideChineseInitially ? '每張先隱藏中文' : '每張顯示中文'}
+        </button>
         <label className="study-repeat-control" title="每張卡片完整播放幾次">
           <RotateCcw size={15} />
-          <span>每張</span>
+          <span>每張完整播放</span>
           <select value={voiceRepeatCount} disabled={!playVoice} onChange={(event) => setVoiceRepeatCount(Number(event.target.value))}>
             {[1, 2, 3].map((count) => <option key={count} value={count}>{count} 次</option>)}
           </select>
@@ -3943,11 +4177,11 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
             <span>{index + 1} / {ordered.length}</span>
             <strong>{frontShowsChinese ? item.ko : frontText}</strong>
             {frontShowsChinese && <span className="flashcard-translation">{item.zh}</span>}
-            {frontSide === 'zh' && (
+            {frontSide === 'zh' && hideChineseInitially && (
               <button
                 className="card-chinese-toggle"
                 aria-pressed={showChinese}
-                onClick={(event) => { event.stopPropagation(); setShowChinese((current) => !current); }}
+                onClick={(event) => { event.stopPropagation(); setCardChineseRevealed((current) => !current); }}
               >
                 {showChinese ? <EyeOff size={16} /> : <Eye size={16} />} {showChinese ? '隱藏中文' : '顯示中文'}
               </button>
@@ -3961,11 +4195,11 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
                 <div className="flash-back-answer-copy">
                   <strong>{item.ko}</strong>
                   {frontSide === 'ko' && showChinese && <span>{item.zh}</span>}
-                  {frontSide === 'ko' && (
+                  {frontSide === 'ko' && hideChineseInitially && (
                     <button
                       className="card-chinese-toggle"
                       aria-pressed={showChinese}
-                      onClick={(event) => { event.stopPropagation(); setShowChinese((current) => !current); }}
+                      onClick={(event) => { event.stopPropagation(); setCardChineseRevealed((current) => !current); }}
                     >
                       {showChinese ? <EyeOff size={16} /> : <Eye size={16} />} {showChinese ? '隱藏中文' : '顯示中文'}
                     </button>
@@ -5223,9 +5457,26 @@ function FolderNameModal({ folder, onSave, onClose }) {
   );
 }
 
-function FoldersPage({ folders, items, loading, error, onSave, onDelete, onOpen }) {
+function FoldersPage({ folders, items, questions, loading, error, onSave, onDelete, onOpen, onStudy, onPractice }) {
   const [editingFolder, setEditingFolder] = useState(undefined);
+  const [selectedIds, setSelectedIds] = useState([]);
   const itemIds = new Set(items.map((item) => item.id));
+  useEffect(() => {
+    const existingIds = new Set(folders.map((folder) => folder.id));
+    setSelectedIds((current) => current.filter((id) => existingIds.has(id)));
+  }, [folders]);
+  const selectedSet = new Set(selectedIds);
+  const allSelected = folders.length > 0 && folders.every((folder) => selectedSet.has(folder.id));
+  const selectedWordIds = selectedFolderWordIds(folders, selectedIds);
+  const selectedWordIdSet = new Set(selectedWordIds);
+  const itemById = new Map(items.map((item) => [item.id, item]));
+  const selectedItems = selectedWordIds.map((id) => itemById.get(id)).filter(Boolean);
+  const selectedQuestions = questions.filter((question) => selectedWordIdSet.has(question.itemId));
+  const selectionLabel = `已選 ${selectedIds.length} 個資料夾`;
+  const toggleSelected = (folderId) => setSelectedIds((current) => (
+    current.includes(folderId) ? current.filter((id) => id !== folderId) : [...current, folderId]
+  ));
+  const toggleAll = () => setSelectedIds(allSelected ? [] : folders.map((folder) => folder.id));
   const removeFolder = async (folder) => {
     if (isLearnedFolder(folder)) return;
     if (!window.confirm(`確定要刪除資料夾「${folder.name}」嗎？單字本中的單字不會被刪除。`)) return;
@@ -5240,21 +5491,41 @@ function FoldersPage({ folders, items, loading, error, onSave, onDelete, onOpen 
         </div>
       </div>
       {error && <div className="form-error">{error}</div>}
+      {!!folders.length && (
+        <div className={`bulk-word-actions folder-bulk-actions ${selectedIds.length ? 'has-selection' : ''}`}>
+          <div className="bulk-selection-summary">
+            <ListChecks size={19} />
+            <strong>{selectedIds.length ? selectionLabel : '選取資料夾'}</strong>
+            <button type="button" className="text-link" onClick={toggleAll}>{allSelected ? '取消全選' : '全選'}</button>
+            {!!selectedIds.length && <button type="button" className="text-link muted-link" onClick={() => setSelectedIds([])}>清除選取</button>}
+          </div>
+          <div className="bulk-action-buttons">
+            <button type="button" disabled={!selectedItems.length} onClick={() => onStudy(selectedItems, `${selectionLabel} 學習`)}><BookOpen size={17} /> 學習 {selectedItems.length} 個單字</button>
+            <button type="button" className="primary" disabled={!selectedQuestions.length} onClick={() => onPractice(selectedQuestions, `${selectionLabel} 測驗`)}><Dumbbell size={17} /> 測驗 {selectedItems.length} 個單字</button>
+          </div>
+        </div>
+      )}
       {loading ? <div className="empty">正在載入資料夾...</div> : folders.length ? (
         <div className="folder-grid">
           {folders.map((folder) => {
             const count = folder.wordIds.filter((id) => itemIds.has(id)).length;
             const previews = folder.wordIds.map((id) => items.find((item) => item.id === id)).filter(Boolean).slice(0, 4);
             return (
-              <article className="folder-card" key={folder.id} onClick={() => onOpen(folder.id)}>
+              <article className={`folder-card ${selectedSet.has(folder.id) ? 'selected' : ''}`} key={folder.id} onClick={() => onOpen(folder.id)}>
                 <div className="folder-card-head">
                   <span className="folder-icon"><FolderOpen size={25} /></span>
-                  {isLearnedFolder(folder) ? <span className="system-folder-badge">系統資料夾</span> : (
-                    <div className="card-actions">
+                  <div className="card-actions">
+                    <label className="word-select-control" title="選取資料夾" onClick={(event) => event.stopPropagation()}>
+                      <input type="checkbox" checked={selectedSet.has(folder.id)} onChange={() => toggleSelected(folder.id)} />
+                      <span className="sr-only">選取 {folder.name}</span>
+                    </label>
+                    {isLearnedFolder(folder) ? <span className="system-folder-badge">系統資料夾</span> : (
+                      <>
                       <EditIconButton label="重新命名" onClick={() => setEditingFolder(folder)} />
                       <button className="edit-icon-button delete-icon-button" title="刪除資料夾" aria-label="刪除資料夾" onClick={(event) => { event.stopPropagation(); removeFolder(folder); }}><Trash2 size={15} /></button>
-                    </div>
-                  )}
+                      </>
+                    )}
+                  </div>
                 </div>
                 <h2>{folder.name}</h2>
                 <p>{isLearnedFolder(folder) ? `${count} 個單字 · 不會出現在每日測驗` : `${count} 個單字`}</p>
@@ -5658,12 +5929,14 @@ function WordCard({ item, folders = [], onEdit, onDelete, onOpen, isStarred = fa
 
 export {
   attemptDate,
+  buildStudyAutoPlaySpeechSequence,
   buildJsonImportDraft,
   createRecordsFromImportEntries,
   dailyGrammarSchedule,
   dailyRecognitionSchedule,
   dailyWrongTermQuestions,
   excludeLearnedQuestions,
+  findPreferredSpeechVoice,
   findImportConflict,
   isTransientFirestoreError,
   markReviewDateComplete,
@@ -5688,6 +5961,8 @@ export {
   shouldOfferLearnedFolder,
   shouldAutoPronouncePracticePrompt,
   shouldRecordPracticeResults,
+  shouldShowStudyChinese,
+  selectedFolderWordIds,
 };
 
 if (typeof document !== 'undefined') createRoot(document.getElementById('root')).render(<App />);
