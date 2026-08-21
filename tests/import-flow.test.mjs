@@ -285,6 +285,21 @@ test('a fifth correct daily term answer offers the learned folder', () => {
   assert.equal(helpers.shouldOfferLearnedFolder(store, question, true, true), true);
   assert.equal(helpers.shouldOfferLearnedFolder(store, question, true, false), false);
   assert.equal(helpers.shouldOfferLearnedFolder(store, question, false, true), false);
+  assert.equal(helpers.shouldOfferLearnedFolder({
+    ...store,
+    stats: { [question.id]: { ...store.stats[question.id], learnedFolderPrompted: true } },
+  }, question, true, true), false);
+});
+
+test('answer updates preserve the learned-folder prompt decision', () => {
+  const question = { id: 'term-prompted', kind: 'term', date: '2026-08-20' };
+  const store = {
+    attempts: [],
+    stats: { [question.id]: { total: 5, correct: 5, wrong: 0, learnedFolderPrompted: true } },
+    progress: { [question.id]: { stage: 2, nextDue: '2026-08-21' } },
+  };
+  const next = helpers.recordAnswer(store, question, true);
+  assert.equal(next.stats[question.id].learnedFolderPrompted, true);
 });
 
 test('only explicit daily review tests record accuracy results', () => {
@@ -413,6 +428,16 @@ test('the learned folder is recognized by its fixed id, system key, or reserved 
   assert.equal(helpers.isLearnedFolder({ id: 'legacy-id', systemKey: 'learned', name: 'Other' }), true);
   assert.equal(helpers.isLearnedFolder({ id: 'legacy-id', name: '已學習' }), true);
   assert.equal(helpers.isLearnedFolder({ id: 'folder-1', name: '交通' }), false);
+});
+
+test('the unfamiliar folder is permanent but is not treated as learned', () => {
+  assert.equal(helpers.isUnfamiliarFolder({ id: 'system-unfamiliar', name: 'Other' }), true);
+  assert.equal(helpers.isUnfamiliarFolder({ id: 'legacy-id', systemKey: 'unfamiliar', name: 'Other' }), true);
+  assert.equal(helpers.isUnfamiliarFolder({ id: 'legacy-id', name: '不熟悉' }), true);
+  assert.equal(helpers.isLearnedFolder({ id: 'system-unfamiliar', name: '不熟悉' }), false);
+  assert.equal(helpers.isSystemFolder({ id: 'system-learned' }), true);
+  assert.equal(helpers.isSystemFolder({ id: 'system-unfamiliar' }), true);
+  assert.equal(helpers.isSystemFolder({ id: 'folder-1', name: '交通' }), false);
 });
 
 test('grammar examples parse Korean and Chinese lines into separate examples', () => {
@@ -621,6 +646,13 @@ test('study Chinese visibility follows the global default and per-card reveal', 
   assert.equal(helpers.shouldShowStudyChinese(true, true), true);
   assert.equal(helpers.shouldShowStudyChinese(false, false), true);
   assert.equal(helpers.shouldShowStudyChinese(false, true), true);
+});
+
+test('study card swipes change cards only for deliberate horizontal gestures', () => {
+  assert.equal(helpers.horizontalSwipeDirection({ x: 220, y: 100 }, { x: 120, y: 108 }), 'next');
+  assert.equal(helpers.horizontalSwipeDirection({ x: 100, y: 100 }, { x: 180, y: 92 }), 'previous');
+  assert.equal(helpers.horizontalSwipeDirection({ x: 100, y: 100 }, { x: 125, y: 220 }), '');
+  assert.equal(helpers.horizontalSwipeDirection({ x: 100, y: 100 }, { x: 140, y: 102 }), '');
 });
 
 test('study autoplay follows the global Chinese visibility order', () => {

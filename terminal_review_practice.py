@@ -9,7 +9,8 @@ Optional .env values:
   TERMINAL_PRACTICE_PASSWORD=your-password
 
 Core keys:
-  . toggle automatic audio, 0 toggle star, 5 show/hide Chinese in study mode,
+  . toggle automatic audio, A toggle full-card autoplay, 1/2/3 set card repeats,
+  0 toggle star, * add current word to unfamiliar, 5 show/hide Chinese in study mode,
   8 show/hide answer or details, 4 previous, 6 next,
   + partial check, Enter submit answer, Esc back.
 """
@@ -49,6 +50,8 @@ DAILY_MIXED_MODE = "daily-mixed"
 DAILY_WRONG_REVIEW_MODE = "daily-wrong-review"
 SYSTEM_LEARNED_FOLDER_ID = "system-learned"
 SYSTEM_LEARNED_FOLDER_NAME = "已學習"
+SYSTEM_UNFAMILIAR_FOLDER_ID = "system-unfamiliar"
+SYSTEM_UNFAMILIAR_FOLDER_NAME = "不熟悉"
 KOREAN_NEURAL_VOICE = "ko-KR-SunHiNeural"
 KOREAN_NEURAL_RATE = "-8%"
 
@@ -142,35 +145,52 @@ class FirebaseClient:
             for document in self._list_documents(["users", session.uid, "folders"], session)
         ]
 
-    def ensure_learned_folder(self, session: AuthSession, folders: List[Dict[str, Any]]) -> Dict[str, Any]:
-        learned = next((
+    def ensure_system_folder(
+        self,
+        session: AuthSession,
+        folders: List[Dict[str, Any]],
+        folder_id: str,
+        folder_name: str,
+        system_key: str,
+    ) -> Dict[str, Any]:
+        folder = next((
             folder for folder in folders
-            if folder.get("id") == SYSTEM_LEARNED_FOLDER_ID
-            or folder.get("systemKey") == "learned"
-            or folder.get("name") == SYSTEM_LEARNED_FOLDER_NAME
+            if folder.get("id") == folder_id
+            or folder.get("systemKey") == system_key
+            or folder.get("name") == folder_name
         ), None)
-        if learned:
-            learned["wordIds"] = list(dict.fromkeys(str(item) for item in (learned.get("wordIds") or []) if item))
-            return learned
+        if folder:
+            folder["wordIds"] = list(dict.fromkeys(str(item) for item in (folder.get("wordIds") or []) if item))
+            return folder
         now = utc_now_iso()
-        learned = {
-            "id": SYSTEM_LEARNED_FOLDER_ID,
-            "name": SYSTEM_LEARNED_FOLDER_NAME,
+        folder = {
+            "id": folder_id,
+            "name": folder_name,
             "wordIds": [],
-            "systemKey": "learned",
+            "systemKey": system_key,
             "createdAt": now,
             "updatedAt": now,
         }
-        payload = {"fields": {key: _to_firestore_value(value) for key, value in learned.items()}}
+        payload = {"fields": {key: _to_firestore_value(value) for key, value in folder.items()}}
         self._request_json(
             "PATCH",
-            self._document_url(["users", session.uid, "folders", SYSTEM_LEARNED_FOLDER_ID]),
+            self._document_url(["users", session.uid, "folders", folder_id]),
             payload=payload,
             session=session,
         )
-        return learned
+        return folder
 
-    def add_word_to_learned_folder(self, session: AuthSession, folder_id: str, word_id: str) -> None:
+    def ensure_learned_folder(self, session: AuthSession, folders: List[Dict[str, Any]]) -> Dict[str, Any]:
+        return self.ensure_system_folder(
+            session, folders, SYSTEM_LEARNED_FOLDER_ID, SYSTEM_LEARNED_FOLDER_NAME, "learned"
+        )
+
+    def ensure_unfamiliar_folder(self, session: AuthSession, folders: List[Dict[str, Any]]) -> Dict[str, Any]:
+        return self.ensure_system_folder(
+            session, folders, SYSTEM_UNFAMILIAR_FOLDER_ID, SYSTEM_UNFAMILIAR_FOLDER_NAME, "unfamiliar"
+        )
+
+    def add_word_to_folder(self, session: AuthSession, folder_id: str, word_id: str) -> None:
         document_name = f"projects/{self.project_id}/databases/(default)/documents/users/{session.uid}/folders/{folder_id}"
         commit_url = f"https://firestore.googleapis.com/v1/projects/{self.project_id}/databases/(default)/documents:commit"
         self._request_json("POST", commit_url, payload={"writes": [{
@@ -437,12 +457,31 @@ def mark_word_as_learned(
     learned_word_ids = list(state.get("learnedWordIds") or [])
     if word_id in learned_word_ids:
         return False
-    client.add_word_to_learned_folder(
+    client.add_word_to_folder(
         session,
         str(state.get("learnedFolderId") or SYSTEM_LEARNED_FOLDER_ID),
         word_id,
     )
     state["learnedWordIds"] = [*learned_word_ids, word_id]
+    return True
+
+
+def mark_word_as_unfamiliar(
+    client: FirebaseClient,
+    session: AuthSession,
+    state: Dict[str, Any],
+    word_id: str,
+) -> bool:
+    """Persist an unfamiliar word without changing its review schedule."""
+    unfamiliar_word_ids = list(state.get("unfamiliarWordIds") or [])
+    if word_id in unfamiliar_word_ids:
+        return False
+    client.add_word_to_folder(
+        session,
+        str(state.get("unfamiliarFolderId") or SYSTEM_UNFAMILIAR_FOLDER_ID),
+        word_id,
+    )
+    state["unfamiliarWordIds"] = [*unfamiliar_word_ids, word_id]
     return True
 
 
@@ -645,11 +684,16 @@ def load_data(
         grammar_review = grammar_review_future.result()
 
     learned_folder = client.ensure_learned_folder(session, folders)
+    unfamiliar_folder = client.ensure_unfamiliar_folder(session, folders)
     if not any(folder.get("id") == learned_folder.get("id") for folder in folders):
         folders.append(learned_folder)
+    if not any(folder.get("id") == unfamiliar_folder.get("id") for folder in folders):
+        folders.append(unfamiliar_folder)
     state["folders"] = folders
     state["learnedWordIds"] = learned_folder.get("wordIds") or []
     state["learnedFolderId"] = learned_folder.get("id") or SYSTEM_LEARNED_FOLDER_ID
+    state["unfamiliarWordIds"] = unfamiliar_folder.get("wordIds") or []
+    state["unfamiliarFolderId"] = unfamiliar_folder.get("id") or SYSTEM_UNFAMILIAR_FOLDER_ID
 
     records_by_id: Dict[str, Dict[str, Any]] = {}
     for record in records:
@@ -897,6 +941,7 @@ def record_answer(
     stats = state.setdefault("stats", {})
     old = stats.get(question.id, {})
     stats[question.id] = {
+        **old,
         "total": int(old.get("total", 0)) + 1,
         "correct": int(old.get("correct", 0)) + (1 if correct else 0),
         "wrong": int(old.get("wrong", 0)) + (0 if correct else 1),
@@ -912,6 +957,24 @@ def record_answer(
     attempts = state.setdefault("attempts", [])
     attempts.insert(0, {"id": str(uuid.uuid4()), "questionId": question.id, "correct": correct, "date": today_string(), "time": now})
     del attempts[5000:]
+
+
+def should_offer_learned_folder(
+    state: Dict[str, Any], question: Question, correct: bool, daily_review: bool
+) -> bool:
+    stats = (state.get("stats") or {}).get(question.id, {})
+    return bool(
+        daily_review
+        and correct
+        and question.kind == "term"
+        and not stats.get("learnedFolderPrompted")
+        and int(stats.get("correct", 0)) + 1 >= 5
+    )
+
+
+def mark_learned_folder_prompted(state: Dict[str, Any], question: Question) -> None:
+    stats = state.setdefault("stats", {})
+    stats[question.id] = {**stats.get(question.id, {}), "learnedFolderPrompted": True}
 
 
 def record_daily_round_answer(
@@ -998,6 +1061,21 @@ def card_examples(card: Card) -> List[Dict[str, str]]:
             if ko or zh:
                 examples.append({"ko": ko, "zh": zh})
     return examples
+
+
+def study_auto_audio_steps(card: Card, repeat_count: int) -> List[Tuple[str, int, str, int]]:
+    repeats = min(3, max(1, int(repeat_count or 1)))
+    examples = card_examples(card)
+    cycle: List[Tuple[str, int, str]] = [("front", -1, card.ko)]
+    if examples:
+        cycle.extend(("back", index, example.get("ko", "")) for index, example in enumerate(examples))
+    else:
+        cycle.append(("back", -1, ""))
+    return [
+        (face, example_index, text, repeat_index)
+        for repeat_index in range(1, repeats + 1)
+        for face, example_index, text in cycle
+    ]
 
 
 def cards_in_folder(cards: List[Card], folder: Dict[str, Any]) -> List[Card]:
@@ -1369,6 +1447,21 @@ def read_terminal_key(stdscr: curses.window, *, wide: bool = False) -> Any:
         time.sleep(0.45)
         return curses.KEY_RESIZE
     return key
+
+
+def read_terminal_key_with_timeout(
+    stdscr: curses.window,
+    timeout_ms: int,
+    *,
+    wide: bool = False,
+) -> Any:
+    stdscr.timeout(timeout_ms)
+    try:
+        return read_terminal_key(stdscr, wide=wide)
+    except curses.error:
+        return None
+    finally:
+        stdscr.timeout(-1)
 
 
 def auto_audio_control_label() -> str:
@@ -2022,24 +2115,43 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
     example_index = 0
     message = ""
     spoken_card_id = ""
+    auto_playing = False
+    repeat_count = 1
+    auto_card_id = ""
+    auto_steps: List[Tuple[str, int, str, int]] = []
+    auto_step_index = 0
     set_cursor_visibility(0)
     while True:
         if not cards:
             wait_message(stdscr, "學習模式", "沒有可學習的卡片。")
             return
         card = cards[idx]
-        stdscr.clear()
-        draw_line(stdscr, 1, 2, f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回 {auto_audio_control_label()} 0=星號 5=中文 9=單字 7=例句 +=下一例句 8=詳情 4/6=上下張", curses.A_BOLD)
-        draw_line(stdscr, 2, 2, f"{'★' if card.is_starred else '☆'} {card.ko}", curses.A_BOLD)
-        y = 3
-        if show_chinese:
-            y = draw_wrapped(stdscr, y, 2, stdscr.getmaxyx()[1] - 4, card.zh)
         examples = card_examples(card)
         if examples:
             example_index %= len(examples)
         else:
             example_index = 0
-        if examples:
+        if auto_playing and (auto_card_id != card.id or not auto_steps):
+            auto_card_id = card.id
+            auto_steps = study_auto_audio_steps(card, repeat_count)
+            auto_step_index = 0
+        auto_step = auto_steps[auto_step_index] if auto_playing and auto_steps else None
+        auto_face = auto_step[0] if auto_step else ""
+        if auto_step and auto_step[1] >= 0:
+            example_index = auto_step[1]
+        stdscr.clear()
+        draw_line(
+            stdscr,
+            1,
+            2,
+            f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回 A=自動:{'開' if auto_playing else '關'} 1/2/3=重複:{repeat_count} {auto_audio_control_label()} 0=星號 *=不熟悉 5=中文 9=單字 7=例句 +=下一例句 8=詳情 4/6=上下張",
+            curses.A_BOLD,
+        )
+        draw_line(stdscr, 2, 2, f"{'★' if card.is_starred else '☆'} {card.ko}", curses.A_BOLD)
+        y = 3
+        if show_chinese and auto_face != "front":
+            y = draw_wrapped(stdscr, y, 2, stdscr.getmaxyx()[1] - 4, card.zh)
+        if examples and auto_face != "front":
             draw_line(stdscr, y, 2, "例句:", curses.A_DIM)
             y += 1
             for current_index, example in enumerate(examples):
@@ -2050,7 +2162,7 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
                 marker = "▶ " if current_index == example_index else "  "
                 attr = curses.A_BOLD if current_index == example_index else curses.A_DIM
                 y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, marker + text, attr)
-        if show_details:
+        if show_details and auto_face != "front":
             for meaning in card.meanings:
                 detail_parts = []
                 if show_chinese and meaning.get("zh"):
@@ -2063,7 +2175,91 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
                 y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, f"筆記: {note}", curses.A_DIM)
         if message:
             draw_line(stdscr, y, 2, message, curses.A_BOLD)
+        if auto_step:
+            face_label = "正面" if auto_face == "front" else "反面"
+            draw_line(
+                stdscr,
+                min(stdscr.getmaxyx()[0] - 2, y + 1),
+                2,
+                f"自動播放 · 第 {auto_step[3]}/{repeat_count} 次 · {face_label}",
+                curses.A_DIM,
+            )
         stdscr.refresh()
+        if auto_step:
+            spoken_card_id = card.id
+            if auto_step[2]:
+                played = speak_korean(auto_step[2])
+                if auto_face == "front":
+                    message = "已自動播放韓文單字。" if played else "無法播放韓文單字語音。"
+                else:
+                    message = (
+                        f"已自動播放例句 {auto_step[1] + 1}/{len(examples)}。"
+                        if played
+                        else "無法播放韓文例句語音。"
+                    )
+            else:
+                message = "這張卡片的反面沒有韓文例句。"
+            key = read_terminal_key_with_timeout(stdscr, 420 if auto_step[2] else 900, wide=True)
+            if key == "\x1b":
+                return
+            if key in ("a", "A"):
+                auto_playing = False
+                message = "已暫停完整自動播放。"
+                continue
+            if key in ("1", "2", "3"):
+                repeat_count = int(key)
+                auto_card_id = ""
+                auto_steps = []
+                message = f"每張卡片改為完整播放 {repeat_count} 次，從正面重新開始。"
+                continue
+            if key == "*":
+                try:
+                    added = mark_word_as_unfamiliar(client, session, state, card.id)
+                except RuntimeError as exc:
+                    message = f"加入不熟悉失敗：{friendly_firebase_error(exc)}"
+                else:
+                    message = (
+                        "已加入「不熟悉」。"
+                        if added
+                        else "這個單字已經在「不熟悉」資料夾中。"
+                    )
+                continue
+            if key == "5":
+                show_chinese = not show_chinese
+                message = "已顯示中文。" if show_chinese else "已隱藏中文。"
+            elif key == "4":
+                idx = max(0, idx - 1)
+                show_details = False
+                show_chinese = False
+                example_index = 0
+                auto_card_id = ""
+                auto_steps = []
+                message = ""
+                continue
+            elif key == "6":
+                idx = min(len(cards) - 1, idx + 1)
+                show_details = False
+                show_chinese = False
+                example_index = 0
+                auto_card_id = ""
+                auto_steps = []
+                message = ""
+                continue
+            elif key == curses.KEY_RESIZE and not _AUTO_PLAY_AUDIO:
+                auto_playing = False
+                message = "自動語音已關閉，完整自動播放已暫停。"
+                continue
+            auto_step_index += 1
+            if auto_step_index >= len(auto_steps):
+                idx = (idx + 1) % len(cards)
+                show_details = False
+                show_chinese = False
+                example_index = 0
+                auto_card_id = ""
+                auto_steps = []
+                auto_step_index = 0
+                message = ""
+            continue
         if _AUTO_PLAY_AUDIO and spoken_card_id != card.id:
             spoken_card_id = card.id
             message = (
@@ -2075,7 +2271,19 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
         key = read_terminal_key(stdscr, wide=True)
         if key == "\x1b":
             return
-        if key == "0":
+        if key in ("a", "A"):
+            if not _AUTO_PLAY_AUDIO:
+                message = "請先按 . 開啟自動語音，再啟動完整自動播放。"
+                continue
+            auto_playing = True
+            auto_card_id = ""
+            auto_steps = []
+            auto_step_index = 0
+            message = "開始完整自動播放。"
+        elif key in ("1", "2", "3"):
+            repeat_count = int(key)
+            message = f"每張卡片將完整播放 {repeat_count} 次。"
+        elif key == "0":
             snapshot = _clone_json(state)
             toggle_star(state, card)
             if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
@@ -2083,6 +2291,17 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
                 message = ""
                 continue
             message = "已打星號" if card.is_starred else "已取消星號"
+        elif key == "*":
+            try:
+                added = mark_word_as_unfamiliar(client, session, state, card.id)
+            except RuntimeError as exc:
+                message = f"加入不熟悉失敗：{friendly_firebase_error(exc)}"
+                continue
+            message = (
+                "已加入「不熟悉」。"
+                if added
+                else "這個單字已經在「不熟悉」資料夾中。"
+            )
         elif key == "8":
             show_details = not show_details
         elif key == "5":
@@ -2150,7 +2369,7 @@ def run_daily_recognition(
             revealed = True
         stdscr.erase()
         height, width = stdscr.getmaxyx()
-        star_help = "" if grammar_mode else " 0=星號 -=已學習"
+        star_help = "" if grammar_mode else " 0=星號 *=不熟悉 -=已學習"
         audio_label = "例句"
         draw_line(
             stdscr,
@@ -2304,6 +2523,17 @@ def run_daily_recognition(
                 message = "已加入「已學習」，本次尚未出現的同卡例句也已略過。"
             else:
                 message = "這個單字已經在「已學習」資料夾中。"
+        elif key in ("*", "u", "U") and not grammar_mode:
+            try:
+                added = mark_word_as_unfamiliar(client, session, state, question.item_id)
+            except RuntimeError as exc:
+                message = f"加入不熟悉失敗：{friendly_firebase_error(exc)}"
+                continue
+            message = (
+                "已加入「不熟悉」，仍會照常出現在每日測驗。"
+                if added
+                else "這個單字已經在「不熟悉」資料夾中。"
+            )
         elif key in ("1", "2"):
             if not revealed:
                 message = "請先按 8 翻面查看答案。"
@@ -2399,14 +2629,15 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         height, width = stdscr.getmaxyx()
         record_label = "" if should_record_results else " 不紀錄"
         star_help = " 0=星號" if allow_star else ""
+        unfamiliar_help = " *=不熟悉" if question.source.pos != "文法" else ""
         answer_visible = show_hint or graded
         learned_help = " -=已學習" if answer_visible and daily_review and question.kind == "term" else ""
         if answer_visible and example_audio_enabled:
             example_controls = "7=例句" if question.kind == "grammar-example" else "7=例句 +=下一句"
-            controls = f"Esc=返回{star_help}{learned_help} {example_controls} 4/6=上下題 Enter={'下一題' if graded else '送出'}"
+            controls = f"Esc=返回{star_help}{unfamiliar_help}{learned_help} {example_controls} 4/6=上下題 Enter={'下一題' if graded else '送出'}"
         else:
             prompt_audio_help = " 7=題目" if config["direction"] == "ko-zh" and not answer_visible else ""
-            controls = f"Esc=返回{star_help}{learned_help}{prompt_audio_help} 8=答案 4/6=上下題 +=檢查 Enter={'下一題' if graded else '送出'}"
+            controls = f"Esc=返回{star_help}{unfamiliar_help}{learned_help}{prompt_audio_help} 8=答案 4/6=上下題 +=檢查 Enter={'下一題' if graded else '送出'}"
         draw_line(stdscr, 1, 2, f"測驗{record_label} | {title} | {idx + 1}/{len(questions)}  {auto_audio_control_label()} {controls}", curses.A_BOLD)
         length_hint = f"  ({count_korean_letters(answer)} 個韓文字)" if config["direction"] == "zh-ko" else ""
         star_prefix = f"{'★' if question.source.is_starred else '☆'} " if allow_star else ""
@@ -2525,26 +2756,31 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 continue
             if should_record_results:
                 previous_correct = int((state.get("stats") or {}).get(question.id, {}).get("correct", 0))
-                mark_learned = False
-                if correct and daily_review and question.kind == "term" and previous_correct + 1 >= 5:
+                folder_choice = ""
+                if should_offer_learned_folder(state, question, correct, daily_review):
                     choice = menu(
                         stdscr,
                         f"這次答對後累積 {previous_correct + 1} 次 | {question.ko}",
                         [
-                            ("yes", "是，加入已學習"),
-                            ("no", "否，繼續每日測驗"),
+                            ("learned", "加入已學習"),
+                            ("unfamiliar", "加入不熟悉"),
+                            ("continue", "繼續原本排程"),
                         ],
-                        "加入後不再出現於每日單字測驗與例句聽力，單字卡仍會保留。",
+                        "已學習會排除每日測驗；不熟悉只方便集中複習，仍會照常出題。",
                     )
                     set_cursor_visibility(1)
-                    if choice == "yes":
-                        mark_learned = True
+                    folder_choice = choice or "continue"
                 snapshot = _clone_json(state)
-                if mark_learned:
+                if folder_choice:
+                    mark_learned_folder_prompted(state, question)
+                if folder_choice in ("learned", "unfamiliar"):
                     try:
-                        mark_word_as_learned(client, session, state, question.item_id)
+                        if folder_choice == "learned":
+                            mark_word_as_learned(client, session, state, question.item_id)
+                        else:
+                            mark_word_as_unfamiliar(client, session, state, question.item_id)
                     except RuntimeError as exc:
-                        message = f"加入已學習失敗：{friendly_firebase_error(exc)}"
+                        message = f"加入資料夾失敗：{friendly_firebase_error(exc)}"
                         continue
                 record_answer(state, question, correct)
                 if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
@@ -2556,8 +2792,10 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             last_correct = correct
             retry_diff = False
             if should_record_results:
-                if correct and mark_learned:
+                if correct and folder_choice == "learned":
                     message = "答對，已加入「已學習」，未來每日測驗不再出現。按 Enter 或 6 進入下一題。"
+                elif correct and folder_choice == "unfamiliar":
+                    message = "答對，已加入「不熟悉」，仍會照常出題。按 Enter 或 6 進入下一題。"
                 else:
                     message = "答對，按 Enter 或 6 進入下一題。" if correct else "答錯，已記錄。按 Enter 或 6 進入下一題。"
             else:
@@ -2593,6 +2831,18 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                     message = ""
                     continue
                 message = "已打星號" if question.source.is_starred else "已取消星號"
+            elif key == "*" and question.source.pos != "文法":
+                try:
+                    added = mark_word_as_unfamiliar(client, session, state, question.item_id)
+                except RuntimeError as exc:
+                    message = f"加入不熟悉失敗：{friendly_firebase_error(exc)}"
+                    continue
+                message = (
+                    "已加入「不熟悉」，仍會照常出現在每日測驗。"
+                    if added
+                    else "這個單字已經在「不熟悉」資料夾中。"
+                )
+                result_message = message
             elif key == "-" and daily_review and question.kind == "term":
                 if not answer_visible:
                     message = "請先公佈答案，再加入「已學習」。"
@@ -2606,6 +2856,21 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                     "已加入「已學習」，未來每日測驗不再出現。"
                     if added
                     else "這個單字已經在「已學習」資料夾中。"
+                )
+                result_message = message
+            elif key in ("u", "U") and daily_review and question.kind == "term":
+                if not answer_visible:
+                    message = "請先公佈答案，再加入「不熟悉」。"
+                    continue
+                try:
+                    added = mark_word_as_unfamiliar(client, session, state, question.item_id)
+                except RuntimeError as exc:
+                    message = f"加入不熟悉失敗：{friendly_firebase_error(exc)}"
+                    continue
+                message = (
+                    "已加入「不熟悉」，仍會照常出現在每日測驗。"
+                    if added
+                    else "這個單字已經在「不熟悉」資料夾中。"
                 )
                 result_message = message
             elif key == "8":
@@ -2712,7 +2977,11 @@ def run_folder_notebook(
     folders = sorted(
         state.get("folders") or [],
         key=lambda folder: (
-            0 if folder.get("id") == state.get("learnedFolderId") else 1,
+            0
+            if folder.get("id") == state.get("learnedFolderId")
+            else 1
+            if folder.get("id") == state.get("unfamiliarFolderId")
+            else 2,
             str(folder.get("name") or ""),
         ),
     )
