@@ -4141,10 +4141,24 @@ textarea:focus {
 }
 
 @media (max-width: 600px) {
+  .app {
+    --mobile-nav-height: 66px;
+  }
+
+  .sidebar {
+    height: var(--mobile-nav-height);
+    min-height: var(--mobile-nav-height);
+    padding: 8px 10px;
+  }
+
   .study-page,
   .practice-page {
     padding-right: 8px;
     padding-left: 8px;
+  }
+
+  .study-page {
+    padding-bottom: 0;
   }
 
   .flashcard-wrap {
@@ -4154,7 +4168,8 @@ textarea:focus {
   .flashcard,
   .flashcard.flipped {
     width: 100%;
-    height: clamp(460px, 70svh, 640px);
+    height: calc(100vh - var(--mobile-nav-height));
+    height: calc(100svh - var(--mobile-nav-height));
     min-height: 0;
     max-height: none;
     touch-action: pan-y;
