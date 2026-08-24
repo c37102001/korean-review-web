@@ -2127,12 +2127,12 @@ function shouldShowStudyChinese(hideChineseInitially, cardChineseRevealed) {
   return !hideChineseInitially || cardChineseRevealed;
 }
 
-function horizontalSwipeDirection(start, end, minimumDistance = 48) {
-  if (!start || !end) return '';
-  const deltaX = end.x - start.x;
-  const deltaY = end.y - start.y;
-  if (Math.abs(deltaX) < minimumDistance || Math.abs(deltaX) <= Math.abs(deltaY) * 1.2) return '';
-  return deltaX < 0 ? 'next' : 'previous';
+function studyCardDoubleTapAction(clientX, left, width) {
+  if (!Number.isFinite(clientX) || !Number.isFinite(left) || !Number.isFinite(width) || width <= 0) return '';
+  const position = (clientX - left) / width;
+  if (position < 1 / 3) return 'previous';
+  if (position > 2 / 3) return 'next';
+  return 'flip';
 }
 
 function buildStudyAutoPlaySpeechSequence(item, {
@@ -4239,8 +4239,9 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   const [folderActionSaving, setFolderActionSaving] = useState('');
   const [folderActionError, setFolderActionError] = useState('');
   const wakeLockRef = useRef(null);
-  const swipeStartRef = useRef(null);
-  const suppressCardClickRef = useRef(false);
+  const flashcardWrapRef = useRef(null);
+  const cardPointerRef = useRef({ start: null, lastTap: null });
+  const ignoreTouchClickUntilRef = useRef(0);
   const currentItems = useMemo(() => {
     const latestById = new Map(allItems.map((entry) => [entry.id, entry]));
     return set.items.map((entry) => latestById.get(entry.id) || entry);
@@ -4297,23 +4298,66 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   const goNext = () => {
     moveToIndex((index + 1) % ordered.length);
   };
-  const handleCardTouchStart = (event) => {
-    const touch = event.changedTouches[0];
-    swipeStartRef.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+  const handleCardPointerDown = (event) => {
+    if (event.pointerType !== 'touch' || !event.isPrimary) return;
+    ignoreTouchClickUntilRef.current = Date.now() + 700;
+    const navBottom = document.querySelector('.sidebar')?.getBoundingClientRect().bottom || 0;
+    const mobileCardGap = Number.parseFloat(
+      window.getComputedStyle(document.querySelector('.app')).getPropertyValue('--mobile-card-edge-gap'),
+    ) || 0;
+    const alignedTop = navBottom + mobileCardGap;
+    const cardTop = flashcardWrapRef.current?.getBoundingClientRect().top;
+    cardPointerRef.current.start = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      aligned: Number.isFinite(cardTop) && Math.abs(cardTop - alignedTop) <= 28,
+    };
   };
-  const handleCardTouchEnd = (event) => {
-    const touch = event.changedTouches[0];
-    const direction = horizontalSwipeDirection(
-      swipeStartRef.current,
-      touch ? { x: touch.clientX, y: touch.clientY } : null,
-    );
-    swipeStartRef.current = null;
-    if (!direction) return;
-    suppressCardClickRef.current = true;
-    window.setTimeout(() => { suppressCardClickRef.current = false; }, 300);
+  const stabilizeAlignedCard = () => {
+    window.requestAnimationFrame(() => {
+      const cardTop = flashcardWrapRef.current?.getBoundingClientRect().top;
+      if (!Number.isFinite(cardTop)) return;
+      const navBottom = document.querySelector('.sidebar')?.getBoundingClientRect().bottom || 0;
+      const mobileCardGap = Number.parseFloat(
+        window.getComputedStyle(document.querySelector('.app')).getPropertyValue('--mobile-card-edge-gap'),
+      ) || 0;
+      const adjustment = cardTop - navBottom - mobileCardGap;
+      if (Math.abs(adjustment) > 1 && Math.abs(adjustment) < 80) {
+        window.scrollBy({ top: adjustment, behavior: 'smooth' });
+      }
+    });
+  };
+  const handleCardPointerUp = (event) => {
+    const start = cardPointerRef.current.start;
+    cardPointerRef.current.start = null;
+    if (event.pointerType !== 'touch' || !event.isPrimary || !start || start.pointerId !== event.pointerId) return;
+    const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
+    if (start.aligned && moved <= 24) stabilizeAlignedCard();
+    if (moved > 14) {
+      cardPointerRef.current.lastTap = null;
+      return;
+    }
+    const interactive = event.target instanceof Element
+      ? event.target.closest('button, a, input, textarea, select, [contenteditable="true"]')
+      : null;
+    if (interactive) {
+      cardPointerRef.current.lastTap = null;
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const action = studyCardDoubleTapAction(event.clientX, rect.left, rect.width);
+    const now = Date.now();
+    const lastTap = cardPointerRef.current.lastTap;
+    if (!action || !lastTap || lastTap.action !== action || now - lastTap.time > 380) {
+      cardPointerRef.current.lastTap = { action, time: now };
+      return;
+    }
+    cardPointerRef.current.lastTap = null;
     setAutoPlay(false);
-    if (direction === 'next') goNext();
-    else goPrev();
+    if (action === 'next') goNext();
+    else if (action === 'previous') goPrev();
+    else toggleCard();
   };
   const jumpToItem = (targetItem) => {
     const targetIndex = currentItems.findIndex((entry) => entry.id === targetItem.id);
@@ -4522,13 +4566,13 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
         {onBack && <button className="study-back-button" onClick={onBack}><ChevronLeft size={18} /> 返回上一層</button>}
       </div>
       {folderActionError && <div className="form-error study-folder-error">{folderActionError}</div>}
-      <div className="flashcard-wrap">
+      <div className="flashcard-wrap" ref={flashcardWrapRef}>
         <button className="card-arrow left" onClick={goPrev} aria-label="上一張"><ChevronLeft size={26} /></button>
         <div className={`flashcard ${flipped ? 'flipped' : ''} ${instantReset ? 'instant-reset' : ''}`} role="button" tabIndex={0}
-          onClick={() => { if (!suppressCardClickRef.current) toggleCard(); }}
-          onTouchStart={handleCardTouchStart}
-          onTouchEnd={handleCardTouchEnd}
-          onTouchCancel={() => { swipeStartRef.current = null; }}
+          onClick={() => { if (Date.now() > ignoreTouchClickUntilRef.current) toggleCard(); }}
+          onPointerDown={handleCardPointerDown}
+          onPointerUp={handleCardPointerUp}
+          onPointerCancel={() => { cardPointerRef.current.start = null; cardPointerRef.current.lastTap = null; }}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCard(); } }}
         >
           <div className="study-folder-actions" onClick={(event) => event.stopPropagation()}>
@@ -6438,7 +6482,7 @@ export {
   formatPairLines,
   normalizeGrammarNote,
   grammarPracticeQuestions,
-  horizontalSwipeDirection,
+  studyCardDoubleTapAction,
   normalizeFolder,
   isLearnedFolder,
   isUnfamiliarFolder,

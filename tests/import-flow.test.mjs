@@ -723,11 +723,11 @@ test('study Chinese visibility follows the global default and per-card reveal', 
   assert.equal(helpers.shouldShowStudyChinese(false, true), true);
 });
 
-test('study card swipes change cards only for deliberate horizontal gestures', () => {
-  assert.equal(helpers.horizontalSwipeDirection({ x: 220, y: 100 }, { x: 120, y: 108 }), 'next');
-  assert.equal(helpers.horizontalSwipeDirection({ x: 100, y: 100 }, { x: 180, y: 92 }), 'previous');
-  assert.equal(helpers.horizontalSwipeDirection({ x: 100, y: 100 }, { x: 125, y: 220 }), '');
-  assert.equal(helpers.horizontalSwipeDirection({ x: 100, y: 100 }, { x: 140, y: 102 }), '');
+test('study card double taps map its left, center, and right thirds to card actions', () => {
+  assert.equal(helpers.studyCardDoubleTapAction(110, 100, 300), 'previous');
+  assert.equal(helpers.studyCardDoubleTapAction(250, 100, 300), 'flip');
+  assert.equal(helpers.studyCardDoubleTapAction(390, 100, 300), 'next');
+  assert.equal(helpers.studyCardDoubleTapAction(250, 100, 0), '');
 });
 
 test('study autoplay follows the global Chinese visibility order', () => {
