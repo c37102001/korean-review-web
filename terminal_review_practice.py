@@ -203,6 +203,19 @@ class FirebaseClient:
             },
         }]}, session=session)
 
+    def remove_word_from_folder(self, session: AuthSession, folder_id: str, word_id: str) -> None:
+        document_name = f"projects/{self.project_id}/databases/(default)/documents/users/{session.uid}/folders/{folder_id}"
+        commit_url = f"https://firestore.googleapis.com/v1/projects/{self.project_id}/databases/(default)/documents:commit"
+        self._request_json("POST", commit_url, payload={"writes": [{
+            "transform": {
+                "document": document_name,
+                "fieldTransforms": [
+                    {"fieldPath": "wordIds", "removeAllFromArray": {"values": [_to_firestore_value(word_id)]}},
+                    {"fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"},
+                ],
+            },
+        }]}, session=session)
+
     def list_grammar_notes(self, session: AuthSession) -> List[Dict[str, Any]]:
         return [
             _parse_firestore_fields(document.get("fields", {}))
@@ -483,6 +496,34 @@ def mark_word_as_unfamiliar(
     )
     state["unfamiliarWordIds"] = [*unfamiliar_word_ids, word_id]
     return True
+
+
+def toggle_word_as_unfamiliar(
+    client: FirebaseClient,
+    session: AuthSession,
+    state: Dict[str, Any],
+    word_id: str,
+) -> bool:
+    """Toggle unfamiliar membership and return the new membership state."""
+    unfamiliar_word_ids = list(state.get("unfamiliarWordIds") or [])
+    folder_id = str(state.get("unfamiliarFolderId") or SYSTEM_UNFAMILIAR_FOLDER_ID)
+    if word_id in unfamiliar_word_ids:
+        client.remove_word_from_folder(session, folder_id, word_id)
+        state["unfamiliarWordIds"] = [item for item in unfamiliar_word_ids if item != word_id]
+        now_unfamiliar = False
+    else:
+        client.add_word_to_folder(session, folder_id, word_id)
+        state["unfamiliarWordIds"] = [*unfamiliar_word_ids, word_id]
+        now_unfamiliar = True
+    for folder in state.get("folders") or []:
+        if str(folder.get("id")) != folder_id:
+            continue
+        folder_word_ids = [str(item) for item in (folder.get("wordIds") or []) if item]
+        folder["wordIds"] = list(dict.fromkeys(
+            [*folder_word_ids, word_id] if now_unfamiliar else [item for item in folder_word_ids if item != word_id]
+        ))
+        break
+    return now_unfamiliar
 
 
 def empty_state() -> Dict[str, Any]:
@@ -2214,14 +2255,14 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
                 continue
             if key == "*":
                 try:
-                    added = mark_word_as_unfamiliar(client, session, state, card.id)
+                    now_unfamiliar = toggle_word_as_unfamiliar(client, session, state, card.id)
                 except RuntimeError as exc:
-                    message = f"加入不熟悉失敗：{friendly_firebase_error(exc)}"
+                    message = f"更新不熟悉失敗：{friendly_firebase_error(exc)}"
                 else:
                     message = (
                         "已加入「不熟悉」。"
-                        if added
-                        else "這個單字已經在「不熟悉」資料夾中。"
+                        if now_unfamiliar
+                        else "已移出「不熟悉」。"
                     )
                 continue
             if key == "5":
@@ -2293,14 +2334,14 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             message = "已打星號" if card.is_starred else "已取消星號"
         elif key == "*":
             try:
-                added = mark_word_as_unfamiliar(client, session, state, card.id)
+                now_unfamiliar = toggle_word_as_unfamiliar(client, session, state, card.id)
             except RuntimeError as exc:
-                message = f"加入不熟悉失敗：{friendly_firebase_error(exc)}"
+                message = f"更新不熟悉失敗：{friendly_firebase_error(exc)}"
                 continue
             message = (
                 "已加入「不熟悉」。"
-                if added
-                else "這個單字已經在「不熟悉」資料夾中。"
+                if now_unfamiliar
+                else "已移出「不熟悉」。"
             )
         elif key == "8":
             show_details = not show_details
@@ -2525,14 +2566,14 @@ def run_daily_recognition(
                 message = "這個單字已經在「已學習」資料夾中。"
         elif key in ("*", "u", "U") and not grammar_mode:
             try:
-                added = mark_word_as_unfamiliar(client, session, state, question.item_id)
+                now_unfamiliar = toggle_word_as_unfamiliar(client, session, state, question.item_id)
             except RuntimeError as exc:
-                message = f"加入不熟悉失敗：{friendly_firebase_error(exc)}"
+                message = f"更新不熟悉失敗：{friendly_firebase_error(exc)}"
                 continue
             message = (
                 "已加入「不熟悉」，仍會照常出現在每日測驗。"
-                if added
-                else "這個單字已經在「不熟悉」資料夾中。"
+                if now_unfamiliar
+                else "已移出「不熟悉」。"
             )
         elif key in ("1", "2"):
             if not revealed:
@@ -2833,14 +2874,14 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 message = "已打星號" if question.source.is_starred else "已取消星號"
             elif key == "*" and question.source.pos != "文法":
                 try:
-                    added = mark_word_as_unfamiliar(client, session, state, question.item_id)
+                    now_unfamiliar = toggle_word_as_unfamiliar(client, session, state, question.item_id)
                 except RuntimeError as exc:
-                    message = f"加入不熟悉失敗：{friendly_firebase_error(exc)}"
+                    message = f"更新不熟悉失敗：{friendly_firebase_error(exc)}"
                     continue
                 message = (
                     "已加入「不熟悉」，仍會照常出現在每日測驗。"
-                    if added
-                    else "這個單字已經在「不熟悉」資料夾中。"
+                    if now_unfamiliar
+                    else "已移出「不熟悉」。"
                 )
                 result_message = message
             elif key == "-" and daily_review and question.kind == "term":
@@ -3119,7 +3160,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                             stdscr,
                             "今日答錯題目已完成",
                             [("again", "再練一次"), ("back", "返回主選單")],
-                            "這組練習不會寫入答對率或間隔排程。",
+                            "這組練習不會寫入熟悉分數或間隔排程。",
                         )
                         if replay != "again":
                             break

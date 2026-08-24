@@ -415,11 +415,38 @@ test('folders keep unique word id references without copying word content', () =
     {
       id: 'folder-1',
       name: '交通',
+      tag: '',
       wordIds: ['word-1', 'word-2'],
       createdAt: '2026-08-17T00:00:00.000Z',
       updatedAt: '',
       systemKey: '',
     },
+  );
+});
+
+test('folders are grouped by tag and untagged folders share a fallback group', () => {
+  const groups = helpers.groupFoldersByTag([
+    { id: 'one', name: '動詞', tag: 'TOPIK', wordIds: [] },
+    { id: 'two', name: '名詞', tag: 'TOPIK', wordIds: [] },
+    { id: 'three', name: '其他', tag: '', wordIds: [] },
+  ]);
+
+  assert.deepEqual(groups.map((group) => [group.label, group.folders.map((folder) => folder.id)]), [
+    ['TOPIK', ['one', 'two']],
+    ['無標籤', ['three']],
+  ]);
+  assert.equal(helpers.folderTagLabel({ tag: '  旅遊  ' }), '旅遊');
+  assert.equal(helpers.folderTagLabel({}), '無標籤');
+});
+
+test('folder tag selection selects the whole group and toggles it off', () => {
+  assert.deepEqual(
+    helpers.toggleFolderGroupSelection(['outside', 'one'], ['one', 'two']),
+    ['outside', 'one', 'two'],
+  );
+  assert.deepEqual(
+    helpers.toggleFolderGroupSelection(['outside', 'one', 'two'], ['one', 'two']),
+    ['outside'],
   );
 });
 
@@ -619,6 +646,54 @@ test('word-only search ignores matches that appear only inside card details', ()
   assert.equal(helpers.itemMatchesSearch(market, '장'.normalize('NFD'), 'word'), true);
 });
 
+test('Korean alphabetical sorting applies to the current filtered word set', () => {
+  const filtered = [
+    { id: 'three', ko: '나타나다', zh: '出現' },
+    { id: 'one', ko: '가다', zh: '去' },
+    { id: 'two', ko: '가르치다', zh: '教' },
+  ];
+
+  filtered.sort(helpers.compareItemsByKoreanAlphabet);
+
+  assert.deepEqual(filtered.map((entry) => entry.ko), ['가다', '가르치다', '나타나다']);
+});
+
+test('familiarity score subtracts wrong answers and uses the new level thresholds', () => {
+  assert.equal(helpers.familiarityScore({ correct: 3, wrong: 1, total: 4 }), 2);
+  assert.equal(helpers.familiarityScore({ correct: 1, wrong: 3, total: 4 }), -2);
+  assert.equal(helpers.familiarityScore({ correct: 4, total: 5 }), 3);
+
+  assert.equal(helpers.familiarityLevel(-1), '不熟悉');
+  assert.equal(helpers.familiarityLevel(0), '學習中');
+  assert.equal(helpers.familiarityLevel(2), '學習中');
+  assert.equal(helpers.familiarityLevel(3), '熟悉');
+  assert.equal(helpers.familiarityLevel(4), '熟悉');
+  assert.equal(helpers.familiarityLevel(5), '已熟悉');
+});
+
+test('familiarity filtering supports multiple selected levels', () => {
+  const selected = ['不熟悉', '學習中'];
+  assert.equal(helpers.matchesFamiliarityLevels('不熟悉', selected), true);
+  assert.equal(helpers.matchesFamiliarityLevels('學習中', selected), true);
+  assert.equal(helpers.matchesFamiliarityLevels('熟悉', selected), false);
+  assert.equal(helpers.matchesFamiliarityLevels('已熟悉', selected), false);
+  assert.equal(helpers.matchesFamiliarityLevels('已熟悉', []), true);
+});
+
+test('folder filtering combines selected folders without duplicating words', () => {
+  const folders = [
+    { id: 'verbs', wordIds: ['one', 'shared'] },
+    { id: 'topik', wordIds: ['shared', 'two'] },
+    { id: 'unused', wordIds: ['three'] },
+  ];
+
+  assert.equal(helpers.folderFilterWordIds(folders, []), null);
+  assert.deepEqual(
+    [...helpers.folderFilterWordIds(folders, ['verbs', 'topik'])].sort(),
+    ['one', 'shared', 'two'],
+  );
+});
+
 test('saved speech voices resolve only within the requested language', () => {
   const voices = [
     { name: 'Natural', lang: 'en-US', voiceURI: 'english-natural' },
@@ -694,21 +769,6 @@ test('study autoplay follows the global Chinese visibility order', () => {
     helpers.buildStudyAutoPlaySpeechSequence(card, { voiceRepeatCount: 99 }).length,
     hidden.length * 3,
   );
-});
-
-test('selected folders combine word references in folder order without duplicates', () => {
-  const folders = [
-    { id: 'folder-a', wordIds: ['word-1', 'word-2'] },
-    { id: 'folder-b', wordIds: ['word-2', 'word-3'] },
-    { id: 'folder-c', wordIds: ['word-4'] },
-  ];
-
-  assert.deepEqual(
-    helpers.selectedFolderWordIds(folders, ['folder-a', 'folder-b']),
-    ['word-1', 'word-2', 'word-3'],
-  );
-  assert.deepEqual(helpers.selectedFolderWordIds(folders, ['folder-c']), ['word-4']);
-  assert.deepEqual(helpers.selectedFolderWordIds(folders, []), []);
 });
 
 test('daily grammar review stays completed for the day and skips incomplete examples', () => {

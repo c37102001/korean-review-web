@@ -5,6 +5,7 @@ import {
   BookOpen,
   CalendarDays,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -51,6 +52,7 @@ const SYSTEM_LEARNED_FOLDER_ID = 'system-learned';
 const SYSTEM_LEARNED_FOLDER_NAME = '已學習';
 const SYSTEM_UNFAMILIAR_FOLDER_ID = 'system-unfamiliar';
 const SYSTEM_UNFAMILIAR_FOLDER_NAME = '不熟悉';
+const UNTAGGED_FOLDER_LABEL = '無標籤';
 const CONTENT_SCHEMA_VERSION = 2;
 const FIRESTORE_SCHEMA_VERSION = 3;
 const PROGRESS_SHARD_COUNT = 16;
@@ -254,6 +256,7 @@ function normalizeFolder(folder, fallbackId = '') {
   return {
     id: String(folder?.id || fallbackId),
     name: String(folder?.name || '').trim(),
+    tag: String(folder?.tag || '').trim(),
     wordIds: [...new Set((Array.isArray(folder?.wordIds) ? folder.wordIds : []).filter(Boolean).map(String))],
     createdAt: String(folder?.createdAt || ''),
     updatedAt: String(folder?.updatedAt || ''),
@@ -261,17 +264,32 @@ function normalizeFolder(folder, fallbackId = '') {
   };
 }
 
-function selectedFolderWordIds(folders, selectedFolderIds) {
-  const selectedSet = new Set(selectedFolderIds || []);
-  const seen = new Set();
-  return (folders || []).flatMap((folder) => {
-    if (!selectedSet.has(folder.id)) return [];
-    return (folder.wordIds || []).filter((wordId) => {
-      if (!wordId || seen.has(wordId)) return false;
-      seen.add(wordId);
-      return true;
-    });
+function folderTagLabel(folder) {
+  return String(folder?.tag || '').trim() || UNTAGGED_FOLDER_LABEL;
+}
+
+function groupFoldersByTag(folders = []) {
+  const groups = new Map();
+  folders.forEach((folder) => {
+    const label = folderTagLabel(folder);
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(folder);
   });
+  return [...groups.entries()]
+    .map(([label, groupedFolders]) => ({ label, folders: groupedFolders }))
+    .sort((left, right) => {
+      if (left.label === UNTAGGED_FOLDER_LABEL) return 1;
+      if (right.label === UNTAGGED_FOLDER_LABEL) return -1;
+      return left.label.localeCompare(right.label, 'zh-TW');
+    });
+}
+
+function toggleFolderGroupSelection(selectedFolderIds = [], groupFolderIds = []) {
+  const selected = new Set(selectedFolderIds);
+  const allSelected = groupFolderIds.length > 0 && groupFolderIds.every((folderId) => selected.has(folderId));
+  if (allSelected) groupFolderIds.forEach((folderId) => selected.delete(folderId));
+  else groupFolderIds.forEach((folderId) => selected.add(folderId));
+  return [...selected];
 }
 
 function isLearnedFolder(folder) {
@@ -356,13 +374,13 @@ function useWordFolders(user) {
 
   const save = useCallback(async (input) => {
     if (!user) throw new Error('尚未登入');
-    if (isSystemFolder(input)) throw new Error(`系統資料夾「${input.name || '系統資料夾'}」無法改名`);
-    const name = String(input?.name || '').trim();
+    const id = input?.id || crypto.randomUUID();
+    const existing = state.folders.find((folder) => folder.id === id);
+    const systemFolder = isSystemFolder(existing || input);
+    const name = systemFolder ? String(existing?.name || input?.name || '').trim() : String(input?.name || '').trim();
     if (!name) throw new Error('請輸入資料夾名稱');
     const duplicate = state.folders.find((folder) => folder.name.toLocaleLowerCase() === name.toLocaleLowerCase() && folder.id !== input?.id);
     if (duplicate) throw new Error(`已經有名為「${name}」的資料夾`);
-    const id = input?.id || crypto.randomUUID();
-    const existing = state.folders.find((folder) => folder.id === id);
     const now = new Date().toISOString();
     const folder = normalizeFolder({
       ...existing,
@@ -422,7 +440,7 @@ function useWordFolders(user) {
     });
   }, [user]);
 
-  const createFolderAndAssign = useCallback(async (nameInput, wordIds, additionalFolderIds = []) => {
+  const createFolderAndAssign = useCallback(async (nameInput, wordIds, additionalFolderIds = [], tagInput = '') => {
     if (!user) throw new Error('尚未登入');
     const name = String(nameInput || '').trim();
     if (!name) throw new Error('請輸入新資料夾名稱');
@@ -439,6 +457,7 @@ function useWordFolders(user) {
     const folder = normalizeFolder({
       id: crypto.randomUUID(),
       name,
+      tag: String(tagInput || '').trim(),
       wordIds: ids,
       createdAt: now,
       updatedAt: now,
@@ -1514,12 +1533,50 @@ async function deleteLearningRecord(uid, recordId, folders = []) {
 
 function getStats(store, id) {
   const stats = store.stats[id] || { total: 0, correct: 0, wrong: 0 };
-  const rate = stats.total ? Math.round((stats.correct / stats.total) * 100) : 0;
-  let level = '學習中';
-  if (stats.total >= 2 && rate < 55) level = '不熟悉';
-  if (stats.total >= 3 && rate >= 75) level = '熟悉';
-  if (stats.total >= 6 && rate >= 90) level = '已熟練';
-  return { ...stats, rate, level };
+  const score = familiarityScore(stats);
+  return { ...stats, score, level: familiarityLevel(score) };
+}
+
+function familiarityScore(stats = {}) {
+  const correct = Number(stats.correct) || 0;
+  const wrong = Number.isFinite(Number(stats.wrong))
+    ? Number(stats.wrong)
+    : Math.max(0, (Number(stats.total) || 0) - correct);
+  return correct - wrong;
+}
+
+function familiarityLevel(score) {
+  if (score < 0) return '不熟悉';
+  if (score >= 5) return '已熟悉';
+  if (score >= 3) return '熟悉';
+  return '學習中';
+}
+
+const FAMILIARITY_LEVELS = ['不熟悉', '學習中', '熟悉', '已熟悉'];
+
+function matchesFamiliarityLevels(level, selectedLevels = []) {
+  return !selectedLevels.length || selectedLevels.includes(level);
+}
+
+function folderFilterWordIds(folders = [], selectedFolderIds = []) {
+  if (!selectedFolderIds.length) return null;
+  const selected = new Set(selectedFolderIds);
+  return new Set(
+    folders
+      .filter((folder) => selected.has(folder.id))
+      .flatMap((folder) => folder.wordIds || []),
+  );
+}
+
+function aggregateItemStats(store, questionIds) {
+  const stats = questionIds.map((id) => getStats(store, id));
+  const total = stats.reduce((sum, current) => sum + (current.total || 0), 0);
+  const correct = stats.reduce((sum, current) => sum + (current.correct || 0), 0);
+  const wrong = stats.reduce((sum, current) => (
+    sum + (Number.isFinite(Number(current.wrong)) ? Number(current.wrong) : Math.max(0, (current.total || 0) - (current.correct || 0)))
+  ), 0);
+  const score = correct - wrong;
+  return { total, correct, wrong, score, level: familiarityLevel(score) };
 }
 
 function getProgress(store, question) {
@@ -2303,10 +2360,10 @@ function App() {
     home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} recognitionQuestions={todayRecognitionQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} />,
     notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
-    study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onMarkLearned={(itemId) => folders.addWords(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onMarkUnfamiliar={(itemId) => folders.addWords(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
-    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onMarkLearned={(itemId) => folders.addWords(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onMarkUnfamiliar={(itemId) => folders.addWords(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
+    study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onMarkLearned={(itemId) => folders.addWords(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
+    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onMarkLearned={(itemId) => folders.addWords(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
     notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
-    folders: <FoldersPage folders={folders.folders} items={items} questions={questions} loading={folders.loading} error={folders.error} onSave={folders.save} onDelete={folders.remove} onOpen={openFolder} onStudy={startStudy} onPractice={startPractice} />,
+    folders: <FoldersPage folders={folders.folders} items={items} loading={folders.loading} error={folders.error} onSave={folders.save} onDelete={folders.remove} onOpen={openFolder} />,
     folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
     grammar: <GrammarNotebookPage notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} onPractice={startPractice} />,
   };
@@ -2541,7 +2598,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
   const answeredToday = store.attempts.filter((attempt) => attemptDate(attempt) === today);
   const correctToday = answeredToday.filter((attempt) => attempt.correct).length;
   const weak = questions.filter((question) => getStats(store, question.id).level === '不熟悉').slice(0, 6);
-  const mastered = questions.filter((question) => getStats(store, question.id).level === '已熟練').length;
+  const mastered = questions.filter((question) => getStats(store, question.id).level === '已熟悉').length;
   const progress = totalPending ? Math.max(0, Math.round((answeredToday.length / (answeredToday.length + totalPending)) * 100)) : 100;
   const startNextDailyTask = () => {
     if (due.length) onPractice(due, '今日測驗', { dueOnly: true, dailyReview: true });
@@ -2576,7 +2633,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
       <div className="stats-grid">
         <Stat icon={<Target />} label="待測驗" value={`${totalPending} 題`} />
         <Stat icon={<Check />} label="今日答對" value={`${correctToday}/${answeredToday.length || 0}`} />
-        <Stat icon={<Trophy />} label="已熟練" value={`${mastered} 題`} />
+        <Stat icon={<Trophy />} label="已熟悉" value={`${mastered} 題`} />
         <Stat icon={<Flame />} label="不熟悉" value={`${weak.length} 題`} />
       </div>
 
@@ -3627,6 +3684,7 @@ function mergeEditedItem(original, manual, allItems = []) {
     updatedAt,
     total,
     rate,
+    score,
     level,
     ...content
   } = original;
@@ -3647,6 +3705,7 @@ function buildNotebookExport(items) {
       updatedAt,
       total,
       rate,
+      score,
       level,
       zh,
       ...content
@@ -3689,11 +3748,182 @@ function itemMatchesSearch(item, query, scope = 'all') {
   return itemSearchText(item).normalize('NFC').includes(normalizedQuery);
 }
 
+const koreanWordCollator = new Intl.Collator('ko-KR', {
+  sensitivity: 'base',
+  numeric: true,
+});
+
+function compareItemsByKoreanAlphabet(left, right) {
+  const koreanOrder = koreanWordCollator.compare(
+    String(left?.ko || '').normalize('NFC'),
+    String(right?.ko || '').normalize('NFC'),
+  );
+  if (koreanOrder) return koreanOrder;
+
+  const chineseOrder = String(left?.zh || '').localeCompare(String(right?.zh || ''), 'zh-TW');
+  if (chineseOrder) return chineseOrder;
+  return String(left?.id || '').localeCompare(String(right?.id || ''));
+}
+
 function SearchScopeControl({ value, onChange }) {
   return (
     <div className="search-scope segmented" aria-label="搜尋範圍">
       <button type="button" className={value === 'all' ? 'active' : ''} aria-pressed={value === 'all'} onClick={() => onChange('all')}>全部內容</button>
       <button type="button" className={value === 'word' ? 'active' : ''} aria-pressed={value === 'word'} onClick={() => onChange('word')}>單字本身</button>
+    </div>
+  );
+}
+
+function MultiSelectFilter({ label, options, selectedValues, onToggle, onClear }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const selectedSet = new Set(selectedValues);
+  const selectedOptions = options.filter((option) => selectedSet.has(option.value));
+  const summary = !selectedOptions.length
+    ? '全部'
+    : selectedOptions.length === 1
+      ? selectedOptions[0].label
+      : `已選 ${selectedOptions.length} 項`;
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnOutside = (event) => {
+      if (!rootRef.current?.contains(event.target)) setOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div className={`multi-select-filter ${open ? 'open' : ''}`} ref={rootRef}>
+      <button
+        type="button"
+        className="multi-select-trigger"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span><small>{label}</small><strong>{summary}</strong></span>
+        <ChevronDown size={17} />
+      </button>
+      {open && (
+        <div className="multi-select-menu" role="group" aria-label={`${label}篩選`}>
+          <div className="multi-select-menu-head">
+            <strong>{label}</strong>
+            {!!selectedValues.length && <button type="button" className="text-link" onClick={onClear}>清除</button>}
+          </div>
+          <div className="multi-select-options">
+            {options.map((option) => (
+              <label key={option.value} className={selectedSet.has(option.value) ? 'selected' : ''}>
+                <input type="checkbox" checked={selectedSet.has(option.value)} onChange={() => onToggle(option.value)} />
+                <span>{option.label}</span>
+                {option.count !== undefined && <small>{option.count}</small>}
+              </label>
+            ))}
+            {!options.length && <span className="muted-note">沒有可選項目</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IndeterminateCheckbox({ checked, indeterminate, onChange }) {
+  const inputRef = useRef(null);
+  useEffect(() => {
+    if (inputRef.current) inputRef.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+  return <input ref={inputRef} type="checkbox" checked={checked} onChange={onChange} />;
+}
+
+function GroupedFolderMultiSelect({ folders, selectedValues, onToggle, onToggleGroup, onClear }) {
+  const [open, setOpen] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState(new Set());
+  const rootRef = useRef(null);
+  const selectedSet = new Set(selectedValues);
+  const groups = groupFoldersByTag(folders);
+  const summary = !selectedValues.length ? '全部' : `已選 ${selectedValues.length} 項`;
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnOutside = (event) => {
+      if (!rootRef.current?.contains(event.target)) setOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  const toggleExpanded = (label) => setExpandedGroups((current) => {
+    const next = new Set(current);
+    if (next.has(label)) next.delete(label);
+    else next.add(label);
+    return next;
+  });
+
+  return (
+    <div className={`multi-select-filter ${open ? 'open' : ''}`} ref={rootRef}>
+      <button type="button" className="multi-select-trigger" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <span><small>資料夾</small><strong>{summary}</strong></span>
+        <ChevronDown size={17} />
+      </button>
+      {open && (
+        <div className="multi-select-menu grouped-folder-menu" role="group" aria-label="資料夾篩選">
+          <div className="multi-select-menu-head">
+            <strong>依標籤選擇資料夾</strong>
+            {!!selectedValues.length && <button type="button" className="text-link" onClick={onClear}>清除</button>}
+          </div>
+          <div className="folder-filter-groups">
+            {groups.map((group) => {
+              const folderIds = group.folders.map((folder) => folder.id);
+              const selectedCount = folderIds.filter((id) => selectedSet.has(id)).length;
+              const expanded = expandedGroups.has(group.label);
+              return (
+                <section className="folder-filter-group" key={group.label}>
+                  <div className="folder-filter-group-head">
+                    <button type="button" className="folder-group-toggle" aria-expanded={expanded} onClick={() => toggleExpanded(group.label)} title={expanded ? '收合資料夾' : '展開資料夾'}>
+                      <ChevronRight size={16} />
+                    </button>
+                    <label>
+                      <IndeterminateCheckbox
+                        checked={selectedCount === folderIds.length && folderIds.length > 0}
+                        indeterminate={selectedCount > 0 && selectedCount < folderIds.length}
+                        onChange={() => onToggleGroup(folderIds)}
+                      />
+                      <span>{group.label}</span>
+                      <small>{selectedCount ? `${selectedCount} / ${folderIds.length}` : folderIds.length}</small>
+                    </label>
+                  </div>
+                  {expanded && (
+                    <div className="multi-select-options folder-group-options">
+                      {group.folders.map((folder) => (
+                        <label key={folder.id} className={selectedSet.has(folder.id) ? 'selected' : ''}>
+                          <input type="checkbox" checked={selectedSet.has(folder.id)} onChange={() => onToggle(folder.id)} />
+                          <span>{folder.name}</span>
+                          <small>{(folder.wordIds || []).length}</small>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+            {!groups.length && <span className="muted-note">沒有資料夾</span>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3986,7 +4216,7 @@ function RelatedPreviewCard({ item, position }) {
   );
 }
 
-function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onBack, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onMarkLearned, onMarkUnfamiliar }) {
+function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onBack, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onMarkLearned, onToggleUnfamiliar }) {
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [filter, setFilter] = useState('全部');
@@ -4005,6 +4235,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   const [editingItem, setEditingItem] = useState(null);
   const [markedLearnedIds, setMarkedLearnedIds] = useState(() => new Set());
   const [markedUnfamiliarIds, setMarkedUnfamiliarIds] = useState(() => new Set());
+  const [removedUnfamiliarIds, setRemovedUnfamiliarIds] = useState(() => new Set());
   const [folderActionSaving, setFolderActionSaving] = useState('');
   const [folderActionError, setFolderActionError] = useState('');
   const wakeLockRef = useRef(null);
@@ -4025,7 +4256,9 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   const item = ordered[index % Math.max(ordered.length, 1)];
   const isStarred = !!item && (store.starred || []).includes(item.id);
   const isLearned = !!item && (learnedWordIds.has(item.id) || markedLearnedIds.has(item.id));
-  const isUnfamiliar = !!item && (unfamiliarWordIds.has(item.id) || markedUnfamiliarIds.has(item.id));
+  const isUnfamiliar = !!item
+    && !removedUnfamiliarIds.has(item.id)
+    && (unfamiliarWordIds.has(item.id) || markedUnfamiliarIds.has(item.id));
   const showChinese = shouldShowStudyChinese(hideChineseInitially, cardChineseRevealed);
   const frontShowsChinese = frontSide === 'zh' && showChinese;
   const frontText = frontShowsChinese ? item?.zh : item?.ko;
@@ -4040,6 +4273,10 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
     playExampleVoice,
     voiceRepeatCount,
   }), [item, frontSide, hideChineseInitially, playExampleVoice, voiceRepeatCount]);
+  useEffect(() => {
+    setMarkedUnfamiliarIds((current) => new Set([...current].filter((id) => !unfamiliarWordIds.has(id))));
+    setRemovedUnfamiliarIds((current) => new Set([...current].filter((id) => unfamiliarWordIds.has(id))));
+  }, [unfamiliarWordIds]);
   const toggleCard = () => {
     const next = !flipped;
     setFlipped(next);
@@ -4089,8 +4326,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   };
   const markCurrentFolder = async (folderType) => {
     if (!item || folderActionSaving) return;
-    const alreadyAdded = folderType === 'learned' ? isLearned : isUnfamiliar;
-    if (alreadyAdded) return;
+    if (folderType === 'learned' && isLearned) return;
     setFolderActionSaving(folderType);
     setFolderActionError('');
     try {
@@ -4098,8 +4334,22 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
         await onMarkLearned(item.id);
         setMarkedLearnedIds((current) => new Set(current).add(item.id));
       } else {
-        await onMarkUnfamiliar(item.id);
-        setMarkedUnfamiliarIds((current) => new Set(current).add(item.id));
+        await onToggleUnfamiliar(item.id, isUnfamiliar);
+        if (isUnfamiliar) {
+          setMarkedUnfamiliarIds((current) => {
+            const next = new Set(current);
+            next.delete(item.id);
+            return next;
+          });
+          setRemovedUnfamiliarIds((current) => new Set(current).add(item.id));
+        } else {
+          setMarkedUnfamiliarIds((current) => new Set(current).add(item.id));
+          setRemovedUnfamiliarIds((current) => {
+            const next = new Set(current);
+            next.delete(item.id);
+            return next;
+          });
+        }
       }
     } catch (error) {
       setFolderActionError(error.message || '加入資料夾失敗');
@@ -4374,7 +4624,7 @@ function shouldAutoPronouncePracticePrompt({ started, recognitionMode, grammarMo
   return activeDirection === 'ko-zh' && autoPronounce;
 }
 
-function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onMarkLearned, onMarkUnfamiliar }) {
+function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onMarkLearned, onToggleUnfamiliar }) {
   const [direction, setDirection] = useState('zh-ko');
   const [source, setSource] = useState('term');
   const [starredOnly, setStarredOnly] = useState(false);
@@ -4403,6 +4653,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const [learnedPromptError, setLearnedPromptError] = useState('');
   const [markedLearnedIds, setMarkedLearnedIds] = useState(() => new Set());
   const [markedUnfamiliarIds, setMarkedUnfamiliarIds] = useState(() => new Set());
+  const [removedUnfamiliarIds, setRemovedUnfamiliarIds] = useState(() => new Set());
   const [directLearnedSaving, setDirectLearnedSaving] = useState(false);
   const [directLearnedError, setDirectLearnedError] = useState('');
   const [directUnfamiliarSaving, setDirectUnfamiliarSaving] = useState(false);
@@ -4429,8 +4680,14 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     question && (learnedWordIds.has(question.itemId) || markedLearnedIds.has(question.itemId))
   );
   const isCurrentWordUnfamiliar = Boolean(
-    question && (unfamiliarWordIds.has(question.itemId) || markedUnfamiliarIds.has(question.itemId))
+    question
+    && !removedUnfamiliarIds.has(question.itemId)
+    && (unfamiliarWordIds.has(question.itemId) || markedUnfamiliarIds.has(question.itemId))
   );
+  useEffect(() => {
+    setMarkedUnfamiliarIds((current) => new Set([...current].filter((id) => !unfamiliarWordIds.has(id))));
+    setRemovedUnfamiliarIds((current) => new Set([...current].filter((id) => unfamiliarWordIds.has(id))));
+  }, [unfamiliarWordIds]);
   const resetSession = () => {
     setSessionFinished(false);
     setStarted(false);
@@ -4548,19 +4805,33 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     }
   };
   const persistCurrentWordAsUnfamiliar = async () => {
-    if (!question || isCurrentWordUnfamiliar) return false;
-    await onMarkUnfamiliar(question.itemId);
-    setMarkedUnfamiliarIds((current) => new Set(current).add(question.itemId));
+    if (!question) return false;
+    await onToggleUnfamiliar(question.itemId, isCurrentWordUnfamiliar);
+    if (isCurrentWordUnfamiliar) {
+      setMarkedUnfamiliarIds((current) => {
+        const next = new Set(current);
+        next.delete(question.itemId);
+        return next;
+      });
+      setRemovedUnfamiliarIds((current) => new Set(current).add(question.itemId));
+    } else {
+      setMarkedUnfamiliarIds((current) => new Set(current).add(question.itemId));
+      setRemovedUnfamiliarIds((current) => {
+        const next = new Set(current);
+        next.delete(question.itemId);
+        return next;
+      });
+    }
     return true;
   };
   const markCurrentWordAsUnfamiliar = async () => {
-    if (directUnfamiliarSaving || isCurrentWordUnfamiliar) return;
+    if (directUnfamiliarSaving) return;
     setDirectUnfamiliarSaving(true);
     setDirectUnfamiliarError('');
     try {
       await persistCurrentWordAsUnfamiliar();
     } catch (error) {
-      setDirectUnfamiliarError(error.message || '加入不熟悉資料夾失敗');
+      setDirectUnfamiliarError(error.message || '更新不熟悉資料夾失敗');
     } finally {
       setDirectUnfamiliarSaving(false);
     }
@@ -4726,7 +4997,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
             <button className={!randomOrder ? 'active' : ''} onClick={() => setRandomOrder(false)}>依原順序</button>
             <button className={randomOrder ? 'active' : ''} onClick={() => setRandomOrder(true)}><Shuffle size={16} /> 隨機順序</button>
           </div>
-          <div className="fixed-source-note muted-note">自主測驗固定不紀錄，不會改變答對率、間隔排程或每日複習紀錄。</div>
+          <div className="fixed-source-note muted-note">自主測驗固定不紀錄，不會改變熟悉分數、間隔排程或每日複習紀錄。</div>
           <p>{sourceQuestions.length} 題可測驗。{set.dueOnly ? '請看中文提示輸入韓文答案。' : '中翻韓只會出打字題，韓翻中會先思考再公佈答案。'}</p>
           <button className="primary wide" disabled={!sourceQuestions.length} onClick={startSession}>開始</button>
         </div>
@@ -4921,12 +5192,12 @@ function WordFolderButtons({ compact = false, isLearned = false, isUnfamiliar = 
       <button
         type="button"
         className={`unfamiliar-soft ${isUnfamiliar ? 'selected-soft' : ''}`}
-        disabled={isUnfamiliar || unfamiliarSaving}
+        disabled={unfamiliarSaving}
         onClick={onMarkUnfamiliar}
-        title={isUnfamiliar ? '已加入「不熟悉」' : '加入「不熟悉」'}
+        title={isUnfamiliar ? '移出「不熟悉」' : '加入「不熟悉」'}
       >
         <FolderInput size={compact ? 15 : 18} />
-        <span>{compact ? '不熟悉' : isUnfamiliar ? '已加入「不熟悉」' : unfamiliarSaving ? '加入中' : '加入「不熟悉」'}</span>
+        <span>{compact ? '不熟悉' : unfamiliarSaving ? '更新中' : isUnfamiliar ? '移出「不熟悉」' : '加入「不熟悉」'}</span>
       </button>
     </div>
   );
@@ -5476,6 +5747,7 @@ function WordFolderTags({ itemId, folders = [] }) {
 function FolderAssignmentModal({ folders, wordIds, onAssign, onCreateFolderAndAssign, onClose }) {
   const [selectedFolderIds, setSelectedFolderIds] = useState([]);
   const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderTag, setNewFolderTag] = useState('');
   const [savingAction, setSavingAction] = useState('');
   const [error, setError] = useState('');
   const toggleFolder = (folderId) => setSelectedFolderIds((current) => (
@@ -5499,7 +5771,7 @@ function FolderAssignmentModal({ folders, wordIds, onAssign, onCreateFolderAndAs
     setSavingAction('create');
     setError('');
     try {
-      await onCreateFolderAndAssign(newFolderName, wordIds, selectedFolderIds);
+      await onCreateFolderAndAssign(newFolderName, wordIds, selectedFolderIds, newFolderTag);
       onClose(true);
     } catch (saveError) {
       setError(saveError.message || '建立資料夾失敗');
@@ -5532,8 +5804,10 @@ function FolderAssignmentModal({ folders, wordIds, onAssign, onCreateFolderAndAs
           </div>
           <div className="create-folder-inline-form">
             <input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); createAndAssign(); } }} maxLength={60} placeholder="輸入新資料夾名稱" disabled={saving} />
+            <input value={newFolderTag} onChange={(event) => setNewFolderTag(event.target.value)} maxLength={40} placeholder="標籤（選填）" list="assignment-folder-tag-options" disabled={saving} />
             <button type="button" className="soft-button" disabled={!newFolderName.trim() || saving} onClick={createAndAssign}>{savingAction === 'create' ? '建立中' : '建立並加入'}</button>
           </div>
+          <datalist id="assignment-folder-tag-options">{[...new Set(folders.map((folder) => folder.tag).filter(Boolean))].map((tag) => <option value={tag} key={tag} />)}</datalist>
           {!!selectedFolderIds.length && <small>也會同時加入上方已勾選的 {selectedFolderIds.length} 個資料夾。</small>}
         </section>
         {error && <div className="form-error">{error}</div>}
@@ -5612,8 +5886,9 @@ function BulkWordActions({ selectedIds, visibleIds, folders, onSelectionChange, 
   );
 }
 
-function FolderNameModal({ folder, onSave, onClose }) {
+function FolderNameModal({ folder, tagSuggestions = [], onSave, onClose }) {
   const [name, setName] = useState(folder?.name || '');
+  const [tag, setTag] = useState(folder?.tag || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const submit = async (event) => {
@@ -5621,7 +5896,7 @@ function FolderNameModal({ folder, onSave, onClose }) {
     setSaving(true);
     setError('');
     try {
-      await onSave({ ...folder, name });
+      await onSave({ ...folder, name, tag });
       onClose();
     } catch (saveError) {
       setError(saveError.message || '資料夾儲存失敗');
@@ -5633,39 +5908,60 @@ function FolderNameModal({ folder, onSave, onClose }) {
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="folder-name-title">
       <form className="modal-panel folder-name-modal" onSubmit={submit}>
         <button type="button" className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
-        <span className="eyebrow">Folder</span>
-        <h2 id="folder-name-title">{folder ? '重新命名資料夾' : '新增資料夾'}</h2>
-        <label>
-          資料夾名稱
-          <input value={name} onChange={(event) => setName(event.target.value)} maxLength={60} autoFocus required />
-        </label>
+        <div className="folder-editor-head">
+          <span className="eyebrow">Folder</span>
+          <h2 id="folder-name-title">{folder ? '編輯資料夾' : '新增資料夾'}</h2>
+        </div>
+        <div className="folder-editor-fields">
+          <label>
+            <span>資料夾名稱</span>
+            <input value={name} onChange={(event) => setName(event.target.value)} maxLength={60} autoFocus={!isSystemFolder(folder)} required disabled={isSystemFolder(folder)} />
+          </label>
+          <label>
+            <span>標籤</span>
+            <input value={tag} onChange={(event) => setTag(event.target.value)} maxLength={40} list="folder-tag-options" placeholder="留空會歸類為無標籤" autoFocus={isSystemFolder(folder)} />
+          </label>
+        </div>
+        <datalist id="folder-tag-options">{tagSuggestions.map((option) => <option value={option} key={option} />)}</datalist>
         {error && <div className="form-error">{error}</div>}
-        <div className="form-actions"><button className="primary" disabled={saving}>{saving ? '儲存中' : '儲存'}</button></div>
+        <div className="form-actions folder-editor-actions">
+          <button type="button" disabled={saving} onClick={onClose}>取消</button>
+          <button className="primary" disabled={saving}><Check size={17} /> {saving ? '儲存中' : '儲存'}</button>
+        </div>
       </form>
     </div>
   );
 }
 
-function FoldersPage({ folders, items, questions, loading, error, onSave, onDelete, onOpen, onStudy, onPractice }) {
+function FolderOverviewCard({ folder, itemById, itemIds, onOpen, onEdit, onDelete }) {
+  const count = (folder.wordIds || []).filter((id) => itemIds.has(id)).length;
+  const previews = (folder.wordIds || []).map((id) => itemById.get(id)).filter(Boolean).slice(0, 4);
+  return (
+    <article className="folder-card" onClick={() => onOpen(folder.id)}>
+      <div className="folder-card-head">
+        <span className="folder-icon"><FolderOpen size={25} /></span>
+        <div className="card-actions">
+          {isSystemFolder(folder) && <span className={`system-folder-badge ${isUnfamiliarFolder(folder) ? 'unfamiliar' : ''}`}>系統資料夾</span>}
+          <EditIconButton label={isSystemFolder(folder) ? '編輯標籤' : '編輯資料夾'} onClick={() => onEdit(folder)} />
+          {!isSystemFolder(folder) && <button className="edit-icon-button delete-icon-button" title="刪除資料夾" aria-label="刪除資料夾" onClick={(event) => { event.stopPropagation(); onDelete(folder); }}><Trash2 size={15} /></button>}
+        </div>
+      </div>
+      <h2>{folder.name}</h2>
+      <span className="folder-tag-chip">{folderTagLabel(folder)}</span>
+      <p>{isLearnedFolder(folder) ? `${count} 個單字 · 不會出現在每日測驗` : isUnfamiliarFolder(folder) ? `${count} 個單字 · 方便集中複習` : `${count} 個單字`}</p>
+      <div className="folder-preview">
+        {previews.length ? previews.map((item) => <span key={item.id}>{item.ko}</span>) : <span>尚未加入單字</span>}
+      </div>
+    </article>
+  );
+}
+
+function FoldersPage({ folders, items, loading, error, onSave, onDelete, onOpen }) {
   const [editingFolder, setEditingFolder] = useState(undefined);
-  const [selectedIds, setSelectedIds] = useState([]);
   const itemIds = new Set(items.map((item) => item.id));
-  useEffect(() => {
-    const existingIds = new Set(folders.map((folder) => folder.id));
-    setSelectedIds((current) => current.filter((id) => existingIds.has(id)));
-  }, [folders]);
-  const selectedSet = new Set(selectedIds);
-  const allSelected = folders.length > 0 && folders.every((folder) => selectedSet.has(folder.id));
-  const selectedWordIds = selectedFolderWordIds(folders, selectedIds);
-  const selectedWordIdSet = new Set(selectedWordIds);
+  const folderGroups = groupFoldersByTag(folders);
+  const tagSuggestions = folderGroups.filter((group) => group.label !== UNTAGGED_FOLDER_LABEL).map((group) => group.label);
   const itemById = new Map(items.map((item) => [item.id, item]));
-  const selectedItems = selectedWordIds.map((id) => itemById.get(id)).filter(Boolean);
-  const selectedQuestions = questions.filter((question) => selectedWordIdSet.has(question.itemId));
-  const selectionLabel = `已選 ${selectedIds.length} 個資料夾`;
-  const toggleSelected = (folderId) => setSelectedIds((current) => (
-    current.includes(folderId) ? current.filter((id) => id !== folderId) : [...current, folderId]
-  ));
-  const toggleAll = () => setSelectedIds(allSelected ? [] : folders.map((folder) => folder.id));
   const removeFolder = async (folder) => {
     if (isSystemFolder(folder)) return;
     if (!window.confirm(`確定要刪除資料夾「${folder.name}」嗎？單字本中的單字不會被刪除。`)) return;
@@ -5680,53 +5976,32 @@ function FoldersPage({ folders, items, questions, loading, error, onSave, onDele
         </div>
       </div>
       {error && <div className="form-error">{error}</div>}
-      {!!folders.length && (
-        <div className={`bulk-word-actions folder-bulk-actions ${selectedIds.length ? 'has-selection' : ''}`}>
-          <div className="bulk-selection-summary">
-            <ListChecks size={19} />
-            <strong>{selectedIds.length ? selectionLabel : '選取資料夾'}</strong>
-            <button type="button" className="text-link" onClick={toggleAll}>{allSelected ? '取消全選' : '全選'}</button>
-            {!!selectedIds.length && <button type="button" className="text-link muted-link" onClick={() => setSelectedIds([])}>清除選取</button>}
-          </div>
-          <div className="bulk-action-buttons">
-            <button type="button" disabled={!selectedItems.length} onClick={() => onStudy(selectedItems, `${selectionLabel} 學習`)}><BookOpen size={17} /> 學習 {selectedItems.length} 個單字</button>
-            <button type="button" className="primary" disabled={!selectedQuestions.length} onClick={() => onPractice(selectedQuestions, `${selectionLabel} 測驗`)}><Dumbbell size={17} /> 測驗 {selectedItems.length} 個單字</button>
-          </div>
-        </div>
-      )}
       {loading ? <div className="empty">正在載入資料夾...</div> : folders.length ? (
-        <div className="folder-grid">
-          {folders.map((folder) => {
-            const count = folder.wordIds.filter((id) => itemIds.has(id)).length;
-            const previews = folder.wordIds.map((id) => items.find((item) => item.id === id)).filter(Boolean).slice(0, 4);
-            return (
-              <article className={`folder-card ${selectedSet.has(folder.id) ? 'selected' : ''}`} key={folder.id} onClick={() => onOpen(folder.id)}>
-                <div className="folder-card-head">
-                  <span className="folder-icon"><FolderOpen size={25} /></span>
-                  <div className="card-actions">
-                    <label className="word-select-control" title="選取資料夾" onClick={(event) => event.stopPropagation()}>
-                      <input type="checkbox" checked={selectedSet.has(folder.id)} onChange={() => toggleSelected(folder.id)} />
-                      <span className="sr-only">選取 {folder.name}</span>
-                    </label>
-                    {isSystemFolder(folder) ? <span className={`system-folder-badge ${isUnfamiliarFolder(folder) ? 'unfamiliar' : ''}`}>系統資料夾</span> : (
-                      <>
-                      <EditIconButton label="重新命名" onClick={() => setEditingFolder(folder)} />
-                      <button className="edit-icon-button delete-icon-button" title="刪除資料夾" aria-label="刪除資料夾" onClick={(event) => { event.stopPropagation(); removeFolder(folder); }}><Trash2 size={15} /></button>
-                      </>
-                    )}
-                  </div>
-                </div>
-                <h2>{folder.name}</h2>
-                <p>{isLearnedFolder(folder) ? `${count} 個單字 · 不會出現在每日測驗` : isUnfamiliarFolder(folder) ? `${count} 個單字 · 方便集中複習` : `${count} 個單字`}</p>
-                <div className="folder-preview">
-                  {previews.length ? previews.map((item) => <span key={item.id}>{item.ko}</span>) : <span>尚未加入單字</span>}
-                </div>
-              </article>
-            );
-          })}
+        <div className="folder-tag-groups">
+          {folderGroups.map((group) => (
+            <section className="folder-tag-group" key={group.label}>
+              <div className="folder-tag-group-head">
+                <div><span className="folder-tag-mark">標籤</span><h2>{group.label}</h2></div>
+                <span>{group.folders.length} 個資料夾</span>
+              </div>
+              <div className="folder-grid">
+                {group.folders.map((folder) => (
+                  <FolderOverviewCard
+                    key={folder.id}
+                    folder={folder}
+                    itemById={itemById}
+                    itemIds={itemIds}
+                    onOpen={onOpen}
+                    onEdit={setEditingFolder}
+                    onDelete={removeFolder}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
         </div>
       ) : <div className="empty folder-empty"><Folder size={32} /><strong>還沒有資料夾</strong><span>建立第一個資料夾，將同類型單字集中學習。</span></div>}
-      {editingFolder !== undefined && <FolderNameModal folder={editingFolder} onSave={onSave} onClose={() => setEditingFolder(undefined)} />}
+      {editingFolder !== undefined && <FolderNameModal folder={editingFolder} tagSuggestions={tagSuggestions} onSave={onSave} onClose={() => setEditingFolder(undefined)} />}
     </section>
   );
 }
@@ -5813,11 +6088,8 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
   const staleIds = folder.wordIds.filter((id) => !itemById.has(id));
   const itemQuestionIds = new Map(folderItems.map((item) => [item.id, questions.filter((question) => question.itemId === item.id).map((question) => question.id)]));
   const enriched = folderItems.map((item) => {
-    const stats = (itemQuestionIds.get(item.id) || [item.id]).map((id) => getStats(store, id));
-    const total = stats.reduce((sum, current) => sum + current.total, 0);
-    const correct = stats.reduce((sum, current) => sum + current.correct, 0);
-    const level = stats.some((current) => current.level === '不熟悉') ? '不熟悉' : stats.some((current) => current.level === '已熟練') ? '已熟練' : stats.some((current) => current.level === '熟悉') ? '熟悉' : '學習中';
-    return { ...item, total, rate: total ? Math.round((correct / total) * 100) : 0, level };
+    const stats = aggregateItemStats(store, itemQuestionIds.get(item.id) || [item.id]);
+    return { ...item, ...stats };
   }).filter((item) => itemMatchesSearch(item, query, searchScope));
   const pageSize = 30;
   const pageCount = Math.max(1, Math.ceil(enriched.length / pageSize));
@@ -5834,9 +6106,9 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
   return (
     <section className="page">
       <div className="topbar">
-        <div><span className="eyebrow">Folder · {folderItems.length} 個單字</span><h1>{folder.name}</h1></div>
+        <div><span className="eyebrow">Folder · {folderTagLabel(folder)} · {folderItems.length} 個單字</span><h1>{folder.name}</h1></div>
         <div className="actions notebook-actions">
-          {!isSystemFolder(folder) && <button onClick={() => setRenameOpen(true)}><Pencil size={18} /> 改名</button>}
+          <button onClick={() => setRenameOpen(true)}><Pencil size={18} /> {isSystemFolder(folder) ? '編輯標籤' : '編輯資料夾'}</button>
           <button onClick={() => setExportOpen(true)} disabled={!folderItems.length}><Download size={18} /> 匯出 JSON</button>
           <button onClick={() => setAddExistingOpen(true)}><Link2 size={18} /> 加入現有單字</button>
           <button onClick={() => setAddOpen(true)}><Plus size={18} /> 新增單字</button>
@@ -5851,7 +6123,7 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
       </div>
       {!!staleIds.length && <button className="text-link" onClick={() => onRemoveWords(folder.id, staleIds)}>清理 {staleIds.length} 個不存在的單字 reference</button>}
       {exportOpen && <ExportJsonModal items={folderItems} title={`匯出 ${folder.name} JSON`} onClose={() => setExportOpen(false)} />}
-      {renameOpen && <FolderNameModal folder={folder} onSave={onSaveFolder} onClose={() => setRenameOpen(false)} />}
+      {renameOpen && <FolderNameModal folder={folder} tagSuggestions={[...new Set(folders.map((entry) => entry.tag).filter(Boolean))]} onSave={onSaveFolder} onClose={() => setRenameOpen(false)} />}
       {addExistingOpen && <AddExistingWordsModal folder={folder} items={items} onAdd={onAddWords} onClose={() => setAddExistingOpen(false)} />}
       {addOpen && (
         <AddItemsModal
@@ -5919,8 +6191,8 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
 function NotebookPage({ store, updateStore, items, questions, folders = [], onAssignFolders, onCreateFolderAndAssign, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords }) {
   const [query, setQuery] = useState('');
   const [searchScope, setSearchScope] = useState('all');
-  const [type, setType] = useState('全部');
-  const [level, setLevel] = useState('全部');
+  const [selectedLevels, setSelectedLevels] = useState([]);
+  const [selectedFolderIds, setSelectedFolderIds] = useState([]);
   const [sort, setSort] = useState('default');
   const [pageNumber, setPageNumber] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
@@ -5932,27 +6204,33 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
   const [showLearned, setShowLearned] = useState(false);
   const starredSet = new Set(store.starred || []);
   const learnedWordIds = new Set(folders.find(isLearnedFolder)?.wordIds || []);
+  const folderWordIds = useMemo(
+    () => folderFilterWordIds(folders, selectedFolderIds),
+    [folders, selectedFolderIds],
+  );
   const notebookItems = showLearned ? items : items.filter((item) => !learnedWordIds.has(item.id));
   const toggleSelected = (itemId) => setSelectedIds((current) => (
     current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]
   ));
-  const types = ['全部', ...new Set(items.map((item) => item.pos || '未分類'))];
+  const toggleLevel = (level) => setSelectedLevels((current) => (
+    current.includes(level) ? current.filter((entry) => entry !== level) : [...current, level]
+  ));
+  const toggleFolderFilter = (folderId) => setSelectedFolderIds((current) => (
+    current.includes(folderId) ? current.filter((id) => id !== folderId) : [...current, folderId]
+  ));
+  const toggleFolderTag = (folderIds) => setSelectedFolderIds((current) => toggleFolderGroupSelection(current, folderIds));
   const itemQuestionIds = new Map(items.map((item) => [item.id, questions.filter((q) => q.itemId === item.id).map((q) => q.id)]));
   const enriched = notebookItems.map((item) => {
     const ids = itemQuestionIds.get(item.id) || [item.id];
-    const itemStats = ids.map((id) => getStats(store, id));
-    const total = itemStats.reduce((sum, stat) => sum + stat.total, 0);
-    const correct = itemStats.reduce((sum, stat) => sum + stat.correct, 0);
-    const rate = total ? Math.round((correct / total) * 100) : 0;
-    const levelValue = itemStats.some((stat) => stat.level === '不熟悉') ? '不熟悉' : itemStats.some((stat) => stat.level === '已熟練') ? '已熟練' : itemStats.some((stat) => stat.level === '熟悉') ? '熟悉' : '學習中';
-    return { ...item, total, rate, level: levelValue };
+    return { ...item, ...aggregateItemStats(store, ids) };
   }).filter((item) => {
     const matchesQuery = itemMatchesSearch(item, query, searchScope);
-    const matchesType = type === '全部' || item.pos === type;
-    const matchesLevel = level === '全部' || item.level === level;
-    return matchesQuery && matchesType && matchesLevel;
+    const matchesLevel = matchesFamiliarityLevels(item.level, selectedLevels);
+    const matchesFolder = !folderWordIds || folderWordIds.has(item.id);
+    return matchesQuery && matchesLevel && matchesFolder;
   }).sort((a, b) => {
-    if (sort === 'rate') return a.rate - b.rate;
+    if (sort === 'alphabetical') return compareItemsByKoreanAlphabet(a, b);
+    if (sort === 'score') return a.score - b.score;
     if (a.date !== b.date) return b.date.localeCompare(a.date);
     if (a.order !== b.order) return b.order - a.order;
     return a.id.localeCompare(b.id);
@@ -5964,7 +6242,12 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
 
   useEffect(() => {
     setPageNumber(1);
-  }, [query, searchScope, type, level, sort]);
+  }, [query, searchScope, selectedLevels, selectedFolderIds, sort]);
+
+  useEffect(() => {
+    const availableFolderIds = new Set(folders.map((folder) => folder.id));
+    setSelectedFolderIds((current) => current.filter((folderId) => availableFolderIds.has(folderId)));
+  }, [folders]);
 
   useEffect(() => {
     setPageNumber(1);
@@ -6010,9 +6293,25 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
           <label className="search"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={searchScope === 'word' ? '只搜尋韓文單字本身' : '搜尋單字、例句、筆記或相關詞'} /></label>
           <SearchScopeControl value={searchScope} onChange={setSearchScope} />
         </div>
-        <select value={type} onChange={(e) => setType(e.target.value)}>{types.map((option) => <option key={option}>{option}</option>)}</select>
-        <select value={level} onChange={(e) => setLevel(e.target.value)}>{['全部', '不熟悉', '學習中', '熟悉', '已熟練'].map((option) => <option key={option}>{option}</option>)}</select>
-        <select value={sort} onChange={(e) => setSort(e.target.value)}><option value="default">最新加入優先</option><option value="rate">答對率低優先</option></select>
+        <MultiSelectFilter
+          label="熟悉度"
+          options={FAMILIARITY_LEVELS.map((option) => ({ value: option, label: option }))}
+          selectedValues={selectedLevels}
+          onToggle={toggleLevel}
+          onClear={() => setSelectedLevels([])}
+        />
+        <GroupedFolderMultiSelect
+          folders={folders}
+          selectedValues={selectedFolderIds}
+          onToggle={toggleFolderFilter}
+          onToggleGroup={toggleFolderTag}
+          onClear={() => setSelectedFolderIds([])}
+        />
+        <select value={sort} onChange={(e) => setSort(e.target.value)}>
+          <option value="default">最新加入優先</option>
+          <option value="alphabetical">韓文字母順序</option>
+          <option value="score">熟悉分數低優先</option>
+        </select>
       </div>
       {addOpen && (
         <AddItemsModal
@@ -6110,7 +6409,7 @@ function WordCard({ item, folders = [], onEdit, onDelete, onOpen, isStarred = fa
         </div>
       </div>
       <p>{item.zh}</p>
-      <div className="word-meta"><span>{item.pos || '未分類'}</span><span>{item.date}</span><span>{item.total} 次</span><span>{item.rate}%</span></div>
+      <div className="word-meta"><span>{item.pos || '未分類'}</span><span>{item.date}</span><span>{item.total} 次</span><span>熟悉分數 {item.score > 0 ? `+${item.score}` : item.score}</span></div>
       <WordFolderTags itemId={item.id} folders={folders} />
     </article>
   );
@@ -6127,6 +6426,12 @@ export {
   excludeLearnedQuestions,
   findPreferredSpeechVoice,
   findImportConflict,
+  familiarityLevel,
+  familiarityScore,
+  matchesFamiliarityLevels,
+  folderFilterWordIds,
+  folderTagLabel,
+  groupFoldersByTag,
   isTransientFirestoreError,
   markReviewDateComplete,
   formatGrammarExamplesText,
@@ -6139,6 +6444,7 @@ export {
   isUnfamiliarFolder,
   isSystemFolder,
   itemMatchesSearch,
+  compareItemsByKoreanAlphabet,
   normalizeKoreanKey,
   normalizeRecords,
   parseGrammarExamplesText,
@@ -6154,7 +6460,7 @@ export {
   shouldAutoPronouncePracticePrompt,
   shouldRecordPracticeResults,
   shouldShowStudyChinese,
-  selectedFolderWordIds,
+  toggleFolderGroupSelection,
 };
 
 if (typeof document !== 'undefined') createRoot(document.getElementById('root')).render(<App />);
