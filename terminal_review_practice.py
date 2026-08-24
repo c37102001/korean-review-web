@@ -476,6 +476,12 @@ def mark_word_as_learned(
         word_id,
     )
     state["learnedWordIds"] = [*learned_word_ids, word_id]
+    sync_state_folder_membership(
+        state,
+        str(state.get("learnedFolderId") or SYSTEM_LEARNED_FOLDER_ID),
+        word_id,
+        True,
+    )
     return True
 
 
@@ -495,7 +501,29 @@ def mark_word_as_unfamiliar(
         word_id,
     )
     state["unfamiliarWordIds"] = [*unfamiliar_word_ids, word_id]
+    sync_state_folder_membership(
+        state,
+        str(state.get("unfamiliarFolderId") or SYSTEM_UNFAMILIAR_FOLDER_ID),
+        word_id,
+        True,
+    )
     return True
+
+
+def sync_state_folder_membership(
+    state: Dict[str, Any],
+    folder_id: str,
+    word_id: str,
+    included: bool,
+) -> None:
+    for folder in state.get("folders") or []:
+        if str(folder.get("id")) != folder_id:
+            continue
+        folder_word_ids = [str(item) for item in (folder.get("wordIds") or []) if item]
+        folder["wordIds"] = list(dict.fromkeys(
+            [*folder_word_ids, word_id] if included else [item for item in folder_word_ids if item != word_id]
+        ))
+        return
 
 
 def toggle_word_as_unfamiliar(
@@ -515,14 +543,7 @@ def toggle_word_as_unfamiliar(
         client.add_word_to_folder(session, folder_id, word_id)
         state["unfamiliarWordIds"] = [*unfamiliar_word_ids, word_id]
         now_unfamiliar = True
-    for folder in state.get("folders") or []:
-        if str(folder.get("id")) != folder_id:
-            continue
-        folder_word_ids = [str(item) for item in (folder.get("wordIds") or []) if item]
-        folder["wordIds"] = list(dict.fromkeys(
-            [*folder_word_ids, word_id] if now_unfamiliar else [item for item in folder_word_ids if item != word_id]
-        ))
-        break
+    sync_state_folder_membership(state, folder_id, word_id, now_unfamiliar)
     return now_unfamiliar
 
 
@@ -1124,6 +1145,95 @@ def cards_in_folder(cards: List[Card], folder: Dict[str, Any]) -> List[Card]:
     return [card for card in cards if card.id in word_ids]
 
 
+def familiarity_score(stats: Dict[str, Any]) -> int:
+    correct = int(stats.get("correct") or 0)
+    wrong_value = stats.get("wrong")
+    wrong = int(wrong_value) if wrong_value is not None else max(0, int(stats.get("total") or 0) - correct)
+    return correct - wrong
+
+
+def familiarity_level(score: int) -> str:
+    if score < 0:
+        return "不熟悉"
+    if score >= 5:
+        return "已熟悉"
+    if score >= 3:
+        return "熟悉"
+    return "學習中"
+
+
+def card_familiarity(state: Dict[str, Any], questions: List[Question], card_id: str) -> Tuple[int, str]:
+    question_ids = [question.id for question in questions if question.item_id == card_id]
+    score = sum(familiarity_score((state.get("stats") or {}).get(question_id, {})) for question_id in question_ids)
+    return score, familiarity_level(score)
+
+
+def card_search_text(card: Card) -> str:
+    details: List[str] = [card.ko, card.zh, card.pos, card.date, *card.notes, *card.related]
+    for meaning in card.meanings:
+        details.extend([str(meaning.get("zh") or ""), str(meaning.get("pattern") or "")])
+        for example in meaning.get("examples") or []:
+            details.extend([str(example.get("ko") or ""), str(example.get("zh") or "")])
+    return unicodedata.normalize("NFC", " ".join(details)).casefold()
+
+
+def filtered_notebook_cards(
+    cards: List[Card],
+    questions: List[Question],
+    state: Dict[str, Any],
+    config: Dict[str, Any],
+) -> List[Card]:
+    query = unicodedata.normalize("NFC", str(config.get("query") or "").strip()).casefold()
+    scope = str(config.get("search_scope") or "all")
+    levels = set(config.get("levels") or [])
+    selected_folder_ids = set(config.get("folder_ids") or [])
+    learned_ids = set(state.get("learnedWordIds") or [])
+    folder_word_ids: Optional[set[str]] = None
+    if selected_folder_ids:
+        folder_word_ids = {
+            str(word_id)
+            for folder in (state.get("folders") or [])
+            if str(folder.get("id") or "") in selected_folder_ids
+            for word_id in (folder.get("wordIds") or [])
+            if word_id
+        }
+
+    result: List[Tuple[Card, int]] = []
+    for card in cards:
+        if not config.get("show_learned") and card.id in learned_ids:
+            continue
+        if folder_word_ids is not None and card.id not in folder_word_ids:
+            continue
+        score, level = card_familiarity(state, questions, card.id)
+        if levels and level not in levels:
+            continue
+        if query:
+            search_value = unicodedata.normalize("NFC", card.ko).casefold() if scope == "word" else card_search_text(card)
+            if query not in search_value:
+                continue
+        result.append((card, score))
+
+    sort_mode = str(config.get("sort") or "latest")
+    if sort_mode == "alphabetical":
+        result.sort(key=lambda entry: (unicodedata.normalize("NFC", entry[0].ko).casefold(), entry[0].zh, entry[0].id))
+    elif sort_mode == "score":
+        result.sort(key=lambda entry: (entry[1], -int(entry[0].order or 0), entry[0].id))
+    else:
+        result.sort(key=lambda entry: entry[0].id)
+        result.sort(key=lambda entry: (entry[0].date, int(entry[0].order or 0)), reverse=True)
+    return [card for card, _ in result]
+
+
+def order_questions_by_cards(questions: List[Question], cards: List[Card]) -> List[Question]:
+    rank = {card.id: index for index, card in enumerate(cards)}
+    kind_rank = {"term": 0, "example": 1}
+    return sorted(questions, key=lambda question: (
+        rank.get(question.item_id, len(rank)),
+        kind_rank.get(question.kind, 9),
+        question.id,
+    ))
+
+
 def korean_speech_commands(text: str) -> List[List[str]]:
     commands: List[List[str]] = []
     if shutil.which("spd-say"):
@@ -1591,6 +1701,177 @@ def menu(stdscr: curses.window, title: str, options: List[Tuple[str, str]], subt
             selected = (selected + 1) % len(options)
         elif key in (curses.KEY_ENTER, 10, 13):
             return options[selected][0]
+
+
+def prompt_text_value(stdscr: curses.window, title: str, initial: str = "") -> Optional[str]:
+    value = initial
+    cursor = len(value)
+    set_cursor_visibility(1)
+    stdscr.keypad(True)
+    try:
+        while True:
+            stdscr.erase()
+            height, width = stdscr.getmaxyx()
+            draw_line(stdscr, 1, 2, title, curses.A_BOLD)
+            draw_line(stdscr, 2, 2, "輸入搜尋文字，Enter=套用 Esc=取消；留空代表不搜尋", curses.A_DIM)
+            draw_line(stdscr, 4, 2, value)
+            cursor_x = min(max(2, width - 2), 2 + _text_cell_width(value[:cursor]))
+            if height > 4:
+                try:
+                    stdscr.move(4, cursor_x)
+                except curses.error:
+                    pass
+            update_curses_screen(stdscr)
+            key = read_terminal_key(stdscr, wide=True)
+            if key == "\x1b" or key == 27:
+                return None
+            if key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13):
+                return value.strip()
+            if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
+                if cursor > 0:
+                    value = value[:cursor - 1] + value[cursor:]
+                    cursor -= 1
+            elif key == curses.KEY_DC:
+                value = value[:cursor] + value[cursor + 1:]
+            elif key == curses.KEY_LEFT:
+                cursor = max(0, cursor - 1)
+            elif key == curses.KEY_RIGHT:
+                cursor = min(len(value), cursor + 1)
+            elif key == curses.KEY_HOME:
+                cursor = 0
+            elif key == curses.KEY_END:
+                cursor = len(value)
+            elif isinstance(key, str) and key.isprintable():
+                value = value[:cursor] + key + value[cursor:]
+                cursor += 1
+    finally:
+        set_cursor_visibility(0)
+
+
+def multi_select_menu(
+    stdscr: curses.window,
+    title: str,
+    options: List[Tuple[str, str]],
+    initial: Iterable[str],
+) -> Optional[set[str]]:
+    selected_values = set(initial)
+    cursor = 0
+    set_cursor_visibility(0)
+    while True:
+        stdscr.erase()
+        height, _ = stdscr.getmaxyx()
+        visible_count = max(1, height - 4)
+        start = max(0, min(cursor - visible_count + 1, len(options) - visible_count)) if options else 0
+        draw_line(stdscr, 1, 2, f"{title} · 已選 {len(selected_values)} 項", curses.A_BOLD)
+        draw_line(stdscr, 2, 2, "↑↓=移動 Space=勾選 Enter=完成 A=全選 C=清除 Esc=取消", curses.A_DIM)
+        for row, (value, label) in enumerate(options[start:start + visible_count], 3):
+            index = start + row - 3
+            marker = "[✓]" if value in selected_values else "[ ]"
+            draw_line(stdscr, row, 2, ("» " if index == cursor else "  ") + f"{marker} {label}", curses.A_REVERSE if index == cursor else 0)
+        update_curses_screen(stdscr)
+        key = read_terminal_key(stdscr, wide=True)
+        if key == "\x1b" or key == 27:
+            return None
+        if key == curses.KEY_UP and options:
+            cursor = (cursor - 1) % len(options)
+        elif key == curses.KEY_DOWN and options:
+            cursor = (cursor + 1) % len(options)
+        elif key == " " and options:
+            value = options[cursor][0]
+            if value in selected_values:
+                selected_values.remove(value)
+            else:
+                selected_values.add(value)
+        elif isinstance(key, str) and key.lower() == "a":
+            selected_values = {value for value, _ in options}
+        elif isinstance(key, str) and key.lower() == "c":
+            selected_values.clear()
+        elif key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13):
+            return selected_values
+
+
+def folder_tag_label(folder: Dict[str, Any]) -> str:
+    return str(folder.get("tag") or "").strip() or "無標籤"
+
+
+def grouped_folder_select_menu(
+    stdscr: curses.window,
+    folders: List[Dict[str, Any]],
+    initial: Iterable[str],
+) -> Optional[set[str]]:
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for folder in folders:
+        groups.setdefault(folder_tag_label(folder), []).append(folder)
+    group_entries = sorted(groups.items(), key=lambda entry: (entry[0] == "無標籤", entry[0]))
+    selected_values = set(initial)
+    expanded: set[str] = set()
+    cursor = 0
+    set_cursor_visibility(0)
+    while True:
+        rows: List[Tuple[str, str, Optional[Dict[str, Any]]]] = []
+        for tag, tagged_folders in group_entries:
+            rows.append(("tag", tag, None))
+            if tag in expanded:
+                rows.extend(("folder", tag, folder) for folder in tagged_folders)
+        cursor = min(cursor, max(0, len(rows) - 1))
+        stdscr.erase()
+        height, _ = stdscr.getmaxyx()
+        visible_count = max(1, height - 4)
+        start = max(0, min(cursor - visible_count + 1, len(rows) - visible_count)) if rows else 0
+        draw_line(stdscr, 1, 2, f"資料夾篩選 · 已選 {len(selected_values)} 個資料夾", curses.A_BOLD)
+        draw_line(stdscr, 2, 2, "↑↓=移動 Enter/←→=展開 Space=勾選 F=完成 A=全選 C=清除 Esc=取消", curses.A_DIM)
+        for screen_row, (row_type, tag, folder) in enumerate(rows[start:start + visible_count], 3):
+            index = start + screen_row - 3
+            if row_type == "tag":
+                folder_ids = [str(entry.get("id") or "") for entry in groups[tag]]
+                selected_count = sum(folder_id in selected_values for folder_id in folder_ids)
+                marker = "[✓]" if selected_count == len(folder_ids) else "[-]" if selected_count else "[ ]"
+                arrow = "▼" if tag in expanded else "▶"
+                label = f"{marker} {arrow} {tag} · {len(folder_ids)} 個資料夾"
+            else:
+                folder_id = str(folder.get("id") or "")
+                marker = "[✓]" if folder_id in selected_values else "[ ]"
+                label = f"    {marker} {folder.get('name') or '未命名資料夾'} · {len(folder.get('wordIds') or [])} 張卡"
+            draw_line(stdscr, screen_row, 2, ("» " if index == cursor else "  ") + label, curses.A_REVERSE if index == cursor else 0)
+        update_curses_screen(stdscr)
+        key = read_terminal_key(stdscr, wide=True)
+        if key == "\x1b" or key == 27:
+            return None
+        if key == curses.KEY_UP and rows:
+            cursor = (cursor - 1) % len(rows)
+        elif key == curses.KEY_DOWN and rows:
+            cursor = (cursor + 1) % len(rows)
+        elif rows and key in (curses.KEY_LEFT, curses.KEY_RIGHT, "\n", "\r", curses.KEY_ENTER, 10, 13):
+            row_type, tag, _ = rows[cursor]
+            if row_type == "tag":
+                if key == curses.KEY_LEFT:
+                    expanded.discard(tag)
+                elif key == curses.KEY_RIGHT:
+                    expanded.add(tag)
+                elif tag in expanded:
+                    expanded.remove(tag)
+                else:
+                    expanded.add(tag)
+        elif key == " " and rows:
+            row_type, tag, folder = rows[cursor]
+            if row_type == "tag":
+                folder_ids = {str(entry.get("id") or "") for entry in groups[tag]}
+                if folder_ids and folder_ids.issubset(selected_values):
+                    selected_values -= folder_ids
+                else:
+                    selected_values |= folder_ids
+            else:
+                folder_id = str(folder.get("id") or "")
+                if folder_id in selected_values:
+                    selected_values.remove(folder_id)
+                else:
+                    selected_values.add(folder_id)
+        elif isinstance(key, str) and key.lower() == "a":
+            selected_values = {str(folder.get("id") or "") for folder in folders}
+        elif isinstance(key, str) and key.lower() == "c":
+            selected_values.clear()
+        elif isinstance(key, str) and key.lower() == "f":
+            return selected_values
 
 
 def date_menu(stdscr: curses.window, cards: List[Card]) -> Optional[str]:
@@ -3007,6 +3288,118 @@ def run_collection(stdscr: curses.window, title: str, cards: List[Card], questio
         run_practice(stdscr, title, active_questions, config, state, client, session)
 
 
+def run_notebook(
+    stdscr: curses.window,
+    cards: List[Card],
+    questions: List[Question],
+    state: Dict[str, Any],
+    client: FirebaseClient,
+    session: AuthSession,
+) -> None:
+    config: Dict[str, Any] = {
+        "query": "",
+        "search_scope": "all",
+        "levels": set(),
+        "folder_ids": set(),
+        "show_learned": False,
+        "sort": "latest",
+    }
+    row = 0
+    sort_modes = ["latest", "alphabetical", "score"]
+    level_options = [(level, level) for level in ("不熟悉", "學習中", "熟悉", "已熟悉")]
+    folders = list(state.get("folders") or [])
+    folder_names = {str(folder.get("id") or ""): str(folder.get("name") or "未命名資料夾") for folder in folders}
+    set_cursor_visibility(0)
+    stdscr.keypad(True)
+    while True:
+        active_cards = filtered_notebook_cards(cards, questions, state, config)
+        level_values = set(config["levels"])
+        folder_values = set(config["folder_ids"])
+        level_summary = "全部" if not level_values else next(iter(level_values)) if len(level_values) == 1 else f"已選 {len(level_values)} 項"
+        folder_summary = "全部" if not folder_values else folder_names.get(next(iter(folder_values)), "1 個資料夾") if len(folder_values) == 1 else f"已選 {len(folder_values)} 項"
+        sort_label = {"latest": "最新加入優先", "alphabetical": "韓文字母順序", "score": "熟悉分數低優先"}[config["sort"]]
+        rows = [
+            f"搜尋: {config['query'] or '未設定'}",
+            f"搜尋範圍: {'全部內容' if config['search_scope'] == 'all' else '單字本身'}",
+            f"熟悉度: {level_summary}",
+            f"資料夾: {folder_summary}",
+            f"已學習: {'顯示' if config['show_learned'] else '隱藏'}",
+            f"排序: {sort_label}",
+            f"開始學習篩選結果 · {len(active_cards)} 張卡",
+            f"開始測驗篩選結果 · {len(active_cards)} 張卡",
+        ]
+        stdscr.erase()
+        height, _ = stdscr.getmaxyx()
+        visible_count = max(1, height - 4)
+        start = max(0, min(row - visible_count + 1, len(rows) - visible_count))
+        visible_rows = rows[start:start + visible_count]
+        draw_line(stdscr, 1, 2, f"單字本 | 篩選結果 {len(active_cards)}/{len(cards)} 張卡", curses.A_BOLD)
+        draw_line(stdscr, 2, 2, "↑↓=項目 ←→=切換 Enter=設定/開始 R=重設 Esc=返回", curses.A_DIM)
+        for screen_row, label in enumerate(visible_rows, 3):
+            index = start + screen_row - 3
+            attr = curses.A_REVERSE if index == row else curses.A_BOLD if index >= 6 else 0
+            draw_line(stdscr, screen_row, 2, ("» " if index == row else "  ") + label, attr)
+        if len(rows) > visible_count:
+            draw_line(stdscr, height - 1, 2, f"{row + 1}/{len(rows)} · 繼續按 ↓ 可看到開始選項", curses.A_DIM)
+        update_curses_screen(stdscr)
+        key = read_terminal_key(stdscr, wide=True)
+        if key == "\x1b" or key == 27:
+            return
+        if key == curses.KEY_UP:
+            row = (row - 1) % len(rows)
+            continue
+        if key == curses.KEY_DOWN:
+            row = (row + 1) % len(rows)
+            continue
+        if isinstance(key, str) and key.lower() == "r":
+            config.update({"query": "", "search_scope": "all", "levels": set(), "folder_ids": set(), "show_learned": False, "sort": "latest"})
+            continue
+        activate = key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13)
+        cycle = key in (curses.KEY_LEFT, curses.KEY_RIGHT)
+        if not activate and not cycle:
+            continue
+        if row == 0 and activate:
+            query = prompt_text_value(stdscr, "單字本 | 搜尋", str(config["query"]))
+            if query is not None:
+                config["query"] = query
+        elif row == 1:
+            config["search_scope"] = "word" if config["search_scope"] == "all" else "all"
+        elif row == 2 and activate:
+            selected = multi_select_menu(stdscr, "熟悉度篩選", level_options, config["levels"])
+            if selected is not None:
+                config["levels"] = selected
+        elif row == 3 and activate:
+            selected = grouped_folder_select_menu(stdscr, folders, config["folder_ids"])
+            if selected is not None:
+                config["folder_ids"] = selected
+        elif row == 4:
+            config["show_learned"] = not config["show_learned"]
+        elif row == 5:
+            current_index = sort_modes.index(config["sort"])
+            direction = -1 if key == curses.KEY_LEFT else 1
+            config["sort"] = sort_modes[(current_index + direction) % len(sort_modes)]
+        elif row in (6, 7) and activate:
+            if not active_cards:
+                wait_message(stdscr, "單字本", "目前篩選條件下沒有單字。")
+                continue
+            active_ids = {card.id for card in active_cards}
+            active_questions = [question for question in questions if question.item_id in active_ids]
+            title = f"單字本篩選結果 ({len(active_cards)} 張)"
+            if row == 6:
+                starred = menu(stdscr, f"{title} | 學習篩選", [("all", "全部卡片"), ("starred", "有星號")])
+                if starred:
+                    study_cards = [card for card in active_cards if starred == "all" or card.is_starred]
+                    run_study(stdscr, title, study_cards, state, client, session)
+            else:
+                practice_config = setup_menu(stdscr, title)
+                if practice_config:
+                    practice_questions = filtered_questions(active_questions, practice_config)
+                    if not practice_config["random"]:
+                        practice_questions = order_questions_by_cards(practice_questions, active_cards)
+                    run_practice(stdscr, title, practice_questions, practice_config, state, client, session)
+            set_cursor_visibility(0)
+
+
 def run_folder_notebook(
     stdscr: curses.window,
     cards: List[Card],
@@ -3209,7 +3602,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 day_questions = [question for question in questions if question.date == selected_date]
                 run_collection(stdscr, selected_date, day_cards, day_questions, state, client, session)
         elif choice == "notebook":
-            run_collection(stdscr, "單字本", cards, questions, state, client, session)
+            run_notebook(stdscr, cards, questions, state, client, session)
         elif choice == "folders":
             run_folder_notebook(stdscr, cards, questions, state, client, session)
         elif choice == "grammar":
