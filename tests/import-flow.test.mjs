@@ -381,6 +381,11 @@ test('completed review dates remain append-only in local state', () => {
   assert.deepEqual(completed.completedReviewDates, ['2026-07-21', '2026-07-22']);
 });
 
+test('daily flame requires only the word review to be complete', () => {
+  assert.equal(helpers.isDailyWordReviewComplete([]), true);
+  assert.equal(helpers.isDailyWordReviewComplete([{ id: 'due-term' }]), false);
+});
+
 test('grammar notes normalize searchable content without review fields', () => {
   const note = helpers.normalizeGrammarNote({
     title: '  形容詞 + 다고 느끼다  ',

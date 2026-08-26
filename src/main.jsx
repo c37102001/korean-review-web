@@ -1838,6 +1838,10 @@ function markReviewDateComplete(store, date = todayString()) {
   };
 }
 
+function isDailyWordReviewComplete(dueWordQuestions = []) {
+  return dueWordQuestions.length === 0;
+}
+
 function toggleStarredItem(updateStore, itemId) {
   updateStore((current) => {
     const starred = current.starred || [];
@@ -2251,25 +2255,17 @@ function App() {
   }, [user, storeLoading, store.recognition?.dailyDate, dailyQuestions, updateStore]);
 
   useEffect(() => {
-    if (!user || storeLoading || grammar.loading || grammar.reviewLoading) return;
+    if (!user || storeLoading) return;
     const today = todayString();
-    const todayComplete = (
-      todayDailyQuestions.length === 0
-      && todayRecognitionQuestions.length === 0
-      && todayGrammarQuestions.length === 0
-    );
+    const todayComplete = isDailyWordReviewComplete(todayDailyQuestions);
     const todayMarked = (store.completedReviewDates || []).includes(today);
     if (!todayComplete || todayMarked) return;
     markDateComplete(today).catch(() => {});
   }, [
     user,
     storeLoading,
-    grammar.loading,
-    grammar.reviewLoading,
     store.completedReviewDates,
     todayDailyQuestions,
-    todayRecognitionQuestions,
-    todayGrammarQuestions,
     markDateComplete,
   ]);
 
@@ -2598,7 +2594,10 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
         <div>
           <span className="eyebrow">Today · {dateLabel(today)}</span>
           <h1>今天也來練一點韓文</h1>
-          <p>目前有 {totalPending} 題等待完成，包含到期單字、單字例句聽力與每日文法例句聽力。</p>
+          <p>
+            今日有 {due.length} 題到期單字；完成單字測驗即可取得火焰。
+            另外 {recognition.length + grammarQuestions.length} 題聽力練習可自由選做。
+          </p>
           <div className="actions">
             <button className="primary" disabled={!totalPending} onClick={startNextDailyTask}><Dumbbell size={18} /> 開始今日測驗</button>
             <button onClick={() => setAddOpen(true)}><Plus size={18} /> 快速新增單字</button>
@@ -2669,7 +2668,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
             {!!recognition.length && (
               <div className="task-card recognition-task-card">
                 <div>
-                  <span className="badge">每日</span>
+                  <span className="badge">選做</span>
                   <h3>單字例句聽力</h3>
                   <p>從全部單字的所有例句隨機抽題 · 剩餘 {recognition.length} 題</p>
                 </div>
@@ -2679,7 +2678,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
             {!!grammarQuestions.length && (
               <div className="task-card grammar-task-card">
                 <div>
-                  <span className="badge">每日</span>
+                  <span className="badge">選做</span>
                   <h3>文法例句聽力</h3>
                   <p>{grammarSchedule.note.title} · 全部 {grammarQuestions.length} 個例句</p>
                 </div>
@@ -6414,6 +6413,7 @@ export {
   groupFoldersByTag,
   isTransientFirestoreError,
   markReviewDateComplete,
+  isDailyWordReviewComplete,
   formatGrammarExamplesText,
   formatPairLines,
   normalizeGrammarNote,

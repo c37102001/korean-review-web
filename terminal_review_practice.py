@@ -3465,6 +3465,18 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 skip_round_initialization = True
         today = today_string()
         completed = state.setdefault("completedReviewDates", [])
+        if not daily_due_questions(state, questions) and today not in completed:
+            snapshot = _clone_json(state)
+            completed.append(today)
+            completed.sort()
+            save_review_state_or_restore(
+                stdscr,
+                client,
+                session,
+                state,
+                snapshot,
+                "完成紀錄儲存失敗",
+            )
         choice = menu(
             stdscr,
             f"韓文筆記 Terminal | {session.email}",
@@ -3577,11 +3589,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                         client,
                         session,
                     )
-                if (
-                    not daily_due_questions(state, questions)
-                    and not daily_recognition_questions(state, questions)
-                    and not daily_grammar_questions(grammar_notes, grammar_review)[1]
-                ):
+                if not daily_due_questions(state, questions):
                     completed = state.setdefault("completedReviewDates", [])
                     today = today_string()
                     if today not in completed:
