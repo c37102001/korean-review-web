@@ -1906,27 +1906,8 @@ function recordAnswer(store, question, correct) {
   };
 }
 
-function shouldOfferLearnedFolder(store, question, correct, dailyReview) {
-  return Boolean(
-    dailyReview
-    && correct
-    && question?.kind === 'term'
-    && !store.stats?.[question.id]?.learnedFolderPrompted
-    && (store.stats?.[question.id]?.correct || 0) + 1 >= 5
-  );
-}
-
-function markLearnedFolderPrompted(store, question) {
-  return {
-    ...store,
-    stats: {
-      ...store.stats,
-      [question.id]: {
-        ...(store.stats?.[question.id] || {}),
-        learnedFolderPrompted: true,
-      },
-    },
-  };
+function recordDailyReviewAnswer(store, question, correct, direction = 'zh-ko') {
+  return recordAnswer(store, question, correct);
 }
 
 function recordDailyRoundAnswer(store, question, correct, {
@@ -4676,11 +4657,12 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const recognitionMode = set.mode === DAILY_RECOGNITION_MODE;
   const grammarMode = set.mode === DAILY_GRAMMAR_MODE;
   const grammarPracticeMode = !!set.grammarOnly;
+  const dailyWordMode = Boolean(set.dailyReview && !recognitionMode && !grammarMode);
   const fixedSource = set.termOnly || set.dueOnly || grammarPracticeMode;
-  const activeDirection = recognitionMode || grammarMode ? 'ko-zh' : set.dueOnly ? 'zh-ko' : direction;
+  const activeDirection = recognitionMode || grammarMode ? 'ko-zh' : set.dueOnly && !dailyWordMode ? 'zh-ko' : direction;
   const shouldRecordResults = shouldRecordPracticeResults(set);
   const [recognitionWordVisible, setRecognitionWordVisible] = useState(false);
-  const [started, setStarted] = useState(!!set.dueOnly);
+  const [started, setStarted] = useState(Boolean(set.dueOnly && !dailyWordMode));
   const [questionQueue, setQuestionQueue] = useState([]);
   const [index, setIndex] = useState(0);
   const [input, setInput] = useState('');
@@ -4692,9 +4674,6 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const [sessionFinished, setSessionFinished] = useState(false);
   const [completionError, setCompletionError] = useState('');
   const [completionSaving, setCompletionSaving] = useState(false);
-  const [learnedPrompt, setLearnedPrompt] = useState(false);
-  const [learnedPromptSaving, setLearnedPromptSaving] = useState(false);
-  const [learnedPromptError, setLearnedPromptError] = useState('');
   const [markedLearnedIds, setMarkedLearnedIds] = useState(() => new Set());
   const [markedUnfamiliarIds, setMarkedUnfamiliarIds] = useState(() => new Set());
   const [removedUnfamiliarIds, setRemovedUnfamiliarIds] = useState(() => new Set());
@@ -4743,8 +4722,6 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
-    setLearnedPrompt(false);
-    setLearnedPromptError('');
     setDirectLearnedError('');
     setDirectUnfamiliarError('');
     setRecognitionWordVisible(false);
@@ -4773,15 +4750,13 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
-    setLearnedPrompt(false);
-    setLearnedPromptError('');
     setDirectLearnedError('');
     setDirectUnfamiliarError('');
     setRecognitionWordVisible(false);
   };
 
   useEffect(() => {
-    if (!set.dueOnly) return;
+    if (!set.dueOnly || dailyWordMode) return;
     if (questionQueue.length) return;
     const nextQuestions = recognitionMode || grammarMode ? sourceQuestions : shuffleReviewQuestionsByKind(sourceQuestions);
     setQuestionQueue(nextQuestions);
@@ -4794,7 +4769,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     setLastCorrect(null);
     setTypedAttempts(0);
     setRecognitionWordVisible(false);
-  }, [set.dueOnly, recognitionMode, grammarMode, sourceQuestions, questionQueue.length]);
+  }, [set.dueOnly, dailyWordMode, recognitionMode, grammarMode, sourceQuestions, questionQueue.length]);
 
   useEffect(() => {
     if (!shouldAutoPronouncePracticePrompt({
@@ -4899,8 +4874,8 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const submit = (correct) => {
     if (recognitionMode) {
       updateStore((current) => recordDailyRecognitionAnswer(current, question, correct));
-    } else if (shouldRecordResults && (!correct || activeDirection !== 'ko-zh')) {
-      updateStore((current) => recordAnswer(current, question, correct));
+    } else if (shouldRecordResults) {
+      updateStore((current) => recordDailyReviewAnswer(current, question, correct, activeDirection));
     }
     if (soundEnabled) playResultSound(correct);
     goNext();
@@ -4908,13 +4883,9 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   // Used when 確認/Enter auto-grades a typed answer: records the result right
   // away (no manual 答對/答錯 choice) but keeps the question on screen so the
   // outcome is visible until the user presses Enter for the next one.
-  const finalizeTypedGrade = (correct, { learnedFolderPrompted = false } = {}) => {
+  const finalizeTypedGrade = (correct) => {
     if (shouldRecordResults) {
-      updateStore((current) => recordAnswer(
-        learnedFolderPrompted ? markLearnedFolderPrompted(current, question) : current,
-        question,
-        correct,
-      ));
+      updateStore((current) => recordAnswer(current, question, correct));
     }
     setGraded(true);
     setLastCorrect(correct);
@@ -4922,32 +4893,10 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     if (autoPronounce) window.setTimeout(() => speakAnswer(question), soundEnabled ? 320 : 0);
   };
   const gradeAndRecord = (correct) => {
-    if (shouldOfferLearnedFolder(store, question, correct, set.dailyReview)) {
-      setLearnedPrompt(true);
-      return;
-    }
     finalizeTypedGrade(correct);
   };
-  const resolveLearnedPrompt = async (folderChoice) => {
-    if (learnedPromptSaving) return;
-    setLearnedPromptError('');
-    if (folderChoice !== 'continue') {
-      setLearnedPromptSaving(true);
-      try {
-        if (folderChoice === 'learned') await persistCurrentWordAsLearned();
-        if (folderChoice === 'unfamiliar') await persistCurrentWordAsUnfamiliar();
-      } catch (error) {
-        setLearnedPromptError(error.message || '加入系統資料夾失敗');
-        setLearnedPromptSaving(false);
-        return;
-      }
-      setLearnedPromptSaving(false);
-    }
-    setLearnedPrompt(false);
-    finalizeTypedGrade(true, { learnedFolderPrompted: true });
-  };
   const handleConfirm = () => {
-    if (graded || learnedPrompt || !input.trim()) return;
+    if (graded || !input.trim()) return;
     const submittedInput = input.trim();
     setInput(submittedInput);
     const checkResult = compareAnswer(submittedInput, question.ko);
@@ -5012,12 +4961,12 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [started, revealed, graded, question, index, queue.length, recognitionMode, grammarMode]);
 
-  if (!started && !set.dueOnly) {
+  if (!started && (!set.dueOnly || dailyWordMode)) {
     return (
       <section className="page practice-start">
         <div className="panel start-panel">
           <span className="eyebrow">Test · {set.label}</span>
-          <h1>{set.dueOnly ? '今日測驗' : '選擇測驗方向'}</h1>
+          <h1>{dailyWordMode ? '選擇每日單字測驗方向' : '選擇測驗方向'}</h1>
           <div className="segmented">
             <button className={direction === 'zh-ko' ? 'active' : ''} onClick={() => setDirection('zh-ko')}>中翻韓</button>
             <button className={direction === 'ko-zh' ? 'active' : ''} onClick={() => setDirection('ko-zh')}>韓翻中</button>
@@ -5033,16 +4982,21 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
               <button className={source === 'all' ? 'active' : ''} onClick={() => setSource('all')}>全部</button>
             </div>
           )}
-          {!grammarPracticeMode && <div className="segmented compact">
+          {!dailyWordMode && !grammarPracticeMode && <div className="segmented compact">
             <button className={!starredOnly ? 'active' : ''} onClick={() => setStarredOnly(false)}>全部卡片</button>
             <button className={starredOnly ? 'active' : ''} onClick={() => setStarredOnly(true)}><Star size={16} /> 有星號</button>
           </div>}
-          <div className="segmented compact">
+          {!dailyWordMode && <div className="segmented compact">
             <button className={!randomOrder ? 'active' : ''} onClick={() => setRandomOrder(false)}>依原順序</button>
             <button className={randomOrder ? 'active' : ''} onClick={() => setRandomOrder(true)}><Shuffle size={16} /> 隨機順序</button>
-          </div>
-          <div className="fixed-source-note muted-note">自主測驗固定不紀錄，不會改變熟悉分數、間隔排程或每日複習紀錄。</div>
-          <p>{sourceQuestions.length} 題可測驗。{set.dueOnly ? '請看中文提示輸入韓文答案。' : '中翻韓只會出打字題，韓翻中會先思考再公佈答案。'}</p>
+          </div>}
+          {!dailyWordMode && <div className="fixed-source-note muted-note">自主測驗固定不紀錄，不會改變熟悉分數、間隔排程或每日複習紀錄。</div>}
+          <p>
+            {sourceQuestions.length} 題可測驗。
+            {activeDirection === 'zh-ko'
+              ? '請看中文提示輸入韓文答案。'
+              : '請先看韓文回想中文，公佈答案後自行選擇答對或答錯。'}
+          </p>
           <button className="primary wide" disabled={!sourceQuestions.length} onClick={startSession}>開始</button>
         </div>
       </section>
@@ -5121,7 +5075,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
                   }}
                   placeholder="여기에 한국어를 입력하세요 (Enter 送出)"
                   autoFocus
-                  disabled={graded || learnedPrompt}
+                  disabled={graded}
                 />
                 <span className="input-korean-count">{countKoreanLetters(input)}</span>
                 <div className="actions answer-actions">
@@ -5192,24 +5146,6 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
           onMarkUnfamiliar={markCurrentWordAsUnfamiliar}
         />
       </div>
-      {learnedPrompt && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="learned-prompt-title">
-          <div className="modal-panel learned-prompt-modal">
-            <span className="eyebrow">Learned word</span>
-            <h2 id="learned-prompt-title">要將這個單字分類嗎？</h2>
-            <p>
-              「{question.ko}」這次答對後已累積答對 {(store.stats?.[question.id]?.correct || 0) + 1} 次。
-              加入「已學習」後將排除於每日測驗；加入「不熟悉」則只方便集中複習，仍會照常出題。
-            </p>
-            {learnedPromptError && <div className="form-error">{learnedPromptError}</div>}
-            <div className="actions">
-              <button type="button" disabled={learnedPromptSaving} onClick={() => resolveLearnedPrompt('continue')}>繼續原本排程</button>
-              <button type="button" disabled={learnedPromptSaving || isCurrentWordUnfamiliar} onClick={() => resolveLearnedPrompt('unfamiliar')}>{isCurrentWordUnfamiliar ? '已在「不熟悉」' : '加入「不熟悉」'}</button>
-              <button type="button" className="primary" disabled={learnedPromptSaving} autoFocus onClick={() => resolveLearnedPrompt('learned')}>{learnedPromptSaving ? '處理中' : '加入「已學習」'}</button>
-            </div>
-          </div>
-        </div>
-      )}
     </section>
   );
 }
@@ -6496,11 +6432,11 @@ export {
   nextRecognitionRevealState,
   recordOrder,
   recordAnswer,
+  recordDailyReviewAnswer,
   recordDailyRecognitionAnswer,
   recordsFromSnapshot,
   resolveImportConflictDraft,
   shouldInitializeDailyRecognition,
-  shouldOfferLearnedFolder,
   shouldAutoPronouncePracticePrompt,
   shouldRecordPracticeResults,
   shouldShowStudyChinese,

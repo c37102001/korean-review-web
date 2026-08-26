@@ -1021,24 +1021,6 @@ def record_answer(
     del attempts[5000:]
 
 
-def should_offer_learned_folder(
-    state: Dict[str, Any], question: Question, correct: bool, daily_review: bool
-) -> bool:
-    stats = (state.get("stats") or {}).get(question.id, {})
-    return bool(
-        daily_review
-        and correct
-        and question.kind == "term"
-        and not stats.get("learnedFolderPrompted")
-        and int(stats.get("correct", 0)) + 1 >= 5
-    )
-
-
-def mark_learned_folder_prompted(state: Dict[str, Any], question: Question) -> None:
-    stats = state.setdefault("stats", {})
-    stats[question.id] = {**stats.get(question.id, {}), "learnedFolderPrompted": True}
-
-
 def record_daily_round_answer(
     state: Dict[str, Any],
     question: Question,
@@ -2910,7 +2892,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
     spoken_question_id = ""
     ok_attr = curses.A_BOLD
     wrong_attr = curses.A_REVERSE
-    set_cursor_visibility(1)
+    set_cursor_visibility(0 if config.get("direction") == "ko-zh" else 1)
     stdscr.keypad(True)
     should_record_results = config.get("record_results", False)
     enforce_answer_length = config.get("enforce_answer_length", False)
@@ -2954,22 +2936,34 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         unfamiliar_help = " *=不熟悉" if question.source.pos != "文法" else ""
         answer_visible = show_hint or graded
         learned_help = " -=已學習" if answer_visible and daily_review and question.kind == "term" else ""
+        self_grade_help = " 1=答錯 2=答對" if config["direction"] == "ko-zh" and answer_visible and not graded else ""
         if answer_visible and example_audio_enabled:
             example_controls = "7=例句" if question.kind == "grammar-example" else "7=例句 +=下一句"
-            controls = f"Esc=返回{star_help}{unfamiliar_help}{learned_help} {example_controls} 4/6=上下題 Enter={'下一題' if graded else '送出'}"
+            controls = f"Esc=返回{star_help}{unfamiliar_help}{learned_help}{self_grade_help} {example_controls} 4/6=上下題 Enter={'下一題' if graded else '送出'}"
         else:
             prompt_audio_help = " 7=題目" if config["direction"] == "ko-zh" and not answer_visible else ""
-            controls = f"Esc=返回{star_help}{unfamiliar_help}{learned_help}{prompt_audio_help} 8=答案 4/6=上下題 +=檢查 Enter={'下一題' if graded else '送出'}"
+            check_help = " +=檢查" if config["direction"] == "zh-ko" else ""
+            controls = f"Esc=返回{star_help}{unfamiliar_help}{learned_help}{self_grade_help}{prompt_audio_help} 8=答案 4/6=上下題{check_help} Enter={'下一題' if graded else '送出'}"
         draw_line(stdscr, 1, 2, f"測驗{record_label} | {title} | {idx + 1}/{len(questions)}  {auto_audio_control_label()} {controls}", curses.A_BOLD)
         length_hint = f"  ({count_korean_letters(answer)} 個韓文字)" if config["direction"] == "zh-ko" else ""
         star_prefix = f"{'★' if question.source.is_starred else '☆'} " if allow_star else ""
         y = draw_wrapped(stdscr, 2, 2, width - 4, f"{star_prefix}題目: {prompt}{length_hint}")
         draw_line(stdscr, y, 2, f"答案: {answer}" if show_hint else "答案: hidden (press 8)")
         input_y = y + 1
-        answered_attr = ok_attr if graded and last_correct is True else 0
-        positions = draw_answer_with_feedback(stdscr, input_y, 2, "輸入: ", user_input, partial, ok_attr, wrong_attr, answered_attr)
-        count_x = max(positions[-1] + 2, width - 18)
-        draw_line(stdscr, input_y, count_x, f"{count_korean_letters(user_input)} 個韓文字", curses.A_DIM)
+        if config["direction"] == "ko-zh":
+            self_grade_status = (
+                "自評: 答對，已記錄" if graded and last_correct is True
+                else "自評: 答錯，已記錄" if graded
+                else "自評: 1=答錯  2=答對" if show_hint
+                else "自評: 請先按 8 公佈答案"
+            )
+            draw_line(stdscr, input_y, 2, self_grade_status, ok_attr if graded and last_correct is True else 0)
+            positions = [2]
+        else:
+            answered_attr = ok_attr if graded and last_correct is True else 0
+            positions = draw_answer_with_feedback(stdscr, input_y, 2, "輸入: ", user_input, partial, ok_attr, wrong_attr, answered_attr)
+            count_x = max(positions[-1] + 2, width - 18)
+            draw_line(stdscr, input_y, count_x, f"{count_korean_letters(user_input)} 個韓文字", curses.A_DIM)
         message_y = input_y + 1
         if (show_hint or graded) and question.kind == "grammar-example":
             draw_line(stdscr, message_y, 2, f"文法: {question.source.ko}", curses.A_BOLD)
@@ -2993,13 +2987,14 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                         f"{marker} {index + 1}. {text}",
                         curses.A_BOLD if index == example_index else curses.A_DIM,
                     )
-        if retry_diff or (graded and last_correct is False):
+        if config["direction"] == "zh-ko" and (retry_diff or (graded and last_correct is False)):
             draw_answer_diff(stdscr, message_y, 2, user_input, answer, wrong_attr)
             message_y += 1
         if message:
             draw_line(stdscr, message_y, 2, message, curses.A_BOLD)
-        cursor_x = positions[min(input_cursor, len(positions) - 1)]
-        stdscr.move(min(height - 1, input_y), min(width - 1, cursor_x))
+        if config["direction"] == "zh-ko":
+            cursor_x = positions[min(input_cursor, len(positions) - 1)]
+            stdscr.move(min(height - 1, input_y), min(width - 1, cursor_x))
         update_curses_screen(stdscr)
         if pending_word_audio:
             pending_word_audio = False
@@ -3055,6 +3050,9 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 message = ""
                 result_message = ""
                 continue
+            if config["direction"] == "ko-zh":
+                message = "請先按 8 公佈答案，再按 1 或 2 自評。"
+                continue
             user_input = user_input.strip()
             input_cursor = min(input_cursor, len(user_input))
             if enforce_answer_length:
@@ -3077,33 +3075,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 )
                 continue
             if should_record_results:
-                previous_correct = int((state.get("stats") or {}).get(question.id, {}).get("correct", 0))
-                folder_choice = ""
-                if should_offer_learned_folder(state, question, correct, daily_review):
-                    choice = menu(
-                        stdscr,
-                        f"這次答對後累積 {previous_correct + 1} 次 | {question.ko}",
-                        [
-                            ("learned", "加入已學習"),
-                            ("unfamiliar", "加入不熟悉"),
-                            ("continue", "繼續原本排程"),
-                        ],
-                        "已學習會排除每日測驗；不熟悉只方便集中複習，仍會照常出題。",
-                    )
-                    set_cursor_visibility(1)
-                    folder_choice = choice or "continue"
                 snapshot = _clone_json(state)
-                if folder_choice:
-                    mark_learned_folder_prompted(state, question)
-                if folder_choice in ("learned", "unfamiliar"):
-                    try:
-                        if folder_choice == "learned":
-                            mark_word_as_learned(client, session, state, question.item_id)
-                        else:
-                            mark_word_as_unfamiliar(client, session, state, question.item_id)
-                    except RuntimeError as exc:
-                        message = f"加入資料夾失敗：{friendly_firebase_error(exc)}"
-                        continue
                 record_answer(state, question, correct)
                 if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
                     message = ""
@@ -3114,12 +3086,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             last_correct = correct
             retry_diff = False
             if should_record_results:
-                if correct and folder_choice == "learned":
-                    message = "答對，已加入「已學習」，未來每日測驗不再出現。按 Enter 或 6 進入下一題。"
-                elif correct and folder_choice == "unfamiliar":
-                    message = "答對，已加入「不熟悉」，仍會照常出題。按 Enter 或 6 進入下一題。"
-                else:
-                    message = "答對，按 Enter 或 6 進入下一題。" if correct else "答錯，已記錄。按 Enter 或 6 進入下一題。"
+                message = "答對，已記錄。按 Enter 或 6 進入下一題。" if correct else "答錯，已記錄。按 Enter 或 6 進入下一題。"
             else:
                 message = "答對，未紀錄。按 Enter 或 6 進入下一題。" if correct else "答錯，未紀錄。按 Enter 或 6 進入下一題。"
             result_message = message
@@ -3200,6 +3167,26 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 show_hint = revealing_answer
                 if revealing_answer:
                     pending_word_audio = _AUTO_PLAY_AUDIO and bool(answer_word)
+            elif key in ("1", "2") and config["direction"] == "ko-zh":
+                if not show_hint:
+                    message = "請先按 8 公佈答案。"
+                    continue
+                if graded:
+                    message = "這題已完成評分。"
+                    continue
+                correct = key == "2"
+                if should_record_results:
+                    snapshot = _clone_json(state)
+                    record_answer(state, question, correct)
+                    if not save_review_state_or_restore(stdscr, client, session, state, snapshot):
+                        message = ""
+                        continue
+                graded = True
+                last_correct = correct
+                result_label = "答對" if correct else "答錯"
+                record_suffix = "已記錄" if should_record_results else "未紀錄"
+                message = f"{result_label}，{record_suffix}。按 Enter 或 6 進入下一題。"
+                result_message = message
             elif key == "7" and (
                 (answer_visible and example_audio_enabled)
                 or (config["direction"] == "ko-zh" and not answer_visible)
@@ -3219,6 +3206,9 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                     continue
                 if graded:
                     message = "這張單字卡沒有其他可播放的例句。"
+                    continue
+                if config["direction"] == "ko-zh":
+                    message = "韓翻中請先公佈答案，再按 1 或 2 自評。"
                     continue
                 user_input = user_input.strip()
                 input_cursor = min(input_cursor, len(user_input))
@@ -3262,7 +3252,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 message = ""
                 result_message = ""
             elif key.isprintable():
-                if graded:
+                if graded or config["direction"] == "ko-zh":
                     continue
                 user_input = user_input[:input_cursor] + key + user_input[input_cursor:]
                 input_cursor += 1
@@ -3559,17 +3549,28 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                             break
                         random.shuffle(selected)
                 else:
+                    direction = menu(
+                        stdscr,
+                        "每日單字測驗 | 選擇方向",
+                        [
+                            ("zh-ko", "中翻韓 · 輸入韓文答案"),
+                            ("ko-zh", "韓翻中 · 公佈答案後自行評分"),
+                        ],
+                        "兩種方向的答對與答錯都會記錄熟悉分數及間隔排程。",
+                    )
+                    if not direction:
+                        continue
                     run_practice(
                         stdscr,
                         "今日全部複習" if task_type == DAILY_MIXED_MODE else f"{task_type} 複習",
                         selected,
                         {
-                            "direction": "zh-ko",
-                            "source": "all",
+                            "direction": direction,
+                            "source": "term",
                             "starred": False,
                             "random": True,
                             "record_results": True,
-                            "enforce_answer_length": True,
+                            "enforce_answer_length": direction == "zh-ko",
                             "daily_review": True,
                         },
                         state,

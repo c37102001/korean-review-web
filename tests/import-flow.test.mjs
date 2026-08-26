@@ -269,37 +269,37 @@ test('daily word-example listening wrong answers only affect tomorrow round stat
   assert.deepEqual(next.recognition.pendingWrongIds, [question.id]);
 });
 
-test('a fifth correct daily term answer offers the learned folder', () => {
-  const question = {
-    id: 'term-known',
-    itemId: 'card-known',
-    kind: 'term',
-    ko: '신문',
-    zh: '新聞',
-  };
+test('daily correct answers count for both translation directions', () => {
+  const question = { id: 'daily-ko-zh', kind: 'term', date: '2026-08-20' };
   const store = {
     attempts: [],
     stats: { [question.id]: { total: 6, correct: 4, wrong: 2 } },
-    progress: { [question.id]: { stage: 2, nextDue: '2026-08-12' } },
+    progress: { [question.id]: { stage: 2, nextDue: '2026-08-24' } },
   };
-  assert.equal(helpers.shouldOfferLearnedFolder(store, question, true, true), true);
-  assert.equal(helpers.shouldOfferLearnedFolder(store, question, true, false), false);
-  assert.equal(helpers.shouldOfferLearnedFolder(store, question, false, true), false);
-  assert.equal(helpers.shouldOfferLearnedFolder({
-    ...store,
-    stats: { [question.id]: { ...store.stats[question.id], learnedFolderPrompted: true } },
-  }, question, true, true), false);
+  for (const direction of ['zh-ko', 'ko-zh']) {
+    const next = helpers.recordDailyReviewAnswer(store, question, true, direction);
+    assert.equal(next.stats[question.id].total, 7);
+    assert.equal(next.stats[question.id].correct, 5);
+    assert.equal(next.stats[question.id].wrong, 2);
+    assert.equal(next.progress[question.id].stage, 3);
+    assert.equal(next.attempts[0].correct, true);
+  }
 });
 
-test('answer updates preserve the learned-folder prompt decision', () => {
-  const question = { id: 'term-prompted', kind: 'term', date: '2026-08-20' };
+test('daily wrong answers count for both translation directions', () => {
+  const question = { id: 'daily-ko-zh-wrong', kind: 'term', date: '2026-08-20' };
   const store = {
     attempts: [],
-    stats: { [question.id]: { total: 5, correct: 5, wrong: 0, learnedFolderPrompted: true } },
-    progress: { [question.id]: { stage: 2, nextDue: '2026-08-21' } },
+    stats: { [question.id]: { total: 6, correct: 4, wrong: 2 } },
+    progress: { [question.id]: { stage: 3, nextDue: '2026-09-01' } },
   };
-  const next = helpers.recordAnswer(store, question, true);
-  assert.equal(next.stats[question.id].learnedFolderPrompted, true);
+  for (const direction of ['zh-ko', 'ko-zh']) {
+    const next = helpers.recordDailyReviewAnswer(store, question, false, direction);
+    assert.equal(next.stats[question.id].total, 7);
+    assert.equal(next.stats[question.id].correct, 4);
+    assert.equal(next.stats[question.id].wrong, 3);
+    assert.equal(next.progress[question.id].stage, 0);
+  }
 });
 
 test('only explicit daily review tests record accuracy results', () => {
@@ -345,7 +345,7 @@ test('learned words are excluded from both daily terms and example listening', (
   );
 });
 
-test('declining the learned-folder offer keeps the original review progression', () => {
+test('daily correct answers keep the normal review progression', () => {
   const question = { id: 'term-normal', kind: 'term' };
   const store = {
     attempts: [],
