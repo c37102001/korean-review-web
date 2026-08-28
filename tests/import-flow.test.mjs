@@ -302,11 +302,19 @@ test('daily wrong answers count for both translation directions', () => {
   }
 });
 
-test('only explicit daily review tests record accuracy results', () => {
+test('daily reviews always record while notebook and folder tests require opt-in', () => {
   assert.equal(helpers.shouldRecordPracticeResults({ dailyReview: true, dueOnly: true }), true);
   assert.equal(helpers.shouldRecordPracticeResults({ dueOnly: true }), false);
   assert.equal(helpers.shouldRecordPracticeResults({ recordResults: true }), false);
+  assert.equal(helpers.shouldRecordPracticeResults({ allowResultRecording: true, recordResults: false }), false);
+  assert.equal(helpers.shouldRecordPracticeResults({ allowResultRecording: true, recordResults: true }), true);
   assert.equal(helpers.shouldRecordPracticeResults({}), false);
+});
+
+test('Chinese-to-Korean supports typing and self-grading while Korean-to-Chinese is always self-graded', () => {
+  assert.equal(helpers.isSelfGradeAnswerMode('zh-ko', 'typing'), false);
+  assert.equal(helpers.isSelfGradeAnswerMode('zh-ko', 'self-grade'), true);
+  assert.equal(helpers.isSelfGradeAnswerMode('ko-zh', 'typing'), true);
 });
 
 test('today wrong review contains only unique term questions failed on that date', () => {

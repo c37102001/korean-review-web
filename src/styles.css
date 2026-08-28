@@ -4436,9 +4436,7 @@ textarea:focus {
 
 @media (max-width: 600px) {
   html:has(.study-page),
-  html:has(.practice-page),
-  body:has(.study-page),
-  body:has(.practice-page) {
+  body:has(.study-page) {
     scroll-padding-top: 74px;
     scroll-snap-type: y proximity;
   }
@@ -4469,8 +4467,7 @@ textarea:focus {
     width: 100%;
   }
 
-  .flashcard-wrap,
-  .practice-answer-panel {
+  .flashcard-wrap {
     scroll-snap-align: start;
     scroll-snap-stop: always;
   }

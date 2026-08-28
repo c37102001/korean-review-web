@@ -2294,6 +2294,7 @@ function App() {
       mode: options.mode || '',
       grammarNote: options.grammarNote || null,
       onComplete: options.onComplete || null,
+      allowResultRecording: !!options.allowResultRecording,
     });
     navChild('practice');
   };
@@ -4639,7 +4640,14 @@ function StudyDetails({ item, allItems, onOpenItem, showChinese }) {
 }
 
 function shouldRecordPracticeResults(practiceSet) {
-  return Boolean(practiceSet?.dailyReview);
+  return Boolean(
+    practiceSet?.dailyReview
+    || (practiceSet?.allowResultRecording && practiceSet?.recordResults),
+  );
+}
+
+function isSelfGradeAnswerMode(direction, answerMode = 'typing') {
+  return direction === 'ko-zh' || answerMode === 'self-grade';
 }
 
 function shouldAutoPronouncePracticePrompt({ started, recognitionMode, grammarMode, activeDirection, autoPronounce, recognitionWordVisible, question }) {
@@ -4653,15 +4661,20 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const [source, setSource] = useState('term');
   const [starredOnly, setStarredOnly] = useState(false);
   const [randomOrder, setRandomOrder] = useState(true);
+  const [recordResults, setRecordResults] = useState(false);
+  const [answerMode, setAnswerMode] = useState('typing');
   const recognitionMode = set.mode === DAILY_RECOGNITION_MODE;
   const grammarMode = set.mode === DAILY_GRAMMAR_MODE;
   const grammarPracticeMode = !!set.grammarOnly;
   const dailyWordMode = Boolean(set.dailyReview && !recognitionMode && !grammarMode);
+  const configurableWordMode = Boolean(dailyWordMode || set.repeatable);
   const fixedSource = set.termOnly || set.dueOnly || grammarPracticeMode;
-  const activeDirection = recognitionMode || grammarMode ? 'ko-zh' : set.dueOnly && !dailyWordMode ? 'zh-ko' : direction;
-  const shouldRecordResults = shouldRecordPracticeResults(set);
+  const activeDirection = recognitionMode || grammarMode ? 'ko-zh' : set.dueOnly && !configurableWordMode ? 'zh-ko' : direction;
+  const shouldRecordResults = shouldRecordPracticeResults({ ...set, recordResults });
+  const canChooseResultRecording = Boolean(set.allowResultRecording && !set.dailyReview);
+  const selfGradeMode = isSelfGradeAnswerMode(activeDirection, answerMode);
   const [recognitionWordVisible, setRecognitionWordVisible] = useState(false);
-  const [started, setStarted] = useState(Boolean(set.dueOnly && !dailyWordMode));
+  const [started, setStarted] = useState(Boolean(set.dueOnly && !configurableWordMode));
   const [questionQueue, setQuestionQueue] = useState([]);
   const [index, setIndex] = useState(0);
   const [input, setInput] = useState('');
@@ -4755,7 +4768,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   };
 
   useEffect(() => {
-    if (!set.dueOnly || dailyWordMode) return;
+    if (!set.dueOnly || configurableWordMode) return;
     if (questionQueue.length) return;
     const nextQuestions = recognitionMode || grammarMode ? sourceQuestions : shuffleReviewQuestionsByKind(sourceQuestions);
     setQuestionQueue(nextQuestions);
@@ -4768,7 +4781,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     setLastCorrect(null);
     setTypedAttempts(0);
     setRecognitionWordVisible(false);
-  }, [set.dueOnly, dailyWordMode, recognitionMode, grammarMode, sourceQuestions, questionQueue.length]);
+  }, [set.dueOnly, configurableWordMode, recognitionMode, grammarMode, sourceQuestions, questionQueue.length]);
 
   useEffect(() => {
     if (!shouldAutoPronouncePracticePrompt({
@@ -4960,20 +4973,24 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [started, revealed, graded, question, index, queue.length, recognitionMode, grammarMode]);
 
-  if (!started && (!set.dueOnly || dailyWordMode)) {
+  if (!started && (!set.dueOnly || configurableWordMode)) {
     return (
       <section className="page practice-start">
         <div className="panel start-panel">
           <span className="eyebrow">Test · {set.label}</span>
-          <h1>{dailyWordMode ? '選擇每日單字測驗方向' : '選擇測驗方向'}</h1>
+          <h1>{dailyWordMode ? '選擇每日單字測驗方式' : '選擇測驗方式'}</h1>
           <div className="segmented">
             <button className={direction === 'zh-ko' ? 'active' : ''} onClick={() => setDirection('zh-ko')}>中翻韓</button>
             <button className={direction === 'ko-zh' ? 'active' : ''} onClick={() => setDirection('ko-zh')}>韓翻中</button>
           </div>
+          {direction === 'zh-ko' && <div className="segmented compact">
+            <button className={answerMode === 'typing' ? 'active' : ''} onClick={() => setAnswerMode('typing')}>打字輸入</button>
+            <button className={answerMode === 'self-grade' ? 'active' : ''} onClick={() => setAnswerMode('self-grade')}>心中作答</button>
+          </div>}
           {fixedSource ? (
             <div className="fixed-source-note">{grammarPracticeMode ? '此練習包含所選文法筆記的全部例句。' : '此測驗只包含單字題。'}</div>
           ) : direction === 'ko-zh' ? (
-            <div className="fixed-source-note">韓翻中只測驗單字，結果不會寫入正確率或間隔排程。</div>
+            <div className="fixed-source-note">韓翻中只測驗單字，公佈答案後自行評分。</div>
           ) : (
             <div className="segmented">
               <button className={source === 'term' ? 'active' : ''} onClick={() => setSource('term')}>單字 / 片語</button>
@@ -4989,12 +5006,24 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
             <button className={!randomOrder ? 'active' : ''} onClick={() => setRandomOrder(false)}>依原順序</button>
             <button className={randomOrder ? 'active' : ''} onClick={() => setRandomOrder(true)}><Shuffle size={16} /> 隨機順序</button>
           </div>}
-          {!dailyWordMode && <div className="fixed-source-note muted-note">自主測驗固定不紀錄，不會改變熟悉分數、間隔排程或每日複習紀錄。</div>}
+          {canChooseResultRecording && <div className="segmented compact">
+            <button className={!recordResults ? 'active' : ''} onClick={() => setRecordResults(false)}>不紀錄結果</button>
+            <button className={recordResults ? 'active' : ''} onClick={() => setRecordResults(true)}>紀錄答對答錯</button>
+          </div>}
+          {!dailyWordMode && (
+            <div className="fixed-source-note muted-note">
+              {shouldRecordResults
+                ? '本次測驗會更新熟悉分數、作答紀錄與間隔排程。'
+                : '本次測驗不會改變熟悉分數、作答紀錄或間隔排程。'}
+            </div>
+          )}
           <p>
             {sourceQuestions.length} 題可測驗。
-            {activeDirection === 'zh-ko'
+            {activeDirection === 'zh-ko' && !selfGradeMode
               ? '請看中文提示輸入韓文答案。'
-              : '請先看韓文回想中文，公佈答案後自行選擇答對或答錯。'}
+              : activeDirection === 'zh-ko'
+                ? '請先看中文回想韓文，公佈答案後自行選擇答對或答錯。'
+                : '請先看韓文回想中文，公佈答案後自行選擇答對或答錯。'}
           </p>
           <button className="primary wide" disabled={!sourceQuestions.length} onClick={startSession}>開始</button>
         </div>
@@ -5050,7 +5079,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
               <button disabled={!recognitionMode && !grammarMode && activeDirection !== 'ko-zh' && !revealed && !graded} onClick={() => speakAnswer(question)}><Volume2 size={16} /> {recognitionMode || grammarMode || activeDirection === 'ko-zh' ? '重播' : '發音'}</button>
             </div>
           </div>
-          {activeDirection === 'zh-ko' ? (
+          {!selfGradeMode ? (
             <>
               <div className="prompt">
                 <span>請輸入韓文</span>
@@ -5103,9 +5132,9 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
                 </div>
               ) : (
                 <div className="prompt ko">
-                  <span>{grammarMode ? '請根據中文回想韓文例句' : '請在心中想中文意思'}</span>
+                  <span>{grammarMode || activeDirection === 'zh-ko' ? '請在心中想韓文答案' : '請在心中想中文意思'}</span>
                   <div className="prompt-title">
-                    <h1>{grammarMode ? question.zh : question.ko}</h1>
+                    <h1>{grammarMode || activeDirection === 'zh-ko' ? question.zh : question.ko}</h1>
                     <QuestionKindBadge kind={question.kind} />
                   </div>
                 </div>
@@ -6092,7 +6121,7 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
           <button onClick={() => setAddExistingOpen(true)}><Link2 size={18} /> 加入現有單字</button>
           <button onClick={() => setAddOpen(true)}><Plus size={18} /> 新增單字</button>
           <button onClick={() => onStudy(folderItems, `${folder.name} 學習`)} disabled={!folderItems.length}><BookOpen size={18} /> 學習</button>
-          <button className="primary" onClick={() => onPractice(folderQuestions, `${folder.name} 測驗`)} disabled={!folderQuestions.length}><Dumbbell size={18} /> 測驗</button>
+          <button className="primary" onClick={() => onPractice(folderQuestions, `${folder.name} 測驗`, { allowResultRecording: true })} disabled={!folderQuestions.length}><Dumbbell size={18} /> 測驗</button>
           {!isSystemFolder(folder) && <button className="danger-soft" onClick={deleteFolder}><Trash2 size={17} /> 刪除資料夾</button>}
         </div>
       </div>
@@ -6252,7 +6281,7 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
           <button onClick={() => setJsonEditOpen(true)}><Pencil size={18} /> 修改 JSON</button>
           <button className="add-date-button" onClick={() => setAddOpen(true)}><Plus size={18} /> 新增單字</button>
           <button onClick={() => onStudy(enriched, '篩選結果')}><BookOpen size={18} /> 學習篩選結果</button>
-          <button className="primary" onClick={() => onPractice(practiceQuestions, '篩選結果測驗')}><Dumbbell size={18} /> 測驗篩選結果</button>
+          <button className="primary" onClick={() => onPractice(practiceQuestions, '篩選結果測驗', { allowResultRecording: true })}><Dumbbell size={18} /> 測驗篩選結果</button>
         </div>
       </div>
       {exportOpen && <ExportJsonModal items={items} onClose={() => setExportOpen(false)} />}
@@ -6414,6 +6443,7 @@ export {
   isTransientFirestoreError,
   markReviewDateComplete,
   isDailyWordReviewComplete,
+  isSelfGradeAnswerMode,
   formatGrammarExamplesText,
   formatPairLines,
   normalizeGrammarNote,
