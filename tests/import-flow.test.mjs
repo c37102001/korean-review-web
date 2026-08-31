@@ -410,11 +410,18 @@ test('grammar notes normalize searchable content without review fields', () => {
     title: '形容詞 + 다고 느끼다',
     notes: '覺得、感受到',
     examples: [{ id: 'grammar-1-example-0', ko: '한국이 다르다고 느꼈어요.', zh: '我覺得韓國不一樣。' }],
+    category: 'grammar',
     createdAt: '2026-07-23T01:00:00.000Z',
     updatedAt: '',
   });
   assert.equal('stats' in note, false);
   assert.equal('progress' in note, false);
+});
+
+test('note categories default to grammar and preserve vocabulary notes', () => {
+  assert.equal(helpers.normalizeGrammarNote({ title: '舊筆記' }, 'legacy').category, 'grammar');
+  assert.equal(helpers.normalizeGrammarNote({ title: '近義詞', category: 'vocabulary' }, 'vocab').category, 'vocabulary');
+  assert.equal(helpers.normalizeGrammarNote({ title: '錯誤分類', category: 'other' }, 'other').category, 'grammar');
 });
 
 test('folders keep unique word id references without copying word content', () => {
@@ -572,6 +579,27 @@ test('daily grammar review continues into newly added notes before wrapping', ()
     lastCompletedCreatedAt: grammarNotes[12].createdAt,
   }, '2026-07-24');
   assert.equal(wrapped.note.id, 'grammar-1');
+});
+
+test('daily grammar review excludes vocabulary notes', () => {
+  const notes = [
+    {
+      id: 'vocabulary-note',
+      category: 'vocabulary',
+      title: '近義詞',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      examples: [{ id: 'v-1', ko: '단어 예문', zh: '單字例句' }],
+    },
+    {
+      id: 'grammar-note',
+      category: 'grammar',
+      title: '文法',
+      createdAt: '2026-07-02T00:00:00.000Z',
+      examples: [{ id: 'g-1', ko: '문법 예문', zh: '文法例句' }],
+    },
+  ];
+  const schedule = helpers.dailyGrammarSchedule(notes, null, '2026-07-03');
+  assert.equal(schedule.note.id, 'grammar-note');
 });
 
 test('selected grammar notes combine every complete example into one practice set', () => {

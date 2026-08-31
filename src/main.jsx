@@ -48,6 +48,8 @@ const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
 const DAILY_RECOGNITION_LIMIT = 50;
 const DAILY_RECOGNITION_MODE = 'daily-recognition';
 const DAILY_GRAMMAR_MODE = 'daily-grammar';
+const NOTE_CATEGORY_GRAMMAR = 'grammar';
+const NOTE_CATEGORY_VOCABULARY = 'vocabulary';
 const SYSTEM_LEARNED_FOLDER_ID = 'system-learned';
 const SYSTEM_LEARNED_FOLDER_NAME = '已學習';
 const SYSTEM_UNFAMILIAR_FOLDER_ID = 'system-unfamiliar';
@@ -110,6 +112,9 @@ function normalizeGrammarNote(note, fallbackId = '') {
     title: String(note?.title || '').trim(),
     notes: String(note?.notes || '').trim(),
     examples,
+    category: note?.category === NOTE_CATEGORY_VOCABULARY
+      ? NOTE_CATEGORY_VOCABULARY
+      : NOTE_CATEGORY_GRAMMAR,
     createdAt: String(note?.createdAt || ''),
     updatedAt: String(note?.updatedAt || ''),
   };
@@ -223,7 +228,7 @@ function useGrammarNotes(user) {
       createdAt: input.createdAt || now,
       updatedAt: now,
     }, id);
-    if (!note.title) throw new Error('請輸入文法標題');
+    if (!note.title) throw new Error('請輸入筆記標題');
     await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'grammarNotes', id), note));
     return note;
   }, [user]);
@@ -1782,6 +1787,7 @@ function grammarPracticeQuestions(notes) {
 function dailyGrammarSchedule(notes, review, date = todayString()) {
   if (review?.completedDate === date) return { note: null, questions: [] };
   const eligible = notes
+    .filter((note) => note.category !== NOTE_CATEGORY_VOCABULARY)
     .map((note) => ({
       ...note,
       examples: (note.examples || []).filter((example) => example.ko && example.zh),
@@ -2293,6 +2299,7 @@ function App() {
       repeatable: !!options.repeatable,
       mode: options.mode || '',
       grammarNote: options.grammarNote || null,
+      noteCategory: options.noteCategory || NOTE_CATEGORY_GRAMMAR,
       onComplete: options.onComplete || null,
       allowResultRecording: !!options.allowResultRecording,
     });
@@ -2343,7 +2350,8 @@ function App() {
     notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     folders: <FoldersPage folders={folders.folders} items={items} loading={folders.loading} error={folders.error} onSave={folders.save} onDelete={folders.remove} onOpen={openFolder} />,
     folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
-    grammar: <GrammarNotebookPage notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} onPractice={startPractice} />,
+    grammar: <GrammarNotebookPage category={NOTE_CATEGORY_GRAMMAR} notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} onPractice={startPractice} />,
+    vocabularyNotes: <GrammarNotebookPage category={NOTE_CATEGORY_VOCABULARY} notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} onPractice={startPractice} />,
   };
 
   return (
@@ -2354,6 +2362,7 @@ function App() {
         <button className={page === 'notebook' ? 'active' : ''} onClick={() => navTop('notebook')}><LibraryBig size={18} /> 單字本</button>
         <button className={page === 'folders' || page === 'folder' ? 'active' : ''} onClick={() => navTop('folders')}><Folder size={18} /> 資料夾</button>
         <button className={page === 'grammar' ? 'active' : ''} onClick={() => navTop('grammar')}><NotebookPen size={18} /> 文法筆記</button>
+        <button className={page === 'vocabularyNotes' ? 'active' : ''} onClick={() => navTop('vocabularyNotes')}><BookOpen size={18} /> 單字筆記</button>
         <button className="logout-button" onClick={() => signOut(auth)}><LogOut size={18} /> 登出</button>
       </aside>
       <main>
@@ -4666,6 +4675,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const recognitionMode = set.mode === DAILY_RECOGNITION_MODE;
   const grammarMode = set.mode === DAILY_GRAMMAR_MODE;
   const grammarPracticeMode = !!set.grammarOnly;
+  const practiceNoteMeta = noteCategoryMeta(set.noteCategory || NOTE_CATEGORY_GRAMMAR);
   const dailyWordMode = Boolean(set.dailyReview && !recognitionMode && !grammarMode);
   const configurableWordMode = Boolean(dailyWordMode || set.repeatable);
   const fixedSource = set.termOnly || set.dueOnly || grammarPracticeMode;
@@ -4988,7 +4998,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
             <button className={answerMode === 'self-grade' ? 'active' : ''} onClick={() => setAnswerMode('self-grade')}>心中作答</button>
           </div>}
           {fixedSource ? (
-            <div className="fixed-source-note">{grammarPracticeMode ? '此練習包含所選文法筆記的全部例句。' : '此測驗只包含單字題。'}</div>
+            <div className="fixed-source-note">{grammarPracticeMode ? `此練習包含所選${practiceNoteMeta.singular}的全部例句。` : '此測驗只包含單字題。'}</div>
           ) : direction === 'ko-zh' ? (
             <div className="fixed-source-note">韓翻中只測驗單字，公佈答案後自行評分。</div>
           ) : (
@@ -5072,7 +5082,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
         <div className="practice-shell">
           <div className="progress-line"><span style={{ width: `${((index + 1) / queue.length) * 100}%` }} /></div>
           <div className="quiz-meta quiz-meta-row">
-            <span>{index + 1} / {queue.length} · {grammarMode ? '文法例句聽力' : grammarPracticeMode ? '文法例句練習' : recognitionMode ? '單字例句聽力' : activeDirection === 'zh-ko' ? '中翻韓' : '韓翻中'}</span>
+            <span>{index + 1} / {queue.length} · {grammarMode ? '文法例句聽力' : grammarPracticeMode ? `${practiceNoteMeta.singular}例句練習` : recognitionMode ? '單字例句聽力' : activeDirection === 'zh-ko' ? '中翻韓' : '韓翻中'}</span>
             <div className="quiz-options">
               <button className={soundEnabled ? 'selected-soft' : ''} onClick={() => setSoundEnabled((enabled) => !enabled)}>{soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />} 音效</button>
               {!recognitionMode && !grammarMode && <button className={autoPronounce ? 'selected-soft' : ''} onClick={() => setAutoPronounce((enabled) => !enabled)}>{autoPronounce ? <Volume2 size={16} /> : <VolumeX size={16} />} 自動發音</button>}
@@ -5085,7 +5095,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
                 <span>請輸入韓文</span>
                 <div className="prompt-title">
                   <h1>{question.zh}</h1>
-                  <QuestionKindBadge kind={question.kind} />
+                  <QuestionKindBadge kind={question.kind} category={question.source?.category} />
                 </div>
                 <small className="answer-length-hint">答案 {countKoreanLetters(question.ko)} 個韓文字</small>
               </div>
@@ -5135,7 +5145,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
                   <span>{grammarMode || activeDirection === 'zh-ko' ? '請在心中想韓文答案' : '請在心中想中文意思'}</span>
                   <div className="prompt-title">
                     <h1>{grammarMode || activeDirection === 'zh-ko' ? question.zh : question.ko}</h1>
-                    <QuestionKindBadge kind={question.kind} />
+                    <QuestionKindBadge kind={question.kind} category={question.source?.category} />
                   </div>
                 </div>
               )}
@@ -5178,10 +5188,11 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   );
 }
 
-function QuestionKindBadge({ kind }) {
+function QuestionKindBadge({ kind, category = NOTE_CATEGORY_GRAMMAR }) {
   const isGrammarExample = kind === 'grammar-example';
   const isExample = kind === 'example' || isGrammarExample;
-  return <small className={`question-kind-badge ${isExample ? 'example' : 'term'}`}>{isGrammarExample ? '文法例句' : isExample ? '例句' : '單字'}</small>;
+  const noteExampleLabel = category === NOTE_CATEGORY_VOCABULARY ? '單字筆記例句' : '文法例句';
+  return <small className={`question-kind-badge ${isExample ? 'example' : 'term'}`}>{isGrammarExample ? noteExampleLabel : isExample ? '例句' : '單字'}</small>;
 }
 
 function WordFolderButtons({ compact = false, isLearned = false, isUnfamiliar = false, learnedSaving = false, unfamiliarSaving = false, onMarkLearned, onMarkUnfamiliar }) {
@@ -5218,7 +5229,7 @@ function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, on
         {!visible ? (
           <div className="answer-placeholder">
             <span>答案卡片</span>
-            <strong>{question.kind === 'grammar-example' ? '答題後會顯示文法與完整例句' : '答題後會顯示完整單字卡'}</strong>
+            <strong>{question.kind === 'grammar-example' ? '答題後會顯示筆記與完整例句' : '答題後會顯示完整單字卡'}</strong>
           </div>
         ) : (
           <>
@@ -5462,22 +5473,54 @@ function TextSpeakButton({ text, lang, label }) {
   );
 }
 
-function GrammarNotebookPage({ notes, loading, error, onSave, onDelete, onPractice }) {
+function noteCategoryMeta(category) {
+  return category === NOTE_CATEGORY_VOCABULARY
+    ? {
+      category: NOTE_CATEGORY_VOCABULARY,
+      singular: '單字筆記',
+      item: '筆記',
+      heading: '單字筆記',
+      eyebrow: 'Vocabulary Notes',
+      addLabel: '新增單字筆記',
+    }
+    : {
+      category: NOTE_CATEGORY_GRAMMAR,
+      singular: '文法筆記',
+      item: '文法',
+      heading: '文法筆記',
+      eyebrow: 'Grammar Notes',
+      addLabel: '新增文法',
+    };
+}
+
+function GrammarNotebookPage({ category, notes, loading, error, onSave, onDelete, onPractice }) {
+  const meta = noteCategoryMeta(category);
+  const categoryNotes = useMemo(
+    () => notes.filter((note) => note.category === category),
+    [notes, category],
+  );
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [actionError, setActionError] = useState('');
+  useEffect(() => {
+    setQuery('');
+    setEditing(null);
+    setViewing(null);
+    setSelectedIds([]);
+    setActionError('');
+  }, [category]);
   const filtered = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase('zh-TW');
-    if (!keyword) return notes;
-    return notes.filter((note) => grammarNoteSearchText(note).includes(keyword));
-  }, [notes, query]);
+    if (!keyword) return categoryNotes;
+    return categoryNotes.filter((note) => grammarNoteSearchText(note).includes(keyword));
+  }, [categoryNotes, query]);
   useEffect(() => {
-    const existingIds = new Set(notes.map((note) => note.id));
+    const existingIds = new Set(categoryNotes.map((note) => note.id));
     setSelectedIds((current) => current.filter((id) => existingIds.has(id)));
-  }, [notes]);
-  const selectedNotes = notes.filter((note) => selectedIds.includes(note.id));
+  }, [categoryNotes]);
+  const selectedNotes = categoryNotes.filter((note) => selectedIds.includes(note.id));
   const selectedQuestions = grammarPracticeQuestions(selectedNotes);
   const filteredIds = filtered.map((note) => note.id);
   const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.includes(id));
@@ -5494,11 +5537,11 @@ function GrammarNotebookPage({ notes, loading, error, onSave, onDelete, onPracti
   const startGrammarPractice = (targetNotes, label) => {
     const questions = grammarPracticeQuestions(targetNotes);
     if (!questions.length) {
-      setActionError('所選文法筆記沒有可練習的完整例句');
+      setActionError(`所選${meta.singular}沒有可練習的完整例句`);
       return;
     }
     setActionError('');
-    onPractice(questions, label, { grammarOnly: true });
+    onPractice(questions, label, { grammarOnly: true, noteCategory: category });
   };
 
   const deleteNote = async (note) => {
@@ -5509,17 +5552,17 @@ function GrammarNotebookPage({ notes, loading, error, onSave, onDelete, onPracti
       if (viewing?.id === note.id) setViewing(null);
       setSelectedIds((current) => current.filter((id) => id !== note.id));
     } catch (deleteError) {
-      setActionError(deleteError.message || '刪除文法筆記失敗');
+      setActionError(deleteError.message || `刪除${meta.singular}失敗`);
     }
   };
 
   return (
     <section className="page grammar-page">
       <div className="topbar">
-        <div><span className="eyebrow">Grammar Notes</span><h1>文法筆記</h1></div>
+        <div><span className="eyebrow">{meta.eyebrow}</span><h1>{meta.heading}</h1></div>
         <div className="actions notebook-actions">
-          <button disabled={!selectedQuestions.length} onClick={() => startGrammarPractice(selectedNotes, `已選 ${selectedNotes.length} 個文法`)}><Dumbbell size={18} /> 練習已選 {selectedIds.length ? `(${selectedIds.length})` : ''}</button>
-          <button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 新增文法</button>
+          <button disabled={!selectedQuestions.length} onClick={() => startGrammarPractice(selectedNotes, `已選 ${selectedNotes.length} 個${meta.item}`)}><Dumbbell size={18} /> 練習已選 {selectedIds.length ? `(${selectedIds.length})` : ''}</button>
+          <button className="primary" onClick={() => setEditing({ category })}><Plus size={18} /> {meta.addLabel}</button>
         </div>
       </div>
       <label className="search grammar-search">
@@ -5529,18 +5572,18 @@ function GrammarNotebookPage({ notes, loading, error, onSave, onDelete, onPracti
       <div className={`bulk-word-actions grammar-bulk-actions ${selectedIds.length ? 'has-selection' : ''}`}>
         <div className="bulk-selection-summary">
           <ListChecks size={19} />
-          <strong>{selectedIds.length ? `已選 ${selectedIds.length} 個文法` : '選取文法筆記'}</strong>
+          <strong>{selectedIds.length ? `已選 ${selectedIds.length} 個${meta.item}` : `選取${meta.singular}`}</strong>
           <button type="button" className="text-link" disabled={!filteredIds.length} onClick={toggleFiltered}>{allFilteredSelected ? '取消選取搜尋結果' : '選取搜尋結果'}</button>
           {!!selectedIds.length && <button type="button" className="text-link muted-link" onClick={() => setSelectedIds([])}>清除選取</button>}
         </div>
         <div className="bulk-action-buttons">
-          <button type="button" className="primary" disabled={!selectedQuestions.length} onClick={() => startGrammarPractice(selectedNotes, `已選 ${selectedNotes.length} 個文法`)}><Dumbbell size={17} /> 練習 {selectedQuestions.length || 0} 個例句</button>
+          <button type="button" className="primary" disabled={!selectedQuestions.length} onClick={() => startGrammarPractice(selectedNotes, `已選 ${selectedNotes.length} 個${meta.item}`)}><Dumbbell size={17} /> 練習 {selectedQuestions.length || 0} 個例句</button>
         </div>
       </div>
       {actionError && <div className="form-error">{actionError}</div>}
       {error && <div className="sync-error">Firebase 同步失敗：{error}</div>}
       {loading ? (
-        <div className="panel grammar-empty">載入文法筆記中...</div>
+        <div className="panel grammar-empty">載入{meta.singular}中...</div>
       ) : filtered.length ? (
         <div className="grammar-grid">
           {filtered.map((note) => (
@@ -5552,15 +5595,17 @@ function GrammarNotebookPage({ notes, loading, error, onSave, onDelete, onPracti
               onDelete={deleteNote}
               selected={selectedIds.includes(note.id)}
               onToggleSelected={toggleSelected}
+              category={category}
             />
           ))}
         </div>
       ) : (
-        <div className="panel grammar-empty">{query ? '找不到符合搜尋條件的文法筆記。' : '目前還沒有文法筆記。'}</div>
+        <div className="panel grammar-empty">{query ? `找不到符合搜尋條件的${meta.singular}。` : `目前還沒有${meta.singular}。`}</div>
       )}
       {editing && (
         <GrammarEditorModal
           note={editing.id ? editing : null}
+          defaultCategory={editing.category || category}
           onSave={async (note) => {
             await onSave(note);
             setEditing(null);
@@ -5571,6 +5616,7 @@ function GrammarNotebookPage({ notes, loading, error, onSave, onDelete, onPracti
       {viewing && (
         <GrammarDetailModal
           note={viewing}
+          category={viewing.category}
           onEdit={(note) => {
             setViewing(null);
             setEditing(note);
@@ -5587,17 +5633,18 @@ function GrammarNotebookPage({ notes, loading, error, onSave, onDelete, onPracti
   );
 }
 
-function GrammarNoteCard({ note, onOpen, onEdit, onDelete, selected = false, onToggleSelected }) {
+function GrammarNoteCard({ note, onOpen, onEdit, onDelete, selected = false, onToggleSelected, category }) {
+  const meta = noteCategoryMeta(category);
   return (
     <article className={`grammar-card clickable-card ${selected ? 'selected' : ''}`} onClick={() => onOpen(note)}>
       <div className="card-head">
         <h2>{note.title}</h2>
         <div className="card-actions">
-          <label className="word-select-control" title="選取文法" onClick={(event) => event.stopPropagation()}>
+          <label className="word-select-control" title={`選取${meta.item}`} onClick={(event) => event.stopPropagation()}>
             <input type="checkbox" checked={selected} onChange={() => onToggleSelected(note.id)} />
             <span className="sr-only">選取 {note.title}</span>
           </label>
-          <EditIconButton onClick={() => onEdit(note)} label="編輯文法" />
+          <EditIconButton onClick={() => onEdit(note)} label={`編輯${meta.item}`} />
           <button
             type="button"
             className="edit-icon-button delete-icon-button"
@@ -5605,8 +5652,8 @@ function GrammarNoteCard({ note, onOpen, onEdit, onDelete, selected = false, onT
               event.stopPropagation();
               onDelete(note);
             }}
-            aria-label="刪除文法"
-            title="刪除文法"
+            aria-label={`刪除${meta.item}`}
+            title={`刪除${meta.item}`}
           >
             <Trash2 size={15} />
           </button>
@@ -5627,9 +5674,10 @@ function GrammarNoteCard({ note, onOpen, onEdit, onDelete, selected = false, onT
   );
 }
 
-function GrammarEditorModal({ note, onSave, onClose }) {
+function GrammarEditorModal({ note, defaultCategory = NOTE_CATEGORY_GRAMMAR, onSave, onClose }) {
   const [title, setTitle] = useState(note?.title || '');
   const [notes, setNotes] = useState(note?.notes || '');
+  const [category, setCategory] = useState(note?.category || defaultCategory);
   const [examplesText, setExamplesText] = useState(() => formatGrammarExamplesText(note?.examples));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -5637,7 +5685,7 @@ function GrammarEditorModal({ note, onSave, onClose }) {
   const submit = async (event) => {
     event.preventDefault();
     if (!title.trim()) {
-      setError('請輸入文法標題');
+      setError('請輸入筆記標題');
       return;
     }
     setSaving(true);
@@ -5649,9 +5697,10 @@ function GrammarEditorModal({ note, onSave, onClose }) {
         title,
         notes,
         examples,
+        category,
       });
     } catch (saveError) {
-      setError(saveError.message || '儲存文法筆記失敗');
+      setError(saveError.message || '儲存筆記失敗');
     } finally {
       setSaving(false);
     }
@@ -5662,12 +5711,19 @@ function GrammarEditorModal({ note, onSave, onClose }) {
       <form className="modal-panel grammar-editor" onSubmit={submit}>
         <button type="button" className="modal-close" disabled={saving} onClick={onClose} aria-label="關閉"><X size={18} /></button>
         <div className="grammar-modal-head">
-          <span className="eyebrow">Grammar Note</span>
-          <h2>{note ? '編輯文法' : '新增文法'}</h2>
+          <span className="eyebrow">Korean Note</span>
+          <h2>{note ? '編輯筆記' : '新增筆記'}</h2>
+        </div>
+        <div className="grammar-field">
+          <span>筆記分類</span>
+          <div className="segmented compact note-category-control">
+            <button type="button" className={category === NOTE_CATEGORY_GRAMMAR ? 'active' : ''} onClick={() => setCategory(NOTE_CATEGORY_GRAMMAR)}>文法筆記</button>
+            <button type="button" className={category === NOTE_CATEGORY_VOCABULARY ? 'active' : ''} onClick={() => setCategory(NOTE_CATEGORY_VOCABULARY)}>單字筆記</button>
+          </div>
         </div>
         <label className="grammar-field">
           <span>標題</span>
-          <textarea value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：覺得…、感受到…：形容詞 + 다고 느끼다" rows={2} />
+          <textarea value={title} onChange={(event) => setTitle(event.target.value)} placeholder={category === NOTE_CATEGORY_GRAMMAR ? '例如：覺得…、感受到…：形容詞 + 다고 느끼다' : '例如：容易混淆的近義詞整理'} rows={2} />
         </label>
         <label className="grammar-field">
           <span>筆記</span>
@@ -5688,14 +5744,15 @@ function GrammarEditorModal({ note, onSave, onClose }) {
         {error && <div className="json-edit-error">{error}</div>}
         <div className="actions grammar-editor-actions">
           <button type="button" disabled={saving} onClick={onClose}>取消</button>
-          <button className="primary" disabled={saving} type="submit"><Check size={17} /> {saving ? '儲存中' : '儲存文法'}</button>
+          <button className="primary" disabled={saving} type="submit"><Check size={17} /> {saving ? '儲存中' : '儲存筆記'}</button>
         </div>
       </form>
     </div>
   );
 }
 
-function GrammarDetailModal({ note, onEdit, onDelete, onPractice, onClose }) {
+function GrammarDetailModal({ note, category, onEdit, onDelete, onPractice, onClose }) {
+  const meta = noteCategoryMeta(category);
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key === 'Escape' && !event.isComposing) onClose();
@@ -5709,11 +5766,11 @@ function GrammarDetailModal({ note, onEdit, onDelete, onPractice, onClose }) {
       <div className="modal-panel grammar-detail-panel">
         <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
         <div className="grammar-detail-head">
-          <div><span className="eyebrow">Grammar Note</span><h2>{note.title}</h2></div>
+          <div><span className="eyebrow">{meta.eyebrow}</span><h2>{note.title}</h2></div>
           <div className="card-actions">
             <button className="small grammar-detail-practice" disabled={!grammarPracticeQuestions([note]).length} onClick={() => onPractice(note)}><Dumbbell size={16} /> 練習</button>
-            <EditIconButton onClick={() => onEdit(note)} label="編輯文法" />
-            <button className="edit-icon-button delete-icon-button" onClick={() => onDelete(note)} aria-label="刪除文法" title="刪除文法"><Trash2 size={15} /></button>
+            <EditIconButton onClick={() => onEdit(note)} label={`編輯${meta.item}`} />
+            <button className="edit-icon-button delete-icon-button" onClick={() => onDelete(note)} aria-label={`刪除${meta.item}`} title={`刪除${meta.item}`}><Trash2 size={15} /></button>
           </div>
         </div>
         <div className="grammar-created-at">建立於 {grammarTimestamp(note.createdAt)}</div>

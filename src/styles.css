@@ -1305,6 +1305,11 @@ main {
   line-height: 1.55;
 }
 
+.note-category-control {
+  width: min(420px, 100%);
+  margin: 0;
+}
+
 .grammar-example-editor {
   margin-top: 20px;
   padding-top: 18px;

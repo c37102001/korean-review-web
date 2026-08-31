@@ -46,6 +46,8 @@ REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90]
 DAILY_RECOGNITION_LIMIT = 50
 DAILY_RECOGNITION_MODE = "daily-recognition"
 DAILY_GRAMMAR_MODE = "daily-grammar"
+NOTE_CATEGORY_GRAMMAR = "grammar"
+NOTE_CATEGORY_VOCABULARY = "vocabulary"
 DAILY_MIXED_MODE = "daily-mixed"
 DAILY_WRONG_REVIEW_MODE = "daily-wrong-review"
 SYSTEM_LEARNED_FOLDER_ID = "system-learned"
@@ -101,6 +103,7 @@ class GrammarNote:
     title: str
     notes: str
     examples: List[Dict[str, str]]
+    category: str = NOTE_CATEGORY_GRAMMAR
     created_at: str = ""
 
 
@@ -724,6 +727,11 @@ def normalize_grammar_notes(records: List[Dict[str, Any]]) -> List[GrammarNote]:
             title=title,
             notes=str(record.get("notes") or "").strip(),
             examples=examples,
+            category=(
+                NOTE_CATEGORY_VOCABULARY
+                if record.get("category") == NOTE_CATEGORY_VOCABULARY
+                else NOTE_CATEGORY_GRAMMAR
+            ),
             created_at=str(record.get("createdAt") or ""),
         ))
     return sorted(notes, key=lambda note: (note.created_at, note.id))
@@ -820,7 +828,7 @@ def daily_grammar_questions(
     date_key = date_key or today_string()
     if review.get("completedDate") == date_key:
         return None, []
-    eligible = [note for note in notes if note.examples]
+    eligible = [note for note in notes if note.category == NOTE_CATEGORY_GRAMMAR and note.examples]
     if not eligible:
         return None, []
 
@@ -1874,6 +1882,7 @@ def run_grammar_note_detail(
     state: Dict[str, Any],
     client: FirebaseClient,
     session: AuthSession,
+    notebook_label: str = "文法筆記",
 ) -> None:
     note_index = start_index
     example_index = 0
@@ -1896,7 +1905,7 @@ def run_grammar_note_detail(
             1,
             2,
             (
-                f"文法筆記 | {note_index + 1}/{len(notes)}  Esc=列表 "
+                f"{notebook_label} | {note_index + 1}/{len(notes)}  Esc=列表 "
                 "P=練習 4/6=前後篇 7=播放例句 9=下一例句 ↑↓=捲動"
             ),
             curses.A_BOLD,
@@ -1970,7 +1979,7 @@ def run_grammar_note_detail(
             message = ""
         elif key in ("7", "9"):
             if not examples:
-                message = "這篇文法筆記沒有韓文例句。"
+                message = f"這篇{notebook_label}沒有韓文例句。"
                 continue
             if key == "9":
                 example_index = (example_index + 1) % len(examples)
@@ -1986,11 +1995,14 @@ def run_grammar_notebook(
     state: Dict[str, Any],
     client: FirebaseClient,
     session: AuthSession,
+    category: str = NOTE_CATEGORY_GRAMMAR,
 ) -> None:
-    if not grammar_notes:
-        wait_message(stdscr, "文法筆記", "目前還沒有文法筆記。")
+    notebook_label = "單字筆記" if category == NOTE_CATEGORY_VOCABULARY else "文法筆記"
+    category_notes = [note for note in grammar_notes if note.category == category]
+    if not category_notes:
+        wait_message(stdscr, notebook_label, f"目前還沒有{notebook_label}。")
         return
-    notes = sorted(grammar_notes, key=lambda note: (note.created_at, note.id), reverse=True)
+    notes = sorted(category_notes, key=lambda note: (note.created_at, note.id), reverse=True)
     selected_ids: set[str] = set()
     cursor = 0
     message = ""
@@ -2009,7 +2021,7 @@ def run_grammar_notebook(
             stdscr,
             1,
             2,
-            f"文法筆記 | 已選 {len(selected_ids)} 篇 · {selected_examples} 句",
+            f"{notebook_label} | 已選 {len(selected_ids)} 篇 · {selected_examples} 句",
             curses.A_BOLD,
         )
         draw_line(
@@ -2051,7 +2063,7 @@ def run_grammar_notebook(
             message = ""
             continue
         if key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13):
-            run_grammar_note_detail(stdscr, notes, cursor, state, client, session)
+            run_grammar_note_detail(stdscr, notes, cursor, state, client, session, notebook_label)
             set_cursor_visibility(0)
             message = ""
             continue
@@ -2066,14 +2078,14 @@ def run_grammar_notebook(
             message = ""
         elif key.lower() == "a":
             selected_ids = {note.id for note in notes}
-            message = "已選取全部文法筆記。"
+            message = f"已選取全部{notebook_label}。"
         elif key.lower() == "c":
             selected_ids.clear()
             message = "已清除選取。"
         elif key.lower() == "p":
             selected_notes = [note for note in notes if note.id in selected_ids]
             if not selected_notes:
-                message = "請先用 Space 勾選至少一篇文法筆記。"
+                message = f"請先用 Space 勾選至少一篇{notebook_label}。"
                 continue
             run_grammar_practice(stdscr, selected_notes, state, client, session)
             set_cursor_visibility(0)
@@ -2224,7 +2236,11 @@ def translation_answer_mode_menu(
     return direction, answer_mode
 
 
-def grammar_practice_setup_menu(stdscr: curses.window, title: str) -> Optional[Dict[str, Any]]:
+def grammar_practice_setup_menu(
+    stdscr: curses.window,
+    title: str,
+    notebook_label: str = "文法筆記",
+) -> Optional[Dict[str, Any]]:
     direction = "zh-ko"
     answer_mode = "typing"
     random_order = True
@@ -2238,7 +2254,7 @@ def grammar_practice_setup_menu(stdscr: curses.window, title: str) -> Optional[D
             "開始",
         ]
         stdscr.erase()
-        draw_line(stdscr, 1, 2, f"文法例句練習設定 | {title}", curses.A_BOLD)
+        draw_line(stdscr, 1, 2, f"{notebook_label}例句練習設定 | {title}", curses.A_BOLD)
         draw_line(
             stdscr,
             2,
@@ -2282,9 +2298,10 @@ def run_grammar_recall_practice(
     stdscr: curses.window,
     title: str,
     questions: List[Question],
+    notebook_label: str = "文法筆記",
 ) -> bool:
     if not questions:
-        wait_message(stdscr, "文法例句練習", "所選文法筆記沒有完整例句。")
+        wait_message(stdscr, f"{notebook_label}例句練習", f"所選{notebook_label}沒有完整例句。")
         return False
     index = 0
     revealed = False
@@ -2323,7 +2340,7 @@ def run_grammar_recall_practice(
             append_detail("請先在心中回答中文，再按 8 公佈答案。", attr=curses.A_DIM)
         else:
             append_detail(f"答案: {question.zh}", attr=curses.A_BOLD)
-            append_detail(f"文法: {question.source.ko}", attr=curses.A_BOLD)
+            append_detail(f"筆記: {question.source.ko}", attr=curses.A_BOLD)
             for note in question.source.notes:
                 append_detail(f"筆記: {note}", indent=2, attr=curses.A_DIM)
             append_detail(f"韓文: {question.ko}", indent=2)
@@ -2377,7 +2394,7 @@ def run_grammar_recall_practice(
                 message = "請先公佈答案並選擇答對或答錯。"
                 continue
             if index == len(questions) - 1:
-                wait_message(stdscr, "完成", "這組文法例句練習已完成。")
+                wait_message(stdscr, "完成", f"這組{notebook_label}例句練習已完成。")
                 return True
             index += 1
             revealed = questions[index].id in graded
@@ -2409,7 +2426,7 @@ def run_grammar_recall_practice(
             if not is_graded:
                 message = "請先公佈答案並選擇答對或答錯。"
             elif index == len(questions) - 1:
-                wait_message(stdscr, "完成", "這組文法例句練習已完成。")
+                wait_message(stdscr, "完成", f"這組{notebook_label}例句練習已完成。")
                 return True
             else:
                 index += 1
@@ -2425,19 +2442,21 @@ def run_grammar_practice(
     client: FirebaseClient,
     session: AuthSession,
 ) -> None:
+    category = notes[0].category if notes else NOTE_CATEGORY_GRAMMAR
+    notebook_label = "單字筆記" if category == NOTE_CATEGORY_VOCABULARY else "文法筆記"
     questions = grammar_practice_questions(notes)
     if not questions:
-        wait_message(stdscr, "文法例句練習", "所選文法筆記沒有完整例句。")
+        wait_message(stdscr, f"{notebook_label}例句練習", f"所選{notebook_label}沒有完整例句。")
         return
-    title = notes[0].title if len(notes) == 1 else f"已選 {len(notes)} 篇文法"
-    config = grammar_practice_setup_menu(stdscr, title)
+    title = notes[0].title if len(notes) == 1 else f"已選 {len(notes)} 篇{notebook_label}"
+    config = grammar_practice_setup_menu(stdscr, title, notebook_label)
     if not config:
         return
     active_questions = list(questions)
     if config["random"]:
         random.shuffle(active_questions)
     if config["direction"] == "ko-zh":
-        run_grammar_recall_practice(stdscr, title, active_questions)
+        run_grammar_recall_practice(stdscr, title, active_questions, notebook_label)
         return
     run_practice(
         stdscr,
@@ -3014,7 +3033,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             draw_line(stdscr, input_y, count_x, f"{count_korean_letters(user_input)} 個韓文字", curses.A_DIM)
         message_y = input_y + 1
         if (show_hint or graded) and question.kind == "grammar-example":
-            draw_line(stdscr, message_y, 2, f"文法: {question.source.ko}", curses.A_BOLD)
+            draw_line(stdscr, message_y, 2, f"筆記: {question.source.ko}", curses.A_BOLD)
             message_y += 1
             for note in question.source.notes:
                 message_y = draw_wrapped(stdscr, message_y, 4, width - 6, f"筆記: {note}", curses.A_DIM)
@@ -3544,6 +3563,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 ("notebook", "單字本"),
                 ("folders", "資料夾"),
                 ("grammar", "文法筆記"),
+                ("vocabulary_notes", "單字筆記"),
                 ("refresh", "重新同步"),
                 ("quit", "離開"),
             ],
@@ -3672,7 +3692,13 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
         elif choice == "folders":
             run_folder_notebook(stdscr, cards, questions, state, client, session)
         elif choice == "grammar":
-            run_grammar_notebook(stdscr, grammar_notes, state, client, session)
+            run_grammar_notebook(
+                stdscr, grammar_notes, state, client, session, NOTE_CATEGORY_GRAMMAR
+            )
+        elif choice == "vocabulary_notes":
+            run_grammar_notebook(
+                stdscr, grammar_notes, state, client, session, NOTE_CATEGORY_VOCABULARY
+            )
 
 
 def clear_plain_screen() -> None:
