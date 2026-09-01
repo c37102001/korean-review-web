@@ -24,6 +24,7 @@ import {
   LogOut,
   NotebookPen,
   Pencil,
+  Pin,
   Pause,
   Play,
   Plus,
@@ -115,6 +116,7 @@ function normalizeGrammarNote(note, fallbackId = '') {
     category: note?.category === NOTE_CATEGORY_VOCABULARY
       ? NOTE_CATEGORY_VOCABULARY
       : NOTE_CATEGORY_GRAMMAR,
+    pinned: note?.pinned === true,
     createdAt: String(note?.createdAt || ''),
     updatedAt: String(note?.updatedAt || ''),
   };
@@ -262,6 +264,7 @@ function normalizeFolder(folder, fallbackId = '') {
     id: String(folder?.id || fallbackId),
     name: String(folder?.name || '').trim(),
     tag: String(folder?.tag || '').trim(),
+    pinned: folder?.pinned === true,
     wordIds: [...new Set((Array.isArray(folder?.wordIds) ? folder.wordIds : []).filter(Boolean).map(String))],
     createdAt: String(folder?.createdAt || ''),
     updatedAt: String(folder?.updatedAt || ''),
@@ -3295,23 +3298,12 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
           <input type="date" value={isEditing ? formDate : lockedDate ? date : formDate} onChange={(event) => setFormDate(event.target.value)} disabled={lockedDate && !isEditing} required />
         </label>
         {!isEditing && !!folders.length && (
-          <fieldset className="wide-field folder-picker">
-            <legend>加入資料夾（選填）</legend>
-            <div className="folder-picker-options">
-              {folders.map((folder) => (
-                <label key={folder.id}>
-                  <input
-                    type="checkbox"
-                    checked={selectedFolderIds.includes(folder.id)}
-                    disabled={requiredFolderIds.includes(folder.id)}
-                    onChange={() => toggleFolder(folder.id)}
-                  />
-                  <Folder size={16} />
-                  <span>{folder.name}</span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
+          <FolderPickerDropdown
+            folders={folders}
+            selectedFolderIds={selectedFolderIds}
+            requiredFolderIds={requiredFolderIds}
+            onToggle={toggleFolder}
+          />
         )}
         {mode === 'manual' ? (
           <>
@@ -5513,8 +5505,10 @@ function GrammarNotebookPage({ category, notes, loading, error, onSave, onDelete
   }, [category]);
   const filtered = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase('zh-TW');
-    if (!keyword) return categoryNotes;
-    return categoryNotes.filter((note) => grammarNoteSearchText(note).includes(keyword));
+    const matches = keyword
+      ? categoryNotes.filter((note) => grammarNoteSearchText(note).includes(keyword))
+      : categoryNotes;
+    return [...matches].sort((left, right) => Number(right.pinned) - Number(left.pinned));
   }, [categoryNotes, query]);
   useEffect(() => {
     const existingIds = new Set(categoryNotes.map((note) => note.id));
@@ -5555,6 +5549,14 @@ function GrammarNotebookPage({ category, notes, loading, error, onSave, onDelete
       setActionError(deleteError.message || `刪除${meta.singular}失敗`);
     }
   };
+  const togglePinned = async (note) => {
+    setActionError('');
+    try {
+      await onSave({ ...note, pinned: !note.pinned });
+    } catch (pinError) {
+      setActionError(pinError.message || `${note.pinned ? '取消釘選' : '釘選'}${meta.singular}失敗`);
+    }
+  };
 
   return (
     <section className="page grammar-page">
@@ -5593,6 +5595,7 @@ function GrammarNotebookPage({ category, notes, loading, error, onSave, onDelete
               onOpen={setViewing}
               onEdit={setEditing}
               onDelete={deleteNote}
+              onTogglePinned={togglePinned}
               selected={selectedIds.includes(note.id)}
               onToggleSelected={toggleSelected}
               category={category}
@@ -5633,13 +5636,25 @@ function GrammarNotebookPage({ category, notes, loading, error, onSave, onDelete
   );
 }
 
-function GrammarNoteCard({ note, onOpen, onEdit, onDelete, selected = false, onToggleSelected, category }) {
+function GrammarNoteCard({ note, onOpen, onEdit, onDelete, onTogglePinned, selected = false, onToggleSelected, category }) {
   const meta = noteCategoryMeta(category);
   return (
     <article className={`grammar-card clickable-card ${selected ? 'selected' : ''}`} onClick={() => onOpen(note)}>
       <div className="card-head">
         <h2>{note.title}</h2>
         <div className="card-actions">
+          <button
+            type="button"
+            className={`edit-icon-button pin-icon-button ${note.pinned ? 'active' : ''}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onTogglePinned(note);
+            }}
+            aria-label={note.pinned ? `取消釘選${meta.item}` : `釘選${meta.item}`}
+            title={note.pinned ? '取消釘選' : '釘選到最上方'}
+          >
+            <Pin size={15} />
+          </button>
           <label className="word-select-control" title={`選取${meta.item}`} onClick={(event) => event.stopPropagation()}>
             <input type="checkbox" checked={selected} onChange={() => onToggleSelected(note.id)} />
             <span className="sr-only">選取 {note.title}</span>
@@ -5809,6 +5824,45 @@ function WordFolderTags({ itemId, folders = [] }) {
   );
 }
 
+function FolderPickerDropdown({ folders, selectedFolderIds, requiredFolderIds = [], onToggle, showCounts = false }) {
+  const selectedSet = new Set(selectedFolderIds);
+  const requiredSet = new Set(requiredFolderIds);
+  const selectedNames = folders
+    .filter((folder) => selectedSet.has(folder.id))
+    .map((folder) => folder.name);
+  const summary = selectedNames.length
+    ? selectedNames.length <= 2 ? selectedNames.join('、') : `已選 ${selectedNames.length} 個資料夾`
+    : '尚未選擇';
+
+  return (
+    <details className="wide-field folder-picker-dropdown">
+      <summary>
+        <span className="folder-picker-dropdown-title"><Folder size={17} /><strong>加入資料夾</strong><small>選填</small></span>
+        <span className="folder-picker-dropdown-summary">{summary}</span>
+        <ChevronDown size={17} className="folder-picker-chevron" />
+      </summary>
+      <div className="folder-picker-dropdown-menu">
+        {folders.map((folder) => {
+          const required = requiredSet.has(folder.id);
+          return (
+            <label className={selectedSet.has(folder.id) ? 'selected' : ''} key={folder.id}>
+              <input
+                type="checkbox"
+                checked={selectedSet.has(folder.id)}
+                disabled={required}
+                onChange={() => onToggle(folder.id)}
+              />
+              <Folder size={16} />
+              <span><strong>{folder.name}</strong>{showCounts && <small>{folder.wordIds.length} 個單字</small>}</span>
+              {required && <small className="folder-required-label">目前資料夾</small>}
+            </label>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
 function FolderAssignmentModal({ folders, wordIds, onAssign, onCreateFolderAndAssign, onClose }) {
   const [selectedFolderIds, setSelectedFolderIds] = useState([]);
   const [newFolderName, setNewFolderName] = useState('');
@@ -5852,15 +5906,12 @@ function FolderAssignmentModal({ folders, wordIds, onAssign, onCreateFolderAndAs
         <h2 id="assign-folder-title">將 {wordIds.length} 個單字加入資料夾</h2>
         <p>可以同時選擇多個資料夾；原本已存在的關聯不會重複。</p>
         {folders.length ? (
-          <div className="batch-folder-options">
-            {folders.map((folder) => (
-              <label className={selectedFolderIds.includes(folder.id) ? 'selected' : ''} key={folder.id}>
-                <input type="checkbox" checked={selectedFolderIds.includes(folder.id)} onChange={() => toggleFolder(folder.id)} />
-                <Folder size={18} />
-                <span><strong>{folder.name}</strong><small>{isLearnedFolder(folder) ? '加入後排除每日測驗' : isUnfamiliarFolder(folder) ? '保留每日測驗，方便集中複習' : `${folder.wordIds.length} 個單字`}</small></span>
-              </label>
-            ))}
-          </div>
+          <FolderPickerDropdown
+            folders={folders}
+            selectedFolderIds={selectedFolderIds}
+            onToggle={toggleFolder}
+            showCounts
+          />
         ) : <div className="empty small-empty">還沒有資料夾，可以直接在下方建立。</div>}
         <section className="create-folder-during-assignment">
           <div>
@@ -5998,7 +6049,7 @@ function FolderNameModal({ folder, tagSuggestions = [], onSave, onClose }) {
   );
 }
 
-function FolderOverviewCard({ folder, itemById, itemIds, onOpen, onEdit, onDelete }) {
+function FolderOverviewCard({ folder, itemById, itemIds, onOpen, onEdit, onDelete, onTogglePinned }) {
   const count = (folder.wordIds || []).filter((id) => itemIds.has(id)).length;
   const previews = (folder.wordIds || []).map((id) => itemById.get(id)).filter(Boolean).slice(0, 4);
   return (
@@ -6007,6 +6058,18 @@ function FolderOverviewCard({ folder, itemById, itemIds, onOpen, onEdit, onDelet
         <span className="folder-icon"><FolderOpen size={25} /></span>
         <div className="card-actions">
           {isSystemFolder(folder) && <span className={`system-folder-badge ${isUnfamiliarFolder(folder) ? 'unfamiliar' : ''}`}>系統資料夾</span>}
+          <button
+            type="button"
+            className={`edit-icon-button pin-icon-button ${folder.pinned ? 'active' : ''}`}
+            title={folder.pinned ? '取消釘選' : '釘選到最上方'}
+            aria-label={folder.pinned ? '取消釘選資料夾' : '釘選資料夾'}
+            onClick={(event) => {
+              event.stopPropagation();
+              onTogglePinned(folder);
+            }}
+          >
+            <Pin size={15} />
+          </button>
           <EditIconButton label={isSystemFolder(folder) ? '編輯標籤' : '編輯資料夾'} onClick={() => onEdit(folder)} />
           {!isSystemFolder(folder) && <button className="edit-icon-button delete-icon-button" title="刪除資料夾" aria-label="刪除資料夾" onClick={(event) => { event.stopPropagation(); onDelete(folder); }}><Trash2 size={15} /></button>}
         </div>
@@ -6023,15 +6086,37 @@ function FolderOverviewCard({ folder, itemById, itemIds, onOpen, onEdit, onDelet
 
 function FoldersPage({ folders, items, loading, error, onSave, onDelete, onOpen }) {
   const [editingFolder, setEditingFolder] = useState(undefined);
+  const [actionError, setActionError] = useState('');
   const itemIds = new Set(items.map((item) => item.id));
-  const folderGroups = groupFoldersByTag(folders);
-  const tagSuggestions = folderGroups.filter((group) => group.label !== UNTAGGED_FOLDER_LABEL).map((group) => group.label);
+  const pinnedFolders = folders.filter((folder) => folder.pinned);
+  const folderGroups = groupFoldersByTag(folders.filter((folder) => !folder.pinned));
+  const tagSuggestions = groupFoldersByTag(folders).filter((group) => group.label !== UNTAGGED_FOLDER_LABEL).map((group) => group.label);
   const itemById = new Map(items.map((item) => [item.id, item]));
   const removeFolder = async (folder) => {
     if (isSystemFolder(folder)) return;
     if (!window.confirm(`確定要刪除資料夾「${folder.name}」嗎？單字本中的單字不會被刪除。`)) return;
     await onDelete(folder.id);
   };
+  const togglePinned = async (folder) => {
+    setActionError('');
+    try {
+      await onSave({ ...folder, pinned: !folder.pinned });
+    } catch (pinError) {
+      setActionError(pinError.message || `${folder.pinned ? '取消釘選' : '釘選'}資料夾失敗`);
+    }
+  };
+  const renderFolderCard = (folder) => (
+    <FolderOverviewCard
+      key={folder.id}
+      folder={folder}
+      itemById={itemById}
+      itemIds={itemIds}
+      onOpen={onOpen}
+      onEdit={setEditingFolder}
+      onDelete={removeFolder}
+      onTogglePinned={togglePinned}
+    />
+  );
   return (
     <section className="page">
       <div className="topbar">
@@ -6040,9 +6125,18 @@ function FoldersPage({ folders, items, loading, error, onSave, onDelete, onOpen 
           <button className="primary" onClick={() => setEditingFolder(null)}><FolderPlus size={18} /> 新增資料夾</button>
         </div>
       </div>
-      {error && <div className="form-error">{error}</div>}
+      {(error || actionError) && <div className="form-error">{actionError || error}</div>}
       {loading ? <div className="empty">正在載入資料夾...</div> : folders.length ? (
         <div className="folder-tag-groups">
+          {!!pinnedFolders.length && (
+            <section className="folder-tag-group pinned-folder-group">
+              <div className="folder-tag-group-head">
+                <div><span className="folder-tag-mark pinned-tag-mark"><Pin size={12} /> 已釘選</span><h2>置頂資料夾</h2></div>
+                <span>{pinnedFolders.length} 個資料夾</span>
+              </div>
+              <div className="folder-grid">{pinnedFolders.map(renderFolderCard)}</div>
+            </section>
+          )}
           {folderGroups.map((group) => (
             <section className="folder-tag-group" key={group.label}>
               <div className="folder-tag-group-head">
@@ -6050,17 +6144,7 @@ function FoldersPage({ folders, items, loading, error, onSave, onDelete, onOpen 
                 <span>{group.folders.length} 個資料夾</span>
               </div>
               <div className="folder-grid">
-                {group.folders.map((folder) => (
-                  <FolderOverviewCard
-                    key={folder.id}
-                    folder={folder}
-                    itemById={itemById}
-                    itemIds={itemIds}
-                    onOpen={onOpen}
-                    onEdit={setEditingFolder}
-                    onDelete={removeFolder}
-                  />
-                ))}
+                {group.folders.map(renderFolderCard)}
               </div>
             </section>
           ))}
