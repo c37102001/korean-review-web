@@ -173,6 +173,54 @@ function parseGrammarExamplesText(text, existingExamples = []) {
   });
 }
 
+function formatTaggedNoteText(note) {
+  return [
+    '[標題]',
+    '',
+    String(note?.title || '').trim(),
+    '',
+    '[筆記]',
+    '',
+    String(note?.notes || '').trim(),
+    '',
+    '[例句]',
+    '',
+    formatGrammarExamplesText(note?.examples || []),
+  ].join('\n').trimEnd();
+}
+
+function parseTaggedNoteText(text, existingExamples = []) {
+  const normalized = String(text || '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]*\\[ \t]*$/, ''))
+    .join('\n');
+  const tagPattern = /^\s*\[(標題|筆記|例句)\]\s*$/gm;
+  const matches = [...normalized.matchAll(tagPattern)];
+  const requiredTags = ['標題', '筆記', '例句'];
+  const counts = new Map(requiredTags.map((tag) => [tag, 0]));
+  matches.forEach((match) => counts.set(match[1], (counts.get(match[1]) || 0) + 1));
+
+  const missing = requiredTags.filter((tag) => !counts.get(tag));
+  if (missing.length) throw new Error(`缺少 ${missing.map((tag) => `[${tag}]`).join('、')} 區段`);
+  const duplicated = requiredTags.filter((tag) => counts.get(tag) > 1);
+  if (duplicated.length) throw new Error(`${duplicated.map((tag) => `[${tag}]`).join('、')} 不可以重複`);
+
+  const sections = {};
+  matches.forEach((match, index) => {
+    const contentStart = match.index + match[0].length;
+    const contentEnd = matches[index + 1]?.index ?? normalized.length;
+    sections[match[1]] = normalized.slice(contentStart, contentEnd).trim();
+  });
+  if (!sections.標題) throw new Error('[標題] 內容不可留空');
+
+  return {
+    title: sections.標題,
+    notes: sections.筆記 || '',
+    examples: parseGrammarExamplesText(sections.例句 || '', existingExamples),
+  };
+}
+
 function useGrammarNotes(user) {
   const [state, setState] = useState({
     notes: [],
@@ -5690,28 +5738,20 @@ function GrammarNoteCard({ note, onOpen, onEdit, onDelete, onTogglePinned, selec
 }
 
 function GrammarEditorModal({ note, defaultCategory = NOTE_CATEGORY_GRAMMAR, onSave, onClose }) {
-  const [title, setTitle] = useState(note?.title || '');
-  const [notes, setNotes] = useState(note?.notes || '');
   const [category, setCategory] = useState(note?.category || defaultCategory);
-  const [examplesText, setExamplesText] = useState(() => formatGrammarExamplesText(note?.examples));
+  const [content, setContent] = useState(() => formatTaggedNoteText(note));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const submit = async (event) => {
     event.preventDefault();
-    if (!title.trim()) {
-      setError('請輸入筆記標題');
-      return;
-    }
     setSaving(true);
     setError('');
     try {
-      const examples = parseGrammarExamplesText(examplesText, note?.examples || []);
+      const parsed = parseTaggedNoteText(content, note?.examples || []);
       await onSave({
         ...note,
-        title,
-        notes,
-        examples,
+        ...parsed,
         category,
       });
     } catch (saveError) {
@@ -5736,26 +5776,18 @@ function GrammarEditorModal({ note, defaultCategory = NOTE_CATEGORY_GRAMMAR, onS
             <button type="button" className={category === NOTE_CATEGORY_VOCABULARY ? 'active' : ''} onClick={() => setCategory(NOTE_CATEGORY_VOCABULARY)}>單字筆記</button>
           </div>
         </div>
-        <label className="grammar-field">
-          <span>標題</span>
-          <textarea value={title} onChange={(event) => setTitle(event.target.value)} placeholder={category === NOTE_CATEGORY_GRAMMAR ? '例如：覺得…、感受到…：形容詞 + 다고 느끼다' : '例如：容易混淆的近義詞整理'} rows={2} />
-        </label>
-        <label className="grammar-field">
-          <span>筆記</span>
-          <textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder={'結構、使用時機、活用方式或補充說明\n可自由換行'} rows={6} />
-        </label>
-        <section className="grammar-example-editor">
-          <div className="grammar-example-editor-head">
-            <div><strong>例句</strong><span>韓文一行、中文一行，例句之間空一行</span></div>
-          </div>
+        <label className="grammar-field tagged-note-field">
+          <span>筆記內容</span>
           <textarea
-            className="grammar-examples-textarea"
-            value={examplesText}
-            onChange={(event) => setExamplesText(event.target.value)}
-            rows={14}
-            placeholder={'오늘은 휴일이라서 회사에 안 가요.\n今天是假日，所以不用去公司。\n\n저는 학생이라서 돈이 별로 없어요.\n因為我是學生，所以沒什麼錢。'}
+            className="tagged-note-textarea"
+            value={content}
+            onChange={(event) => setContent(event.target.value)}
+            rows={26}
+            spellCheck={false}
+            placeholder={'[標題]\n\n表示過去反覆的習慣：動詞 + -곤 했다\n\n[筆記]\n\n用來表達「以前常常……」、「過去時常會……」。\n\n[例句]\n\n어렸을 때 주말마다 할머니 댁에 가곤 했어요.\n小時候每到週末常常會去奶奶家。'}
           />
-        </section>
+          <small>請保留 [標題]、[筆記]、[例句]。例句使用韓文一行、中文一行，例句之間可空行。</small>
+        </label>
         {error && <div className="json-edit-error">{error}</div>}
         <div className="actions grammar-editor-actions">
           <button type="button" disabled={saving} onClick={onClose}>取消</button>
@@ -6586,6 +6618,7 @@ export {
   isDailyWordReviewComplete,
   isSelfGradeAnswerMode,
   formatGrammarExamplesText,
+  formatTaggedNoteText,
   formatPairLines,
   normalizeGrammarNote,
   grammarPracticeQuestions,
@@ -6599,6 +6632,7 @@ export {
   normalizeKoreanKey,
   normalizeRecords,
   parseGrammarExamplesText,
+  parseTaggedNoteText,
   parsePairLines,
   nextRecognitionRevealState,
   recordOrder,

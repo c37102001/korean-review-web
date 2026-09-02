@@ -1459,6 +1459,20 @@ main {
   margin: 0;
 }
 
+.tagged-note-field > small {
+  color: #718087;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.grammar-field .tagged-note-textarea {
+  width: 100%;
+  min-height: min(58vh, 610px);
+  resize: vertical;
+  white-space: pre-wrap;
+}
+
 .grammar-example-editor {
   margin-top: 20px;
   padding-top: 18px;

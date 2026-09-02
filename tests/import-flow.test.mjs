@@ -529,6 +529,51 @@ test('grammar example parser preserves ids and rejects an incomplete pair', () =
   );
 });
 
+test('tagged note input parses title, notes, and paired examples from one text area', () => {
+  const text = `[標題]
+
+表示過去反覆的習慣：動詞 + -곤 했다
+
+[筆記]
+
+用來表達「以前常常……」。
+動詞詞幹 + -곤 했다\\
+
+[例句]
+
+어렸을 때 주말마다 할머니 댁에 가곤 했어요.\\
+小時候每到週末常常會去奶奶家。
+
+학생 때 시험 전에 밤늦게까지 공부하곤 했어요.
+學生時代考試前常常會讀書讀到很晚。`;
+  const parsed = helpers.parseTaggedNoteText(text);
+
+  assert.equal(parsed.title, '表示過去反覆的習慣：動詞 + -곤 했다');
+  assert.equal(parsed.notes, '用來表達「以前常常……」。\n動詞詞幹 + -곤 했다');
+  assert.deepEqual(parsed.examples.map(({ ko, zh }) => ({ ko, zh })), [
+    { ko: '어렸을 때 주말마다 할머니 댁에 가곤 했어요.', zh: '小時候每到週末常常會去奶奶家。' },
+    { ko: '학생 때 시험 전에 밤늦게까지 공부하곤 했어요.', zh: '學生時代考試前常常會讀書讀到很晚。' },
+  ]);
+});
+
+test('tagged note editor round-trips existing notes and rejects malformed sections', () => {
+  const note = {
+    title: '近義詞整理',
+    notes: '使用時機不同。',
+    examples: [{ id: 'kept-example', ko: '예문이에요.', zh: '這是例句。' }],
+  };
+  const parsed = helpers.parseTaggedNoteText(helpers.formatTaggedNoteText(note), note.examples);
+
+  assert.equal(parsed.title, note.title);
+  assert.equal(parsed.notes, note.notes);
+  assert.equal(parsed.examples[0].id, 'kept-example');
+  assert.throws(() => helpers.parseTaggedNoteText('[標題]\n只有標題'), /缺少 \[筆記\]、\[例句\] 區段/);
+  assert.throws(
+    () => helpers.parseTaggedNoteText('[標題]\n一\n[標題]\n二\n[筆記]\n內容\n[例句]'),
+    /\[標題\] 不可以重複/,
+  );
+});
+
 test('word examples use alternating Korean and Chinese lines', () => {
   const text = `오늘은 날씨가 좋아요.
 今天天氣很好。
