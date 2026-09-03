@@ -1608,10 +1608,26 @@ function familiarityLevel(score) {
   return '學習中';
 }
 
-const FAMILIARITY_LEVELS = ['不熟悉', '學習中', '熟悉', '已熟悉'];
+const FAMILIARITY_FILTER_OPTIONS = [
+  { value: 'score-negative-1', label: '熟悉度 -1' },
+  { value: 'score-negative-2', label: '熟悉度 -2' },
+  { value: 'score-negative-3', label: '熟悉度 -3' },
+  { value: 'score-negative-4-or-less', label: '熟悉度 -4 以下' },
+  { value: '學習中', label: '學習中' },
+  { value: '熟悉', label: '熟悉' },
+  { value: '已熟悉', label: '已熟悉' },
+];
 
-function matchesFamiliarityLevels(level, selectedLevels = []) {
-  return !selectedLevels.length || selectedLevels.includes(level);
+function familiarityFilterValue(level, score) {
+  if (level !== '不熟悉') return level;
+  if (score === -1) return 'score-negative-1';
+  if (score === -2) return 'score-negative-2';
+  if (score === -3) return 'score-negative-3';
+  return 'score-negative-4-or-less';
+}
+
+function matchesFamiliarityLevels(level, selectedLevels = [], score = 0) {
+  return !selectedLevels.length || selectedLevels.includes(familiarityFilterValue(level, score));
 }
 
 function folderFilterWordIds(folders = [], selectedFolderIds = []) {
@@ -6406,7 +6422,7 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
     return { ...item, ...aggregateItemStats(store, ids) };
   }).filter((item) => {
     const matchesQuery = itemMatchesSearch(item, query, searchScope);
-    const matchesLevel = matchesFamiliarityLevels(item.level, selectedLevels);
+    const matchesLevel = matchesFamiliarityLevels(item.level, selectedLevels, item.score);
     const matchesFolder = !folderWordIds || folderWordIds.has(item.id);
     return matchesQuery && matchesLevel && matchesFolder;
   }).sort((a, b) => {
@@ -6476,7 +6492,7 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
         </div>
         <MultiSelectFilter
           label="熟悉度"
-          options={FAMILIARITY_LEVELS.map((option) => ({ value: option, label: option }))}
+          options={FAMILIARITY_FILTER_OPTIONS}
           selectedValues={selectedLevels}
           onToggle={toggleLevel}
           onClear={() => setSelectedLevels([])}

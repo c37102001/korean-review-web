@@ -760,12 +760,17 @@ test('familiarity score subtracts wrong answers and uses the new level threshold
   assert.equal(helpers.familiarityLevel(5), '已熟悉');
 });
 
-test('familiarity filtering supports multiple selected levels', () => {
-  const selected = ['不熟悉', '學習中'];
-  assert.equal(helpers.matchesFamiliarityLevels('不熟悉', selected), true);
-  assert.equal(helpers.matchesFamiliarityLevels('學習中', selected), true);
-  assert.equal(helpers.matchesFamiliarityLevels('熟悉', selected), false);
-  assert.equal(helpers.matchesFamiliarityLevels('已熟悉', selected), false);
+test('familiarity filtering supports multiple levels and precise negative scores', () => {
+  const selected = ['score-negative-1', 'score-negative-3', '學習中'];
+  assert.equal(helpers.matchesFamiliarityLevels('不熟悉', selected, -1), true);
+  assert.equal(helpers.matchesFamiliarityLevels('不熟悉', selected, -2), false);
+  assert.equal(helpers.matchesFamiliarityLevels('不熟悉', selected, -3), true);
+  assert.equal(helpers.matchesFamiliarityLevels('不熟悉', selected, -4), false);
+  assert.equal(helpers.matchesFamiliarityLevels('學習中', selected, 2), true);
+  assert.equal(helpers.matchesFamiliarityLevels('熟悉', selected, 3), false);
+  assert.equal(helpers.matchesFamiliarityLevels('已熟悉', selected, 5), false);
+  assert.equal(helpers.matchesFamiliarityLevels('不熟悉', ['score-negative-4-or-less'], -4), true);
+  assert.equal(helpers.matchesFamiliarityLevels('不熟悉', ['score-negative-4-or-less'], -12), true);
   assert.equal(helpers.matchesFamiliarityLevels('已熟悉', []), true);
 });
 
