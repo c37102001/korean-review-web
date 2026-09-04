@@ -44,7 +44,7 @@ import {
   X,
 } from 'lucide-react';
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { arrayRemove, arrayUnion, collection, deleteDoc, deleteField, doc, FieldPath, getDoc, getDocs, onSnapshot, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
+import { arrayRemove, arrayUnion, collection, deleteDoc, deleteField, doc, FieldPath, onSnapshot, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import { auth, db } from './firebase.js';
 import './styles.css';
 
@@ -441,7 +441,7 @@ function subtitleEntryAtTime(entries = [], milliseconds) {
   )) || null;
 }
 
-function useGrammarNotes(user) {
+function useGrammarNotes(user, enabled = true) {
   const [state, setState] = useState({
     notes: [],
     review: null,
@@ -451,7 +451,7 @@ function useGrammarNotes(user) {
   });
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !enabled) {
       setState({ notes: [], review: null, loading: false, reviewLoading: false, error: '' });
       return undefined;
     }
@@ -468,10 +468,10 @@ function useGrammarNotes(user) {
       },
       (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
     );
-  }, [user]);
+  }, [user, enabled]);
 
   useEffect(() => {
-    if (!user) return undefined;
+    if (!user || !enabled) return undefined;
     setState((current) => ({ ...current, reviewLoading: true }));
     return onSnapshot(
       doc(db, 'users', user.uid, 'settings', 'grammarReview'),
@@ -486,7 +486,7 @@ function useGrammarNotes(user) {
       },
       (error) => setState((current) => ({ ...current, reviewLoading: false, error: error.message })),
     );
-  }, [user]);
+  }, [user, enabled]);
 
   const save = useCallback(async (input) => {
     if (!user) throw new Error('尚未登入');
@@ -527,11 +527,11 @@ function useGrammarNotes(user) {
   return { ...state, save, remove, completeReview };
 }
 
-function useYoutubeSubtitles(user) {
+function useYoutubeSubtitles(user, enabled = true) {
   const [state, setState] = useState({ notes: [], loading: false, error: '' });
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !enabled) {
       setState({ notes: [], loading: false, error: '' });
       return undefined;
     }
@@ -549,7 +549,7 @@ function useYoutubeSubtitles(user) {
       },
       (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
     );
-  }, [user]);
+  }, [user, enabled]);
 
   const save = useCallback(async (input, linkedFolderPatch = null) => {
     if (!user) throw new Error('尚未登入');
@@ -676,11 +676,11 @@ function defaultUnfamiliarFolder() {
   }, SYSTEM_UNFAMILIAR_FOLDER_ID);
 }
 
-function useWordFolders(user) {
+function useWordFolders(user, enabled = true) {
   const [state, setState] = useState({ folders: [], loading: false, error: '' });
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !enabled) {
       setState({ folders: [], loading: false, error: '' });
       return undefined;
     }
@@ -708,7 +708,7 @@ function useWordFolders(user) {
       },
       (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
     );
-  }, [user]);
+  }, [user, enabled]);
 
   const save = useCallback(async (input) => {
     if (!user) throw new Error('尚未登入');
@@ -903,78 +903,6 @@ function progressShardId(questionId) {
   return String(hash % PROGRESS_SHARD_COUNT).padStart(2, '0');
 }
 
-function buildProgressShards(store) {
-  const shards = {};
-  const questionIds = new Set([...Object.keys(store.stats || {}), ...Object.keys(store.progress || {})]);
-  questionIds.forEach((questionId) => {
-    const shardId = progressShardId(questionId);
-    if (!shards[shardId]) shards[shardId] = {};
-    shards[shardId][questionId] = {
-      stats: store.stats?.[questionId] || null,
-      progress: store.progress?.[questionId] || null,
-    };
-  });
-  return shards;
-}
-
-async function readFirestoreStoreV3(uid) {
-  const settingsSnap = await getDoc(reviewSettingsRef(uid));
-  if (!settingsSnap.exists() || settingsSnap.data().schemaVersion !== FIRESTORE_SCHEMA_VERSION) return null;
-
-  const settings = settingsSnap.data();
-  const [progressSnap, reviewDaySnaps] = await Promise.all([
-    getDocs(collection(db, 'users', uid, 'progressShards')),
-    Promise.all([getDoc(doc(db, 'users', uid, 'reviewDays', todayString()))]),
-  ]);
-  const stats = {};
-  const progress = {};
-  progressSnap.docs.forEach((documentSnap) => {
-    const entries = documentSnap.data().entries || {};
-    Object.entries(entries).forEach(([questionId, data]) => {
-      if (data.stats) stats[questionId] = data.stats;
-      if (data.progress) progress[questionId] = data.progress;
-    });
-  });
-  const attempts = reviewDaySnaps
-    .flatMap((documentSnap) => documentSnap.exists() ? documentSnap.data().attempts || [] : [])
-    .sort((a, b) => (b.time || '').localeCompare(a.time || ''))
-    .slice(0, 5000);
-  return {
-    ...emptyStore(),
-    stats,
-    progress,
-    attempts,
-    completedReviewDates: settings.completedReviewDates || [],
-    starred: settings.starred || [],
-    recognition: settings.recognition || null,
-  };
-}
-
-async function writeFullFirestoreStoreV3(uid, store) {
-  const operations = [];
-  const shards = buildProgressShards(store);
-  Array.from({ length: PROGRESS_SHARD_COUNT }, (_, index) => String(index).padStart(2, '0')).forEach((shardId) => {
-    operations.push((batch) => batch.set(
-      doc(db, 'users', uid, 'progressShards', shardId),
-      { entries: shards[shardId] || {}, updatedAt: serverTimestamp() },
-    ));
-  });
-  Object.entries(attemptsByDate(store.attempts)).forEach(([date, attempts]) => {
-    operations.push((batch) => batch.set(
-      doc(db, 'users', uid, 'reviewDays', date),
-      { date, attempts, updatedAt: serverTimestamp() },
-    ));
-  });
-  await commitFirestoreOperations(operations);
-  await setDoc(reviewSettingsRef(uid), {
-    schemaVersion: FIRESTORE_SCHEMA_VERSION,
-    completedReviewDates: store.completedReviewDates || [],
-    starred: store.starred || [],
-    recognition: store.recognition || null,
-    updatedAt: serverTimestamp(),
-  });
-}
-
 async function persistFirestoreStoreChanges(uid, previous, next) {
   const operations = [];
   const changedEntriesByShard = new Map();
@@ -1069,34 +997,61 @@ function useFirestoreStore(user) {
       if (!user) return;
       setState((current) => ({ ...current, loading: true, error: '' }));
       try {
-        let initialRecordsResolved = false;
-        const normalizedRecords = await new Promise((resolve, reject) => {
-          unsubscribers.push(onSnapshot(collection(db, 'users', user.uid, 'records'), { includeMetadataChanges: true }, (snap) => {
+        const initial = new Map();
+        let initialized = false;
+        const today = todayString();
+        const applySnapshot = (key, value) => {
+          initial.set(key, value);
+          if (!initialized && ['records', 'settings', 'progress', 'attempts'].every((name) => initial.has(name))) {
+            initialized = true;
+            const loadedStore = {
+              ...emptyStore(),
+              ...initial.get('settings'),
+              ...initial.get('progress'),
+              attempts: initial.get('attempts'),
+              customRecords: initial.get('records'),
+            };
+            storeRef.current = loadedStore;
+            persistedStoreRef.current = loadedStore;
+            if (!cancelled) setState({ loading: false, error: '', store: loadedStore });
+          }
+        };
+        const listen = (key, reference, parseSnapshot, applyRemote) => {
+          unsubscribers.push(onSnapshot(reference, { includeMetadataChanges: true }, (snap) => {
             if (snap.metadata.hasPendingWrites) return;
-            const customRecords = recordsFromSnapshot(snap);
-            if (!initialRecordsResolved) {
-              initialRecordsResolved = true;
-              resolve(customRecords);
+            const value = parseSnapshot(snap);
+            if (!initialized) {
+              applySnapshot(key, value);
               return;
             }
-            if (!cancelled) applyOrDeferRemote('records', (current) => ({ ...current, customRecords }));
-          }, reject));
-        });
-        let persistedStore = await readFirestoreStoreV3(user.uid);
-        if (!persistedStore) {
-          persistedStore = emptyStore();
-          await writeFullFirestoreStoreV3(user.uid, persistedStore);
-        }
-        if (cancelled) return;
-        const loadedStore = { ...persistedStore, customRecords: normalizedRecords };
-        storeRef.current = loadedStore;
-        persistedStoreRef.current = loadedStore;
-        setState({ loading: false, error: '', store: loadedStore });
-
-        unsubscribers.push(onSnapshot(reviewSettingsRef(user.uid), { includeMetadataChanges: true }, (snap) => {
-          if (cancelled || !snap.exists() || snap.metadata.fromCache) return;
-          const settings = snap.data();
-          applyOrDeferRemote('settings', (current) => ({
+            if (!cancelled) applyOrDeferRemote(key, (current) => applyRemote(current, value));
+          }, (error) => {
+            if (cancelled) return;
+            if (!initialized) {
+              setState({ loading: false, error: error.message, store: emptyStore() });
+              return;
+            }
+            setState((current) => ({ ...current, error: error.message }));
+          }));
+        };
+        listen(
+          'records',
+          collection(db, 'users', user.uid, 'records'),
+          recordsFromSnapshot,
+          (current, customRecords) => ({ ...current, customRecords }),
+        );
+        listen(
+          'settings',
+          reviewSettingsRef(user.uid),
+          (snap) => {
+            const settings = snap.exists() ? snap.data() : {};
+            return {
+              completedReviewDates: settings.completedReviewDates || [],
+              starred: settings.starred || [],
+              recognition: settings.recognition || null,
+            };
+          },
+          (current, settings) => ({
             ...current,
             completedReviewDates: [...new Set([
               ...(current.completedReviewDates || []),
@@ -1104,30 +1059,36 @@ function useFirestoreStore(user) {
             ])].sort(),
             starred: settings.starred || [],
             recognition: settings.recognition || null,
-          }));
-        }));
-        unsubscribers.push(onSnapshot(collection(db, 'users', user.uid, 'progressShards'), { includeMetadataChanges: true }, (snap) => {
-          if (cancelled || snap.metadata.fromCache) return;
-          const stats = {};
-          const progress = {};
-          snap.docs.forEach((documentSnap) => {
-            Object.entries(documentSnap.data().entries || {}).forEach(([questionId, data]) => {
-              if (data.stats) stats[questionId] = data.stats;
-              if (data.progress) progress[questionId] = data.progress;
+          }),
+        );
+        listen(
+          'progress',
+          collection(db, 'users', user.uid, 'progressShards'),
+          (snap) => {
+            const stats = {};
+            const progress = {};
+            snap.docs.forEach((documentSnap) => {
+              Object.entries(documentSnap.data().entries || {}).forEach(([questionId, data]) => {
+                if (data.stats) stats[questionId] = data.stats;
+                if (data.progress) progress[questionId] = data.progress;
+              });
             });
-          });
-          applyOrDeferRemote('progress', (current) => ({ ...current, stats, progress }));
-        }));
-        const today = todayString();
-        unsubscribers.push(onSnapshot(doc(db, 'users', user.uid, 'reviewDays', today), { includeMetadataChanges: true }, (snap) => {
-          if (cancelled || snap.metadata.fromCache) return;
-          const todayAttempts = snap.exists() ? snap.data().attempts || [] : [];
-          applyOrDeferRemote('attempts', (current) => {
+            return { stats, progress };
+          },
+          (current, progress) => ({ ...current, ...progress }),
+        );
+        listen(
+          'attempts',
+          doc(db, 'users', user.uid, 'reviewDays', today),
+          (snap) => (snap.exists() ? snap.data().attempts || [] : []),
+          (current, todayAttempts) => {
             const otherAttempts = (current.attempts || []).filter((attempt) => attemptDate(attempt) !== today);
-            const attempts = [...todayAttempts, ...otherAttempts].sort((a, b) => (b.time || '').localeCompare(a.time || ''));
-            return { ...current, attempts };
-          });
-        }));
+            return {
+              ...current,
+              attempts: [...todayAttempts, ...otherAttempts].sort((a, b) => (b.time || '').localeCompare(a.time || '')),
+            };
+          },
+        );
       } catch (error) {
         if (!cancelled) setState({ loading: false, error: error.message, store: emptyStore() });
       }
@@ -2601,13 +2562,19 @@ function shuffleReviewQuestionsByKind(questions, seed = Date.now()) {
 function App() {
   const { loading: authLoading, user } = useAuthUser();
   const [store, updateStore, storeLoading, storeError, markDateComplete] = useFirestoreStore(user);
-  const grammar = useGrammarNotes(user);
-  const ytSubtitles = useYoutubeSubtitles(user);
-  const folders = useWordFolders(user);
   const [page, setPage] = useState('home');
+  const [practiceSet, setPracticeSet] = useState(null);
+  const grammarEnabled = page === 'home'
+    || page === 'grammar'
+    || page === 'vocabularyNotes'
+    || (page === 'practice' && practiceSet?.mode === DAILY_GRAMMAR_MODE);
+  const ytEnabled = page === 'ytSubtitles' || page === 'ytSubtitle';
+  const foldersEnabled = !['calendar', 'grammar', 'vocabularyNotes', 'ytSubtitles'].includes(page);
+  const grammar = useGrammarNotes(user, grammarEnabled);
+  const ytSubtitles = useYoutubeSubtitles(user, ytEnabled);
+  const folders = useWordFolders(user, foldersEnabled);
   const [pageStack, setPageStack] = useState([]);
   const [selectedDate, setSelectedDate] = useState(() => todayString());
-  const [practiceSet, setPracticeSet] = useState(null);
   const [studySet, setStudySet] = useState(null);
   const [selectedFolderId, setSelectedFolderId] = useState(null);
   const [selectedYoutubeSubtitleId, setSelectedYoutubeSubtitleId] = useState(null);
@@ -2758,7 +2725,9 @@ function App() {
 
   if (authLoading) return <LoadingScreen text="正在確認登入狀態" />;
   if (!user) return <LoginPage />;
-  if (storeLoading || folders.loading || ytSubtitles.loading) return <LoadingScreen text="載入資料中" />;
+  if (storeLoading || (foldersEnabled && folders.loading) || (grammarEnabled && grammar.loading) || (ytEnabled && ytSubtitles.loading)) {
+    return <LoadingScreen text="載入資料中" />;
+  }
 
   const views = {
     home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} recognitionQuestions={todayRecognitionQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} />,
@@ -6404,6 +6373,7 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
   const [definitionBubble, setDefinitionBubble] = useState(null);
   const [playerLoaded, setPlayerLoaded] = useState(false);
   const [activeSubtitleEntryId, setActiveSubtitleEntryId] = useState(null);
+  const [selectedSubtitleEntryId, setSelectedSubtitleEntryId] = useState(null);
   const [error, setError] = useState('');
   const iframeRef = useRef(null);
   const youtubePlayerRef = useRef(null);
@@ -6412,6 +6382,7 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
   useEffect(() => {
     setPlayerLoaded(false);
     setActiveSubtitleEntryId(null);
+    setSelectedSubtitleEntryId(null);
   }, [note?.id]);
   const updateSelectionAction = useCallback(() => {
     const selection = window.getSelection();
@@ -6523,16 +6494,22 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
     const aboveVisibleArea = entryRect.top < listRect.top + 12;
     const belowVisibleArea = entryRect.bottom > listRect.bottom - 12;
     if (!aboveVisibleArea && !belowVisibleArea) return;
-    list.scrollTo({
-      top: Math.max(0, list.scrollTop + entryRect.top - listRect.top - (list.clientHeight * 0.35)),
-      behavior: 'smooth',
-    });
+    const listCanScroll = list.scrollHeight > list.clientHeight + 2;
+    if (listCanScroll) {
+      list.scrollTo({
+        top: Math.max(0, list.scrollTop + entryRect.top - listRect.top - (list.clientHeight * 0.35)),
+        behavior: 'smooth',
+      });
+      return;
+    }
+    entry.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [activeSubtitleEntryId]);
   if (!note) return <section className="page"><div className="empty">找不到這篇字幕筆記。<button onClick={onBack}>返回上一層</button></div></section>;
   const seekTo = (entry) => {
     if (note.mode !== YT_SUBTITLE_MODE_SRT || entry.startMs === null || !youtubePlayerRef.current) return;
     youtubePlayerRef.current.seekTo(entry.startMs / 1000, true);
     youtubePlayerRef.current.playVideo();
+    setSelectedSubtitleEntryId(entry.id);
     setActiveSubtitleEntryId(entry.id);
   };
   const deleteNote = async () => {
@@ -6593,12 +6570,14 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
           {note.entries.map((entry, index) => {
             const clickable = note.mode === YT_SUBTITLE_MODE_SRT && entry.startMs !== null && !!embedUrl;
             const content = <><strong><span className="yt-subtitle-entry-index">{index + 1}</span>{entry.startMs !== null && <small className="yt-subtitle-entry-time">{subtitleTimeLabel(entry.startMs)}</small>}<span className="yt-subtitle-ko" data-subtitle-entry-id={entry.id}><SubtitleKoreanText text={entry.ko} words={subtitleWords} onSelectWord={showDefinition} /></span></strong>{showChinese && <p>{entry.zh}</p>}</>;
-            const className = `yt-subtitle-entry ${clickable ? 'clickable' : ''} ${activeSubtitleEntryId === entry.id ? 'is-playing' : ''}`;
+            const isPlaying = activeSubtitleEntryId === entry.id;
+            const isSelected = selectedSubtitleEntryId === entry.id;
+            const className = `yt-subtitle-entry ${clickable ? 'clickable' : ''} ${isPlaying ? 'is-playing' : ''} ${isSelected ? 'is-selected' : ''}`;
             const setEntryRef = (element) => {
               if (element) subtitleEntryRefs.current.set(entry.id, element);
               else subtitleEntryRefs.current.delete(entry.id);
             };
-            return clickable ? <button type="button" ref={setEntryRef} className={className} aria-current={activeSubtitleEntryId === entry.id ? 'true' : undefined} onClick={() => seekTo(entry)} key={entry.id}>{content}</button> : <article ref={setEntryRef} className={className} aria-current={activeSubtitleEntryId === entry.id ? 'true' : undefined} key={entry.id}>{content}</article>;
+            return clickable ? <button type="button" ref={setEntryRef} className={className} aria-current={isPlaying ? 'true' : undefined} onClick={() => seekTo(entry)} key={entry.id}>{content}</button> : <article ref={setEntryRef} className={className} aria-current={isPlaying ? 'true' : undefined} key={entry.id}>{content}</article>;
           })}
         </div>
       </div>

@@ -1541,6 +1541,7 @@ main {
   background: rgba(255, 255, 255, 0.88);
   box-shadow: 0 8px 22px rgba(58, 73, 84, 0.06);
   text-align: left;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .yt-subtitle-entry.clickable {
@@ -1548,9 +1549,16 @@ main {
   justify-content: flex-start;
 }
 
-.yt-subtitle-entry.clickable:hover {
+.yt-subtitle-entry.is-selected:not(.is-playing) {
   border-color: #ed8b65;
   background: #fff8ed;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .yt-subtitle-entry.clickable:hover {
+    border-color: #ed8b65;
+    background: #fff8ed;
+  }
 }
 
 .yt-subtitle-entry.is-playing {

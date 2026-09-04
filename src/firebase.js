@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCfy63R72H6LDCb-bR7L7RwkKNnGCTHPgU',
@@ -15,6 +15,13 @@ export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 // Reuse the same IndexedDB-backed cache across browser tabs to avoid re-reading
 // the complete notebook whenever this trusted-device app is reopened.
-export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
-});
+let db;
+try {
+  db = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  });
+} catch {
+  // Private browsing or blocked IndexedDB should not prevent online access.
+  db = getFirestore(app);
+}
+export { db };
