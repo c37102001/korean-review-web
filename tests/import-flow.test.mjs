@@ -33,6 +33,13 @@ test('ID generation falls back when randomUUID is unavailable', () => {
   }
 });
 
+test('Naver dictionary links use the current Korean dictionary search route', () => {
+  assert.equal(
+    helpers.naverDictionaryUrl('사랑'),
+    'https://korean.dict.naver.com/kozhdict/#/search?query=%EC%82%AC%EB%9E%91',
+  );
+});
+
 function item(ko, zh, extra = {}) {
   return {
     ko,

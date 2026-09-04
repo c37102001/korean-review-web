@@ -5,6 +5,7 @@ import {
   ArrowDown,
   ArrowUp,
   BookOpen,
+  BookMarked,
   CalendarDays,
   Captions,
   Check,
@@ -312,6 +313,10 @@ function youtubeVideoId(value) {
     return '';
   }
   return '';
+}
+
+function naverDictionaryUrl(query) {
+  return `https://korean.dict.naver.com/kozhdict/#/search?query=${encodeURIComponent(String(query || '').trim())}`;
 }
 
 function subtitleEntryIds(entries, existingEntries = []) {
@@ -6429,7 +6434,7 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
         ko: selectedKo,
         entry,
         top: rect.bottom + 8,
-        left: Math.min(Math.max(10, rect.left + (rect.width / 2) - 19), window.innerWidth - 48),
+        left: Math.min(Math.max(10, rect.left + (rect.width / 2) - 41), window.innerWidth - 92),
       });
     });
   }, [note]);
@@ -6536,6 +6541,13 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
     youtubePlayerRef.current.playVideo();
     setActiveSubtitleEntryId(entry.id);
   };
+  const pauseVideo = () => {
+    try {
+      youtubePlayerRef.current?.pauseVideo?.();
+    } catch {
+      // The YouTube iframe may be between player states while the selection starts.
+    }
+  };
   const deleteNote = async () => {
     if (!window.confirm(`確定要刪除「${note.title}」嗎？`)) return;
     setError('');
@@ -6569,19 +6581,41 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
         </div>
       </div>
       {error && <div className="form-error">{error}</div>}
-      {selectionAction && <button
-        type="button"
-        className="subtitle-selection-add"
-        style={{ top: selectionAction.top, left: selectionAction.left }}
-        onMouseDown={(event) => event.preventDefault()}
-        onClick={() => {
-          setQuickAdd(selectionAction);
-          setSelectionAction(null);
-          window.getSelection()?.removeAllRanges();
-        }}
-        title="新增單字"
-        aria-label="將選取的韓文新增為單字"
-      ><Plus size={18} /></button>}
+      {selectionAction && <div className="subtitle-selection-actions" style={{ top: selectionAction.top, left: selectionAction.left }}>
+        <button
+          type="button"
+          className="subtitle-selection-add"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            pauseVideo();
+          }}
+          onClick={() => {
+            pauseVideo();
+            setQuickAdd(selectionAction);
+            setSelectionAction(null);
+            window.getSelection()?.removeAllRanges();
+          }}
+          title="新增單字"
+          aria-label="將選取的韓文新增為單字"
+        ><Plus size={18} /></button>
+        <a
+          className="subtitle-selection-dictionary"
+          href={naverDictionaryUrl(selectionAction.ko)}
+          target="_blank"
+          rel="noopener noreferrer"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            pauseVideo();
+          }}
+          onClick={() => {
+            pauseVideo();
+            setSelectionAction(null);
+            window.getSelection()?.removeAllRanges();
+          }}
+          title="使用 Naver 字典查詢"
+          aria-label={`使用 Naver 字典查詢「${selectionAction.ko}」`}
+        ><BookMarked size={18} /></a>
+      </div>}
       {definitionBubble && <div className="subtitle-word-definition" style={{ top: definitionBubble.top, left: definitionBubble.left }} role="status">{definitionBubble.zh}</div>}
       <div className="yt-reader-floating-actions" aria-label="字幕閱讀控制">
         <button type="button" className={`yt-reader-floating-button ${showChinese ? 'selected' : ''}`} onClick={() => setShowChinese((current) => !current)} title={showChinese ? '隱藏中文' : '顯示中文'} aria-label={showChinese ? '隱藏中文' : '顯示中文'}>{showChinese ? <Eye size={22} /> : <EyeOff size={22} />}</button>
@@ -6594,7 +6628,7 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
         <div className="yt-subtitle-list" ref={subtitleListRef} aria-label="字幕列表">
           {note.entries.map((entry, index) => {
             const clickable = note.mode === YT_SUBTITLE_MODE_SRT && entry.startMs !== null && !!embedUrl;
-            const content = <><strong><span className="yt-subtitle-entry-index">{index + 1}</span>{entry.startMs !== null && <small className="yt-subtitle-entry-time">{subtitleTimeLabel(entry.startMs)}</small>}<span className="yt-subtitle-ko" data-subtitle-entry-id={entry.id}><SubtitleKoreanText text={entry.ko} words={subtitleWords} onSelectWord={showDefinition} /></span></strong>{showChinese && <p>{entry.zh}</p>}</>;
+            const content = <><strong><span className="yt-subtitle-entry-index">{index + 1}</span>{entry.startMs !== null && <small className="yt-subtitle-entry-time">{subtitleTimeLabel(entry.startMs)}</small>}<span className="yt-subtitle-ko" data-subtitle-entry-id={entry.id} onPointerDown={pauseVideo}><SubtitleKoreanText text={entry.ko} words={subtitleWords} onSelectWord={showDefinition} /></span></strong>{showChinese && <p>{entry.zh}</p>}</>;
             const isPlaying = activeSubtitleEntryId === entry.id;
             const className = `yt-subtitle-entry ${clickable ? 'clickable' : ''} ${isPlaying ? 'is-playing' : ''}`;
             const setEntryRef = (element) => {
@@ -7570,6 +7604,7 @@ export {
   toggleFolderGroupSelection,
   formatYoutubeSubtitleSrt,
   youtubeVideoId,
+  naverDictionaryUrl,
 };
 
 if (typeof document !== 'undefined') createRoot(document.getElementById('root')).render(<App />);

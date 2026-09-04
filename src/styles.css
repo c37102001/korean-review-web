@@ -1680,9 +1680,30 @@ main {
   user-select: text;
 }
 
-.subtitle-selection-add {
+.subtitle-selection-actions {
   position: fixed;
   z-index: 30;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.subtitle-selection-actions::after {
+  content: '';
+  position: absolute;
+  left: 41px;
+  top: -5px;
+  width: 10px;
+  height: 10px;
+  background: #4bc8ab;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  transform: translateX(-50%);
+}
+
+.subtitle-selection-add,
+.subtitle-selection-dictionary {
+  position: relative;
+  z-index: 1;
   width: 38px;
   height: 34px;
   min-width: 38px;
@@ -1692,18 +1713,15 @@ main {
   color: #ffffff;
   background: linear-gradient(135deg, #26b69e, #67d3b7);
   box-shadow: 0 8px 20px rgba(22, 119, 106, 0.28);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
 }
 
-.subtitle-selection-add::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: -5px;
-  width: 10px;
-  height: 10px;
-  background: #4bc8ab;
-  clip-path: polygon(50% 0, 100% 100%, 0 100%);
-  transform: translateX(-50%);
+.subtitle-selection-add:hover,
+.subtitle-selection-dictionary:hover {
+  filter: brightness(1.05);
 }
 
 .subtitle-quick-add-modal {
