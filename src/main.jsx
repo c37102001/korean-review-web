@@ -2570,11 +2570,10 @@ function App() {
   const [page, setPage] = useState('home');
   const [practiceSet, setPracticeSet] = useState(null);
   const grammarEnabled = page === 'home'
-    || page === 'grammar'
-    || page === 'vocabularyNotes'
+    || page === 'notes'
     || (page === 'practice' && practiceSet?.mode === DAILY_GRAMMAR_MODE);
   const ytEnabled = page === 'ytSubtitles' || page === 'ytSubtitle';
-  const foldersEnabled = !['calendar', 'grammar', 'vocabularyNotes', 'ytSubtitles'].includes(page);
+  const foldersEnabled = !['calendar', 'notes', 'ytSubtitles'].includes(page);
   const grammar = useGrammarNotes(user, grammarEnabled);
   const ytSubtitles = useYoutubeSubtitles(user, ytEnabled);
   const folders = useWordFolders(user, foldersEnabled);
@@ -2741,15 +2740,14 @@ function App() {
 
   const views = {
     home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} recognitionQuestions={todayRecognitionQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} />,
-    calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} />,
-    notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
+    calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('dateNotes')} />,
+    dateNotes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
     practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
     notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     folders: <FoldersPage folders={folders.folders} items={items} loading={folders.loading} error={folders.error} onSave={folders.save} onDelete={folders.remove} onOpen={openFolder} />,
     folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
-    grammar: <GrammarNotebookPage category={NOTE_CATEGORY_GRAMMAR} notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} onPractice={startPractice} />,
-    vocabularyNotes: <GrammarNotebookPage category={NOTE_CATEGORY_VOCABULARY} notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} onPractice={startPractice} />,
+    notes: <NotesNotebookPage notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} onPractice={startPractice} />,
     ytSubtitles: <YoutubeSubtitlesPage notes={ytSubtitles.notes} error={ytSubtitles.error} onSave={saveYoutubeSubtitle} onDelete={ytSubtitles.remove} onOpen={openYoutubeSubtitle} />,
     ytSubtitle: <YoutubeSubtitleReader note={selectedYoutubeSubtitle} allItems={items} folders={folders.folders} onAddRecords={addYoutubeSubtitleRecords} onBack={goUp} onOpenFolder={openFolder} onSave={saveYoutubeSubtitle} onDelete={ytSubtitles.remove} />,
   };
@@ -2758,11 +2756,10 @@ function App() {
     <div className="app">
       <aside className="sidebar">
         <button className={`brand brand-button ${page === 'home' ? 'active' : ''}`} onClick={() => navTop('home')}><Sparkles size={24} /> 韓文筆記</button>
-        <button className={page === 'calendar' || page === 'notes' ? 'active' : ''} onClick={() => navTop('calendar')}><CalendarDays size={18} /> 日曆</button>
+        <button className={page === 'calendar' || page === 'dateNotes' ? 'active' : ''} onClick={() => navTop('calendar')}><CalendarDays size={18} /> 日曆</button>
         <button className={page === 'notebook' ? 'active' : ''} onClick={() => navTop('notebook')}><LibraryBig size={18} /> 單字本</button>
         <button className={page === 'folders' || page === 'folder' ? 'active' : ''} onClick={() => navTop('folders')}><Folder size={18} /> 資料夾</button>
-        <button className={page === 'grammar' ? 'active' : ''} onClick={() => navTop('grammar')}><NotebookPen size={18} /> 文法筆記</button>
-        <button className={page === 'vocabularyNotes' ? 'active' : ''} onClick={() => navTop('vocabularyNotes')}><BookOpen size={18} /> 單字筆記</button>
+        <button className={page === 'notes' ? 'active' : ''} onClick={() => navTop('notes')}><NotebookPen size={18} /> 筆記</button>
         <button className={page === 'ytSubtitles' || page === 'ytSubtitle' ? 'active' : ''} onClick={() => navTop('ytSubtitles')}><Captions size={18} /> YT 字幕</button>
         <button className="logout-button" onClick={() => signOut(auth)}><LogOut size={18} /> 登出</button>
       </aside>
@@ -5931,19 +5928,56 @@ function noteCategoryMeta(category) {
     };
 }
 
-function GrammarNotebookPage({ category, notes, loading, error, onSave, onDelete, onPractice }) {
+function NotesNotebookPage({ notes, loading, error, onSave, onDelete, onPractice }) {
+  const [query, setQuery] = useState('');
+  const [collapsedCategories, setCollapsedCategories] = useState(() => new Set());
+  const toggleCategory = (category) => setCollapsedCategories((current) => {
+    const next = new Set(current);
+    if (next.has(category)) next.delete(category);
+    else next.add(category);
+    return next;
+  });
+  const categories = [NOTE_CATEGORY_VOCABULARY, NOTE_CATEGORY_GRAMMAR];
+
+  return (
+    <section className="page notes-notebook-page">
+      <div className="topbar">
+        <div><span className="eyebrow">Korean Notes</span><h1>筆記</h1></div>
+      </div>
+      <label className="search grammar-search">
+        <Search size={18} />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋標題、筆記或例句" />
+      </label>
+      {error && <div className="sync-error">Firebase 同步失敗：{error}</div>}
+      {categories.map((category) => (
+        <NoteCategorySection
+          key={category}
+          category={category}
+          notes={notes}
+          query={query}
+          loading={loading}
+          collapsed={collapsedCategories.has(category)}
+          onToggleCollapse={() => toggleCategory(category)}
+          onSave={onSave}
+          onDelete={onDelete}
+          onPractice={onPractice}
+        />
+      ))}
+    </section>
+  );
+}
+
+function NoteCategorySection({ category, notes, query, loading, collapsed, onToggleCollapse, onSave, onDelete, onPractice }) {
   const meta = noteCategoryMeta(category);
   const categoryNotes = useMemo(
     () => notes.filter((note) => note.category === category),
     [notes, category],
   );
-  const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [actionError, setActionError] = useState('');
   useEffect(() => {
-    setQuery('');
     setEditing(null);
     setViewing(null);
     setSelectedIds([]);
@@ -5954,7 +5988,11 @@ function GrammarNotebookPage({ category, notes, loading, error, onSave, onDelete
     const matches = keyword
       ? categoryNotes.filter((note) => grammarNoteSearchText(note).includes(keyword))
       : categoryNotes;
-    return [...matches].sort((left, right) => Number(right.pinned) - Number(left.pinned));
+    return [...matches].sort((left, right) => (
+      Number(right.pinned) - Number(left.pinned)
+      || (right.createdAt || '').localeCompare(left.createdAt || '')
+      || left.title.localeCompare(right.title)
+    ));
   }, [categoryNotes, query]);
   useEffect(() => {
     const existingIds = new Set(categoryNotes.map((note) => note.id));
@@ -6005,18 +6043,24 @@ function GrammarNotebookPage({ category, notes, loading, error, onSave, onDelete
   };
 
   return (
-    <section className="page grammar-page">
-      <div className="topbar">
-        <div><span className="eyebrow">{meta.eyebrow}</span><h1>{meta.heading}</h1></div>
-        <div className="actions notebook-actions">
-          <button disabled={!selectedQuestions.length} onClick={() => startGrammarPractice(selectedNotes, `已選 ${selectedNotes.length} 個${meta.item}`)}><Dumbbell size={18} /> 練習已選 {selectedIds.length ? `(${selectedIds.length})` : ''}</button>
-          <button className="primary" onClick={() => setEditing({ category })}><Plus size={18} /> {meta.addLabel}</button>
-        </div>
+    <section className={`note-category-section ${collapsed ? 'collapsed' : ''}`}>
+      <div className="note-category-header">
+        <button
+          type="button"
+          className="note-category-toggle"
+          aria-expanded={!collapsed}
+          onClick={onToggleCollapse}
+          title={collapsed ? `展開${meta.singular}` : `收合${meta.singular}`}
+        >
+          <span className="note-category-heading"><span className="note-category-mark"><NotebookPen size={15} /></span><h2>{meta.heading}</h2></span>
+          <span className="note-category-count">{categoryNotes.length} 篇</span>
+          <ChevronDown size={19} />
+        </button>
       </div>
-      <label className="search grammar-search">
-        <Search size={18} />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋標題、筆記或例句" />
-      </label>
+      {!collapsed && <>
+        <div className="note-category-actions">
+          <button className="primary" onClick={() => setEditing({ category })}><Plus size={17} /> {meta.addLabel}</button>
+        </div>
       <div className={`bulk-word-actions grammar-bulk-actions ${selectedIds.length ? 'has-selection' : ''}`}>
         <div className="bulk-selection-summary">
           <ListChecks size={19} />
@@ -6029,7 +6073,6 @@ function GrammarNotebookPage({ category, notes, loading, error, onSave, onDelete
         </div>
       </div>
       {actionError && <div className="form-error">{actionError}</div>}
-      {error && <div className="sync-error">Firebase 同步失敗：{error}</div>}
       {loading ? (
         <div className="panel grammar-empty">載入{meta.singular}中...</div>
       ) : filtered.length ? (
@@ -6051,6 +6094,7 @@ function GrammarNotebookPage({ category, notes, loading, error, onSave, onDelete
       ) : (
         <div className="panel grammar-empty">{query ? `找不到符合搜尋條件的${meta.singular}。` : `目前還沒有${meta.singular}。`}</div>
       )}
+      </>}
       {editing && (
         <GrammarEditorModal
           note={editing.id ? editing : null}

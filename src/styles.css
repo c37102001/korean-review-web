@@ -1364,6 +1364,104 @@ main {
   font-size: 16px;
 }
 
+.notes-notebook-page > .grammar-search {
+  margin-bottom: 24px;
+}
+
+.note-category-section {
+  margin-top: 24px;
+}
+
+.note-category-section:first-of-type {
+  margin-top: 0;
+}
+
+.note-category-header {
+  display: flex;
+  align-items: center;
+  min-height: 52px;
+  border-bottom: 1px solid #dce9e6;
+}
+
+.note-category-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 7px 2px;
+  border-radius: 10px;
+  color: #26383f;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+}
+
+.note-category-toggle:hover {
+  background: rgba(255, 255, 255, 0.52);
+  box-shadow: none;
+}
+
+.note-category-toggle > svg {
+  flex: 0 0 auto;
+  color: #6d7e83;
+  transition: transform 160ms ease;
+}
+
+.note-category-section:not(.collapsed) .note-category-toggle > svg {
+  transform: rotate(180deg);
+}
+
+.note-category-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.note-category-heading h2 {
+  margin: 0;
+  overflow: hidden;
+  color: #26383f;
+  font-size: 21px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-category-mark {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  color: #177e6e;
+  background: #e4f7f2;
+}
+
+.note-category-count {
+  flex: 0 0 auto;
+  color: #77868a;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.note-category-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.note-category-actions button {
+  min-height: 38px;
+  padding: 8px 12px;
+}
+
+.note-category-section.collapsed .note-category-header {
+  border-bottom-color: transparent;
+}
+
 .grammar-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4646,6 +4744,11 @@ textarea:focus {
   .bulk-word-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .note-category-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .bulk-selection-summary,
