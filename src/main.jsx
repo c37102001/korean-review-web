@@ -6642,7 +6642,7 @@ function MiniQuestion({ question, store }) {
 function WordCard({ item, folders = [], onEdit, onDelete, onOpen, isStarred = false, onToggleStar, selectable = false, selected = false, onToggleSelected }) {
   return (
     <article className={`word-card clickable-card ${selected ? 'selected-word-card' : ''}`} onClick={() => onOpen(item)}>
-      <div className="card-head">
+      <div className="card-head word-card-head">
         <h3 className="speakable-heading"><span>{item.ko}</span><KoreanSpeakButton text={item.ko} /></h3>
         <div className="card-actions">
           {selectable && <label className="word-select-control" title="選取單字" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected} onChange={() => onToggleSelected(item.id)} /><span className="sr-only">選取 {item.ko}</span></label>}
