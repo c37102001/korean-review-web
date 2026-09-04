@@ -50,6 +50,8 @@ NOTE_CATEGORY_GRAMMAR = "grammar"
 NOTE_CATEGORY_VOCABULARY = "vocabulary"
 DAILY_MIXED_MODE = "daily-mixed"
 DAILY_WRONG_REVIEW_MODE = "daily-wrong-review"
+YT_SUBTITLE_MODE_JSON = "json"
+YT_SUBTITLE_MODE_SRT = "srt"
 SYSTEM_LEARNED_FOLDER_ID = "system-learned"
 SYSTEM_LEARNED_FOLDER_NAME = "已學習"
 SYSTEM_UNFAMILIAR_FOLDER_ID = "system-unfamiliar"
@@ -106,6 +108,17 @@ class GrammarNote:
     examples: List[Dict[str, str]]
     category: str = NOTE_CATEGORY_GRAMMAR
     created_at: str = ""
+
+
+@dataclass
+class YoutubeSubtitle:
+    id: str
+    title: str
+    youtube_url: str
+    mode: str
+    entries: List[Dict[str, Any]]
+    created_at: str = ""
+    updated_at: str = ""
 
 
 @dataclass
@@ -226,6 +239,13 @@ class FirebaseClient:
             _parse_firestore_fields(document.get("fields", {}))
             | {"_docId": _doc_id(document.get("name", ""))}
             for document in self._list_documents(["users", session.uid, "grammarNotes"], session)
+        ]
+
+    def list_youtube_subtitles(self, session: AuthSession) -> List[Dict[str, Any]]:
+        return [
+            _parse_firestore_fields(document.get("fields", {}))
+            | {"_docId": _doc_id(document.get("name", ""))}
+            for document in self._list_documents(["users", session.uid, "ytSubtitles"], session)
         ]
 
     def load_grammar_review(self, session: AuthSession) -> Dict[str, Any]:
@@ -744,20 +764,60 @@ def normalize_grammar_notes(records: List[Dict[str, Any]]) -> List[GrammarNote]:
     return sorted(notes, key=lambda note: (note.created_at, note.id))
 
 
+def normalize_youtube_subtitles(records: List[Dict[str, Any]]) -> List[YoutubeSubtitle]:
+    subtitles: List[YoutubeSubtitle] = []
+    for record in records:
+        subtitle_id = str(record.get("id") or record.get("_docId") or "")
+        title = str(record.get("title") or "").strip()
+        if not subtitle_id or not title:
+            continue
+        entries: List[Dict[str, Any]] = []
+        for index, entry in enumerate(record.get("entries") or []):
+            ko = str(entry.get("ko") or "").strip()
+            zh = str(entry.get("zh") or "").strip()
+            if not ko or not zh:
+                continue
+            start_ms = entry.get("startMs")
+            end_ms = entry.get("endMs")
+            entries.append({
+                "id": str(entry.get("id") or f"{subtitle_id}-entry-{index}"),
+                "ko": ko,
+                "zh": zh,
+                "startMs": int(start_ms) if isinstance(start_ms, (int, float)) else None,
+                "endMs": int(end_ms) if isinstance(end_ms, (int, float)) else None,
+            })
+        subtitles.append(YoutubeSubtitle(
+            id=subtitle_id,
+            title=title,
+            youtube_url=str(record.get("youtubeUrl") or "").strip(),
+            mode=YT_SUBTITLE_MODE_SRT if record.get("mode") == YT_SUBTITLE_MODE_SRT else YT_SUBTITLE_MODE_JSON,
+            entries=entries,
+            created_at=str(record.get("createdAt") or ""),
+            updated_at=str(record.get("updatedAt") or ""),
+        ))
+    return sorted(
+        subtitles,
+        key=lambda subtitle: (subtitle.updated_at or subtitle.created_at, subtitle.title, subtitle.id),
+        reverse=True,
+    )
+
+
 def load_data(
     client: FirebaseClient,
     session: AuthSession,
-) -> Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any]]:
-    with ThreadPoolExecutor(max_workers=5) as executor:
+) -> Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any], List[YoutubeSubtitle]]:
+    with ThreadPoolExecutor(max_workers=6) as executor:
         state_future = executor.submit(client.load_review_state, session)
         records_future = executor.submit(client.list_records, session)
         folders_future = executor.submit(client.list_folders, session)
         grammar_notes_future = executor.submit(client.list_grammar_notes, session)
+        youtube_subtitles_future = executor.submit(client.list_youtube_subtitles, session)
         grammar_review_future = executor.submit(client.load_grammar_review, session)
         state = state_future.result()
         records = records_future.result()
         folders = folders_future.result()
         grammar_note_records = grammar_notes_future.result()
+        youtube_subtitle_records = youtube_subtitles_future.result()
         grammar_review = grammar_review_future.result()
 
     payload = {
@@ -765,6 +825,7 @@ def load_data(
         "records": records,
         "folders": folders,
         "grammarNotes": grammar_note_records,
+        "ytSubtitles": youtube_subtitle_records,
         "grammarReview": grammar_review,
     }
     _write_terminal_cache(session.uid, payload)
@@ -774,7 +835,7 @@ def load_data(
 def load_data_with_cache(
     client: FirebaseClient,
     session: AuthSession,
-) -> Tuple[Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any]], bool]:
+) -> Tuple[Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any], List[YoutubeSubtitle]], bool]:
     """Load Firebase data, falling back to the most recent local snapshot on quota exhaustion."""
     try:
         loaded = load_data(client, session)
@@ -795,11 +856,12 @@ def _hydrate_loaded_data(
     session: AuthSession,
     payload: Dict[str, Any],
     ensure_system_folders: bool,
-) -> Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any]]:
+) -> Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any], List[YoutubeSubtitle]]:
     state = _clone_json(payload.get("state") or empty_state())
     records = _clone_json(payload.get("records") or [])
     folders = _clone_json(payload.get("folders") or [])
     grammar_note_records = _clone_json(payload.get("grammarNotes") or [])
+    youtube_subtitle_records = _clone_json(payload.get("ytSubtitles") or [])
     grammar_review = _clone_json(payload.get("grammarReview") or {})
 
     learned_folder = next((folder for folder in folders if folder.get("id") == SYSTEM_LEARNED_FOLDER_ID), None)
@@ -827,7 +889,8 @@ def _hydrate_loaded_data(
             records_by_id[record_id] = record
     cards, questions = normalize_records(list(records_by_id.values()), state)
     grammar_notes = normalize_grammar_notes(grammar_note_records)
-    return state, cards, questions, grammar_notes, grammar_review
+    youtube_subtitles = normalize_youtube_subtitles(youtube_subtitle_records)
+    return state, cards, questions, grammar_notes, grammar_review, youtube_subtitles
 
 
 def _terminal_cache_path(uid: str) -> Path:
@@ -2171,6 +2234,181 @@ def run_grammar_notebook(
             message = ""
 
 
+def subtitle_time_label(milliseconds: Any) -> str:
+    try:
+        total_seconds = max(0, int(float(milliseconds or 0) // 1000))
+    except (TypeError, ValueError):
+        total_seconds = 0
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
+
+
+def run_youtube_subtitle_detail(
+    stdscr: curses.window,
+    subtitles: List[YoutubeSubtitle],
+    start_index: int,
+) -> None:
+    subtitle_index = start_index
+    entry_index = 0
+    scroll_offset = 0
+    show_chinese = True
+    message = ""
+    set_cursor_visibility(0)
+    stdscr.keypad(True)
+    while True:
+        subtitle = subtitles[subtitle_index]
+        entries = subtitle.entries
+        if entries:
+            entry_index %= len(entries)
+        else:
+            entry_index = 0
+
+        stdscr.erase()
+        height, width = stdscr.getmaxyx()
+        draw_line(
+            stdscr,
+            1,
+            2,
+            (
+                f"YT字幕 | {subtitle_index + 1}/{len(subtitles)} | {subtitle.title}  "
+                "Esc=列表 5=中文 4/6=上下篇 7=播放 ↑↓=上下句"
+            ),
+            curses.A_BOLD,
+        )
+        detail_lines: List[Tuple[str, int, int]] = []
+        entry_line_offsets: List[int] = []
+
+        def append_detail(text: str, indent: int = 0, attr: int = 0) -> None:
+            line_width = max(1, width - 4 - indent)
+            for line in _split_by_cell_width(text, line_width):
+                detail_lines.append((line, indent, attr))
+
+        append_detail(subtitle.title, attr=curses.A_BOLD)
+        mode_label = "SRT 時間字幕" if subtitle.mode == YT_SUBTITLE_MODE_SRT else "JSON 逐句字幕"
+        append_detail(f"{mode_label} · {len(entries)} 句", attr=curses.A_DIM)
+        if subtitle.youtube_url:
+            append_detail(f"YouTube: {subtitle.youtube_url}", attr=curses.A_DIM)
+        if not entries:
+            append_detail("目前沒有可顯示的字幕。", attr=curses.A_DIM)
+        for index, entry in enumerate(entries):
+            entry_line_offsets.append(len(detail_lines))
+            marker = "▶" if index == entry_index else " "
+            timestamp = f" [{subtitle_time_label(entry['startMs'])}]" if entry.get("startMs") is not None else ""
+            append_detail(f"{marker} {index + 1}.{timestamp} {entry['ko']}", attr=curses.A_BOLD if index == entry_index else 0)
+            if show_chinese:
+                append_detail(entry["zh"], indent=4, attr=curses.A_DIM)
+
+        visible_rows = max(1, height - 4)
+        scroll_offset = min(scroll_offset, max(0, len(detail_lines) - visible_rows))
+        if entry_line_offsets:
+            entry_start = entry_line_offsets[entry_index]
+            entry_end = entry_line_offsets[entry_index + 1] if entry_index + 1 < len(entry_line_offsets) else len(detail_lines)
+            if entry_start < scroll_offset:
+                scroll_offset = entry_start
+            elif entry_end > scroll_offset + visible_rows:
+                scroll_offset = max(0, entry_end - visible_rows)
+        for row, (line, indent, attr) in enumerate(
+            detail_lines[scroll_offset:scroll_offset + visible_rows],
+            2,
+        ):
+            draw_line(stdscr, row, 2 + indent, line, attr)
+        footer = message
+        if len(detail_lines) > visible_rows:
+            range_text = (
+                f"內容 {scroll_offset + 1}-"
+                f"{min(len(detail_lines), scroll_offset + visible_rows)}/{len(detail_lines)}"
+            )
+            footer = f"{footer}  {range_text}".strip()
+        if footer:
+            draw_line(stdscr, height - 1, 2, footer, curses.A_BOLD)
+        update_curses_screen(stdscr)
+
+        key = read_terminal_key(stdscr, wide=True)
+        if isinstance(key, int) and 0 <= key <= 255:
+            key = chr(key)
+        if key in ("\x1b", 27):
+            return
+        if key == curses.KEY_UP:
+            if entries:
+                entry_index = (entry_index - 1) % len(entries)
+            continue
+        if key == curses.KEY_DOWN:
+            if entries:
+                entry_index = (entry_index + 1) % len(entries)
+            continue
+        if not isinstance(key, str):
+            continue
+        if key == "5":
+            show_chinese = not show_chinese
+            message = f"中文：{'顯示' if show_chinese else '隱藏'}"
+        elif key == "4":
+            subtitle_index = (subtitle_index - 1) % len(subtitles)
+            entry_index = 0
+            scroll_offset = 0
+            message = ""
+        elif key == "6":
+            subtitle_index = (subtitle_index + 1) % len(subtitles)
+            entry_index = 0
+            scroll_offset = 0
+            message = ""
+        elif key == "7":
+            if not entries:
+                message = "這篇字幕沒有可播放的韓文。"
+            elif speak_korean(entries[entry_index]["ko"]):
+                message = f"已播放第 {entry_index + 1} 句。"
+            else:
+                message = "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+
+
+def run_youtube_subtitles(
+    stdscr: curses.window,
+    subtitles: List[YoutubeSubtitle],
+) -> None:
+    if not subtitles:
+        wait_message(stdscr, "YT字幕", "目前還沒有字幕筆記。")
+        return
+    notes = subtitles
+    cursor = 0
+    set_cursor_visibility(0)
+    stdscr.keypad(True)
+    while True:
+        stdscr.erase()
+        height, _ = stdscr.getmaxyx()
+        visible_count = max(1, height - 4)
+        start = max(0, min(cursor - visible_count + 1, len(notes) - visible_count))
+        visible_notes = notes[start:start + visible_count]
+        draw_line(stdscr, 1, 2, f"YT字幕 | {len(notes)} 篇", curses.A_BOLD)
+        draw_line(stdscr, 2, 2, "↑↓=移動 Enter=查看 Esc=返回", curses.A_DIM)
+        for row, subtitle in enumerate(visible_notes, 3):
+            subtitle_index = start + row - 3
+            mode_label = "SRT" if subtitle.mode == YT_SUBTITLE_MODE_SRT else "逐句"
+            label = f"{subtitle.title} · {mode_label} · {len(subtitle.entries)} 句"
+            draw_line(
+                stdscr,
+                row,
+                2,
+                ("» " if subtitle_index == cursor else "  ") + label,
+                curses.A_REVERSE if subtitle_index == cursor else 0,
+            )
+        if len(notes) > visible_count:
+            draw_line(stdscr, height - 1, 2, f"{cursor + 1}/{len(notes)}", curses.A_DIM)
+        update_curses_screen(stdscr)
+
+        key = read_terminal_key(stdscr, wide=True)
+        if isinstance(key, int) and 0 <= key <= 255:
+            key = chr(key)
+        if key in ("\x1b", 27):
+            return
+        if key == curses.KEY_UP:
+            cursor = (cursor - 1) % len(notes)
+        elif key == curses.KEY_DOWN:
+            cursor = (cursor + 1) % len(notes)
+        elif key in ("\n", "\r", curses.KEY_ENTER, 10, 13):
+            run_youtube_subtitle_detail(stdscr, notes, cursor)
+            set_cursor_visibility(0)
+
+
 def due_task_menu(
     stdscr: curses.window,
     state: Dict[str, Any],
@@ -2388,6 +2626,15 @@ def run_grammar_recall_practice(
     message = ""
     scroll_offset = 0
     spoken_question_id = ""
+    wrong_result_attr = curses.A_BOLD
+    if curses.has_colors():
+        curses.start_color()
+        try:
+            curses.use_default_colors()
+            curses.init_pair(3, curses.COLOR_RED, -1)
+            wrong_result_attr = curses.color_pair(3) | curses.A_BOLD
+        except curses.error:
+            pass
     set_cursor_visibility(0)
     stdscr.keypad(True)
     while True:
@@ -2445,7 +2692,7 @@ def run_grammar_recall_practice(
                 f"{min(len(detail_lines), scroll_offset + visible_rows)}/{len(detail_lines)}"
             ).strip()
         if footer:
-            draw_line(stdscr, height - 1, 2, footer, curses.A_BOLD)
+            draw_line(stdscr, height - 1, 2, footer, wrong_result_attr if graded and not graded[question.id] else curses.A_BOLD)
         update_curses_screen(stdscr)
 
         if _AUTO_PLAY_AUDIO and not revealed and spoken_question_id != question.id:
@@ -2807,6 +3054,15 @@ def run_daily_recognition(
     results: Dict[str, bool] = {}
     spoken_question_id = ""
     cards_by_id = {card.id: card for card in all_cards}
+    wrong_result_attr = curses.A_BOLD
+    if curses.has_colors():
+        curses.start_color()
+        try:
+            curses.use_default_colors()
+            curses.init_pair(3, curses.COLOR_RED, -1)
+            wrong_result_attr = curses.color_pair(3) | curses.A_BOLD
+        except curses.error:
+            pass
     set_cursor_visibility(0)
     stdscr.keypad(True)
     while True:
@@ -2893,7 +3149,7 @@ def run_daily_recognition(
         if len(detail_lines) > visible_rows:
             footer = f"{footer}  內容 {scroll_offset + 1}-{min(len(detail_lines), scroll_offset + visible_rows)}/{len(detail_lines)}"
         if footer:
-            draw_line(stdscr, height - 1, 2, footer, curses.A_BOLD)
+            draw_line(stdscr, height - 1, 2, footer, wrong_result_attr if graded and not results[question.id] else curses.A_BOLD)
         update_curses_screen(stdscr)
         if _AUTO_PLAY_AUDIO and not word_visible and not graded and spoken_question_id != question.id:
             spoken_question_id = question.id
@@ -3035,7 +3291,8 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
     pending_word_audio = False
     spoken_question_id = ""
     ok_attr = curses.A_BOLD
-    wrong_attr = curses.A_REVERSE
+    wrong_attr = curses.A_REVERSE | curses.A_BOLD
+    wrong_result_attr = curses.A_BOLD
     self_grade_mode = config.get("direction") == "ko-zh" or config.get("answer_mode") == "self-grade"
     set_cursor_visibility(0 if self_grade_mode else 1)
     stdscr.keypad(True)
@@ -3050,8 +3307,10 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             curses.use_default_colors()
             curses.init_pair(1, curses.COLOR_GREEN, -1)
             curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_RED)
+            curses.init_pair(3, curses.COLOR_RED, -1)
             ok_attr = curses.color_pair(1) | curses.A_BOLD
-            wrong_attr = curses.color_pair(2)
+            wrong_attr = curses.color_pair(2) | curses.A_BOLD
+            wrong_result_attr = curses.color_pair(3) | curses.A_BOLD
         except curses.error:
             pass
     while True:
@@ -3103,7 +3362,13 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 else "自評: 1=答錯  2=答對" if show_hint
                 else "自評: 請先按 8 公佈答案"
             )
-            draw_line(stdscr, input_y, 2, self_grade_status, ok_attr if graded and last_correct is True else 0)
+            draw_line(
+                stdscr,
+                input_y,
+                2,
+                self_grade_status,
+                ok_attr if graded and last_correct is True else wrong_result_attr if graded else 0,
+            )
             positions = [2]
         else:
             answered_attr = ok_attr if graded and last_correct is True else 0
@@ -3137,7 +3402,13 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             draw_answer_diff(stdscr, message_y, 2, user_input, answer, wrong_attr)
             message_y += 1
         if message:
-            draw_line(stdscr, message_y, 2, message, curses.A_BOLD)
+            draw_line(
+                stdscr,
+                message_y,
+                2,
+                message,
+                wrong_result_attr if retry_diff or (graded and last_correct is False) else curses.A_BOLD,
+            )
         if not self_grade_mode:
             cursor_x = positions[min(input_cursor, len(positions) - 1)]
             stdscr.move(min(height - 1, input_y), min(width - 1, cursor_x))
@@ -3599,7 +3870,7 @@ def run_folder_notebook(
 
 def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: AuthSession) -> None:
     try:
-        (state, cards, questions, grammar_notes, grammar_review), using_cached_data = load_data_with_cache(client, session)
+        (state, cards, questions, grammar_notes, grammar_review, youtube_subtitles), using_cached_data = load_data_with_cache(client, session)
     except RuntimeError as exc:
         wait_message(stdscr, "載入失敗", friendly_firebase_error(exc))
         return
@@ -3643,6 +3914,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 ("folders", "資料夾"),
                 ("grammar", "文法筆記"),
                 ("vocabulary_notes", "單字筆記"),
+                ("youtube_subtitles", "YT字幕"),
                 ("refresh", "重新同步"),
                 ("quit", "離開"),
             ],
@@ -3652,7 +3924,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
             return
         if choice == "refresh":
             try:
-                (state, cards, questions, grammar_notes, grammar_review), using_cached_data = load_data_with_cache(client, session)
+                (state, cards, questions, grammar_notes, grammar_review, youtube_subtitles), using_cached_data = load_data_with_cache(client, session)
                 skip_round_initialization = False
             except RuntimeError as exc:
                 wait_message(stdscr, "同步失敗", friendly_firebase_error(exc))
@@ -3778,6 +4050,8 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
             run_grammar_notebook(
                 stdscr, grammar_notes, state, client, session, NOTE_CATEGORY_VOCABULARY
             )
+        elif choice == "youtube_subtitles":
+            run_youtube_subtitles(stdscr, youtube_subtitles)
 
 
 def clear_plain_screen() -> None:
