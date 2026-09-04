@@ -664,13 +664,39 @@ main {
   border-bottom: 1px solid #dce7e4;
 }
 
-.folder-tag-group-head > div {
+.folder-tag-group-toggle {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  text-align: left;
+}
+
+.folder-tag-group-toggle > svg {
+  color: #78918d;
+  transition: transform 160ms ease;
+}
+
+.folder-tag-group:not(.collapsed) .folder-tag-group-toggle > svg {
+  transform: rotate(180deg);
+}
+
+.folder-tag-group-toggle:hover {
+  color: #1d7467;
+}
+
+.folder-tag-group-heading {
   display: flex;
   align-items: center;
   gap: 9px;
 }
 
-.folder-tag-group-head h2 {
+.folder-tag-group-heading h2 {
   margin: 0;
   font-size: 20px;
 }
@@ -1474,6 +1500,10 @@ main {
   right: 92px;
 }
 
+.global-back-button.with-yt-folder {
+  right: 156px;
+}
+
 .yt-reader-floating-button.selected {
   color: #16776a;
   background: #e7f8f3;
@@ -1549,34 +1579,10 @@ main {
   justify-content: flex-start;
 }
 
-.yt-subtitle-entry.is-selected:not(.is-playing) {
-  border-color: #ed8b65;
-  background: #fff8ed;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .yt-subtitle-entry.clickable:hover {
-    border-color: #ed8b65;
-    background: #fff8ed;
-  }
-}
-
 .yt-subtitle-entry.is-playing {
-  border-color: #41bca6;
-  background: #edfbf7;
-  box-shadow: 0 0 0 2px rgba(47, 185, 163, 0.18), 0 12px 28px rgba(37, 133, 116, 0.14);
-}
-
-.yt-subtitle-entry.is-playing::before {
-  content: '播放中';
-  justify-self: start;
-  padding: 3px 7px;
-  border-radius: 999px;
-  color: #ffffff;
-  background: #25ad98;
-  font-size: 11px;
-  font-weight: 900;
-  line-height: 1.2;
+  border-color: #efc978;
+  background: #fff9e8;
+  box-shadow: 0 0 0 2px rgba(239, 201, 120, 0.2), 0 12px 28px rgba(166, 111, 28, 0.1);
 }
 
 .yt-subtitle-entry-index,
@@ -4595,6 +4601,10 @@ textarea:focus {
 
   .global-back-button.with-yt-controls {
     right: 74px;
+  }
+
+  .global-back-button.with-yt-folder {
+    right: 132px;
   }
 
   .yt-subtitle-list {
