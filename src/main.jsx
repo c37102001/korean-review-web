@@ -2553,7 +2553,10 @@ function App() {
     setPage(next);
   };
   const goUp = () => {
-    if (!pageStack.length) return;
+    if (!pageStack.length) {
+      if (page !== 'home') navTop('home');
+      return;
+    }
     setPage(pageStack[pageStack.length - 1]);
     setPageStack(pageStack.slice(0, -1));
   };
@@ -2644,9 +2647,9 @@ function App() {
         {storeError && <div className="sync-error">Firebase 同步失敗：{storeError}</div>}
         {folders.error && <div className="sync-error">資料夾同步失敗：{folders.error}</div>}
         {ytSubtitles.error && <div className="sync-error">YT 字幕同步失敗：{ytSubtitles.error}</div>}
-        {!!pageStack.length && page !== 'study' && <button className="back-button" onClick={goUp}><ChevronLeft size={18} /> 返回上一層</button>}
         {views[page]}
       </main>
+      {page !== 'home' && <button type="button" className={`global-back-button ${page === 'ytSubtitle' ? 'with-yt-controls' : ''}`} onClick={goUp} title="回到上一層" aria-label="回到上一層"><ChevronLeft size={24} /></button>}
     </div>
   );
 }
@@ -6264,12 +6267,14 @@ function YoutubeSubtitleReader({ note, onBack, onSave, onDelete }) {
       <div className="topbar yt-reader-topbar">
         <div><span className="eyebrow">{note.mode === YT_SUBTITLE_MODE_SRT ? 'SRT subtitles' : 'Bilingual subtitles'}</span><h1>{note.title}</h1></div>
         <div className="actions">
-          <button className={showChinese ? 'selected-soft' : ''} onClick={() => setShowChinese((current) => !current)}>{showChinese ? <Eye size={17} /> : <EyeOff size={17} />}{showChinese ? '顯示中文' : '隱藏中文'}</button>
           <EditIconButton label="編輯字幕筆記" onClick={() => setEditing(note)} />
           <button className="edit-icon-button delete-icon-button" onClick={deleteNote} title="刪除字幕筆記" aria-label="刪除字幕筆記"><Trash2 size={15} /></button>
         </div>
       </div>
       {error && <div className="form-error">{error}</div>}
+      <div className="yt-reader-floating-actions" aria-label="字幕閱讀控制">
+        <button type="button" className={`yt-reader-floating-button ${showChinese ? 'selected' : ''}`} onClick={() => setShowChinese((current) => !current)} title={showChinese ? '隱藏中文' : '顯示中文'} aria-label={showChinese ? '隱藏中文' : '顯示中文'}>{showChinese ? <Eye size={22} /> : <EyeOff size={22} />}</button>
+      </div>
       <div className="yt-reader-content">
         <div className="yt-reader-video">
           {embedUrl ? <div className="yt-video-frame"><iframe ref={playerRef} src={embedUrl} title={note.title} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen /></div> : <div className="yt-video-missing"><Link2 size={22} /><span>這篇字幕筆記沒有 YouTube 影片連結。</span></div>}

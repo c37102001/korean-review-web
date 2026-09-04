@@ -1440,6 +1440,45 @@ main {
   overflow-wrap: anywhere;
 }
 
+.yt-reader-floating-actions {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.yt-reader-floating-button,
+.global-back-button {
+  width: 54px;
+  height: 54px;
+  min-width: 54px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  border-radius: 999px;
+  color: #405159;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 14px 32px rgba(43, 61, 69, 0.2);
+}
+
+.global-back-button {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 12;
+}
+
+.global-back-button.with-yt-controls {
+  right: 92px;
+}
+
+.yt-reader-floating-button.selected {
+  color: #16776a;
+  background: #e7f8f3;
+}
+
 .yt-reader-content {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
@@ -4391,6 +4430,30 @@ textarea:focus {
   .yt-reader-content {
     display: block;
     height: auto;
+  }
+
+  .yt-reader-floating-actions {
+    right: 16px;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    gap: 8px;
+  }
+
+  .yt-reader-floating-button {
+    width: 50px;
+    height: 50px;
+    min-width: 50px;
+  }
+
+  .global-back-button {
+    right: 16px;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    width: 50px;
+    height: 50px;
+    min-width: 50px;
+  }
+
+  .global-back-button.with-yt-controls {
+    right: 74px;
   }
 
   .yt-subtitle-list {
