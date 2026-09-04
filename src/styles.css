@@ -1692,11 +1692,11 @@ main {
   content: '';
   position: absolute;
   left: 50%;
-  bottom: -5px;
+  top: -5px;
   width: 10px;
   height: 10px;
   background: #4bc8ab;
-  clip-path: polygon(0 0, 100% 0, 50% 100%);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
   transform: translateX(-50%);
 }
 

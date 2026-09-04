@@ -6409,7 +6409,7 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
     setSelectionAction({
       ko: selectedKo,
       entry,
-      top: Math.max(10, rect.top - 42),
+      top: rect.bottom + 8,
       left: Math.min(Math.max(10, rect.left + (rect.width / 2) - 19), window.innerWidth - 48),
     });
   }, [note]);
