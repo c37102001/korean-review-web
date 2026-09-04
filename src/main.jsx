@@ -2412,8 +2412,8 @@ function App() {
     home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} recognitionQuestions={todayRecognitionQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('notes')} />,
     notes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
-    study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onMarkLearned={(itemId) => folders.addWords(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
-    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onMarkLearned={(itemId) => folders.addWords(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
+    study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
+    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
     notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     folders: <FoldersPage folders={folders.folders} items={items} loading={folders.loading} error={folders.error} onSave={folders.save} onDelete={folders.remove} onOpen={openFolder} />,
     folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
@@ -4262,7 +4262,7 @@ function RelatedPreviewCard({ item, position }) {
   );
 }
 
-function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onBack, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onMarkLearned, onToggleUnfamiliar }) {
+function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onBack, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onToggleLearned, onToggleUnfamiliar }) {
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [filter, setFilter] = useState('全部');
@@ -4280,6 +4280,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   const [instantReset, setInstantReset] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [markedLearnedIds, setMarkedLearnedIds] = useState(() => new Set());
+  const [removedLearnedIds, setRemovedLearnedIds] = useState(() => new Set());
   const [markedUnfamiliarIds, setMarkedUnfamiliarIds] = useState(() => new Set());
   const [removedUnfamiliarIds, setRemovedUnfamiliarIds] = useState(() => new Set());
   const [folderActionSaving, setFolderActionSaving] = useState('');
@@ -4302,7 +4303,9 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   const ordered = useMemo(() => (random ? shuffleItems(filtered, shuffleSeed) : filtered), [filtered, random, shuffleSeed]);
   const item = ordered[index % Math.max(ordered.length, 1)];
   const isStarred = !!item && (store.starred || []).includes(item.id);
-  const isLearned = !!item && (learnedWordIds.has(item.id) || markedLearnedIds.has(item.id));
+  const isLearned = !!item
+    && !removedLearnedIds.has(item.id)
+    && (learnedWordIds.has(item.id) || markedLearnedIds.has(item.id));
   const isUnfamiliar = !!item
     && !removedUnfamiliarIds.has(item.id)
     && (unfamiliarWordIds.has(item.id) || markedUnfamiliarIds.has(item.id));
@@ -4320,6 +4323,10 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
     playExampleVoice,
     voiceRepeatCount,
   }), [item, frontSide, hideChineseInitially, playExampleVoice, voiceRepeatCount]);
+  useEffect(() => {
+    setMarkedLearnedIds((current) => new Set([...current].filter((id) => !learnedWordIds.has(id))));
+    setRemovedLearnedIds((current) => new Set([...current].filter((id) => learnedWordIds.has(id))));
+  }, [learnedWordIds]);
   useEffect(() => {
     setMarkedUnfamiliarIds((current) => new Set([...current].filter((id) => !unfamiliarWordIds.has(id))));
     setRemovedUnfamiliarIds((current) => new Set([...current].filter((id) => unfamiliarWordIds.has(id))));
@@ -4416,13 +4423,26 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   };
   const markCurrentFolder = async (folderType) => {
     if (!item || folderActionSaving) return;
-    if (folderType === 'learned' && isLearned) return;
     setFolderActionSaving(folderType);
     setFolderActionError('');
     try {
       if (folderType === 'learned') {
-        await onMarkLearned(item.id);
-        setMarkedLearnedIds((current) => new Set(current).add(item.id));
+        await onToggleLearned(item.id, isLearned);
+        if (isLearned) {
+          setMarkedLearnedIds((current) => {
+            const next = new Set(current);
+            next.delete(item.id);
+            return next;
+          });
+          setRemovedLearnedIds((current) => new Set(current).add(item.id));
+        } else {
+          setMarkedLearnedIds((current) => new Set(current).add(item.id));
+          setRemovedLearnedIds((current) => {
+            const next = new Set(current);
+            next.delete(item.id);
+            return next;
+          });
+        }
       } else {
         await onToggleUnfamiliar(item.id, isUnfamiliar);
         if (isUnfamiliar) {
@@ -4721,7 +4741,7 @@ function shouldAutoPronouncePracticePrompt({ started, recognitionMode, grammarMo
   return activeDirection === 'ko-zh' && autoPronounce;
 }
 
-function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onMarkLearned, onToggleUnfamiliar }) {
+function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onToggleLearned, onToggleUnfamiliar }) {
   const [direction, setDirection] = useState('zh-ko');
   const [source, setSource] = useState('term');
   const [starredOnly, setStarredOnly] = useState(false);
@@ -4753,6 +4773,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const [completionError, setCompletionError] = useState('');
   const [completionSaving, setCompletionSaving] = useState(false);
   const [markedLearnedIds, setMarkedLearnedIds] = useState(() => new Set());
+  const [removedLearnedIds, setRemovedLearnedIds] = useState(() => new Set());
   const [markedUnfamiliarIds, setMarkedUnfamiliarIds] = useState(() => new Set());
   const [removedUnfamiliarIds, setRemovedUnfamiliarIds] = useState(() => new Set());
   const [directLearnedSaving, setDirectLearnedSaving] = useState(false);
@@ -4778,13 +4799,19 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const question = queue[index];
   const canClassifyCurrentWord = Boolean(question && !grammarMode && !grammarPracticeMode && question.kind !== 'grammar-example');
   const isCurrentWordLearned = Boolean(
-    question && (learnedWordIds.has(question.itemId) || markedLearnedIds.has(question.itemId))
+    question
+    && !removedLearnedIds.has(question.itemId)
+    && (learnedWordIds.has(question.itemId) || markedLearnedIds.has(question.itemId))
   );
   const isCurrentWordUnfamiliar = Boolean(
     question
     && !removedUnfamiliarIds.has(question.itemId)
     && (unfamiliarWordIds.has(question.itemId) || markedUnfamiliarIds.has(question.itemId))
   );
+  useEffect(() => {
+    setMarkedLearnedIds((current) => new Set([...current].filter((id) => !learnedWordIds.has(id))));
+    setRemovedLearnedIds((current) => new Set([...current].filter((id) => learnedWordIds.has(id))));
+  }, [learnedWordIds]);
   useEffect(() => {
     setMarkedUnfamiliarIds((current) => new Set([...current].filter((id) => !unfamiliarWordIds.has(id))));
     setRemovedUnfamiliarIds((current) => new Set([...current].filter((id) => unfamiliarWordIds.has(id))));
@@ -4880,23 +4907,29 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
       })
       .finally(() => setCompletionSaving(false));
   };
-  const persistCurrentWordAsLearned = async () => {
-    if (!question || isCurrentWordLearned) return false;
-    await onMarkLearned(question.itemId);
-    setMarkedLearnedIds((current) => new Set(current).add(question.itemId));
-    setQuestionQueue((current) => current.filter((candidate, candidateIndex) => (
-      candidateIndex <= index || candidate.itemId !== question.itemId
-    )));
-    return true;
-  };
   const markCurrentWordAsLearned = async () => {
-    if (directLearnedSaving || isCurrentWordLearned) return;
+    if (!question || directLearnedSaving) return;
     setDirectLearnedSaving(true);
     setDirectLearnedError('');
     try {
-      await persistCurrentWordAsLearned();
+      await onToggleLearned(question.itemId, isCurrentWordLearned);
+      if (isCurrentWordLearned) {
+        setMarkedLearnedIds((current) => {
+          const next = new Set(current);
+          next.delete(question.itemId);
+          return next;
+        });
+        setRemovedLearnedIds((current) => new Set(current).add(question.itemId));
+      } else {
+        setMarkedLearnedIds((current) => new Set(current).add(question.itemId));
+        setRemovedLearnedIds((current) => {
+          const next = new Set(current);
+          next.delete(question.itemId);
+          return next;
+        });
+      }
     } catch (error) {
-      setDirectLearnedError(error.message || '加入已學習資料夾失敗');
+      setDirectLearnedError(error.message || '更新已學習資料夾失敗');
     } finally {
       setDirectLearnedSaving(false);
     }
@@ -5185,6 +5218,21 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
                     </>
                   )}
                 </div>
+                {graded && canClassifyCurrentWord && (
+                  <div className="typed-folder-actions">
+                    <WordFolderButtons
+                      compact
+                      isLearned={isCurrentWordLearned}
+                      isUnfamiliar={isCurrentWordUnfamiliar}
+                      learnedSaving={directLearnedSaving}
+                      unfamiliarSaving={directUnfamiliarSaving}
+                      onMarkLearned={markCurrentWordAsLearned}
+                      onMarkUnfamiliar={markCurrentWordAsUnfamiliar}
+                    />
+                    {directLearnedError && <small className="form-error">{directLearnedError}</small>}
+                    {directUnfamiliarError && <small className="form-error">{directUnfamiliarError}</small>}
+                  </div>
+                )}
               </div>
               {result && <DiffResult result={result} />}
             </>
@@ -5212,9 +5260,19 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
                     : '公佈答案'}
                 </button>
               ) : (
-                <div className="answer-panel grade-banner">
-                  <strong><Check size={18} /> 請看右側答案卡後自評</strong>
-                </div>
+                <PracticeDecisionBar
+                  canClassify={canClassifyCurrentWord}
+                  isLearned={isCurrentWordLearned}
+                  isUnfamiliar={isCurrentWordUnfamiliar}
+                  learnedSaving={directLearnedSaving}
+                  unfamiliarSaving={directUnfamiliarSaving}
+                  learnedError={directLearnedError}
+                  unfamiliarError={directUnfamiliarError}
+                  onToggleLearned={markCurrentWordAsLearned}
+                  onToggleUnfamiliar={markCurrentWordAsUnfamiliar}
+                  onCorrect={() => submit(true)}
+                  onWrong={() => submit(false)}
+                />
               )}
             </>
           )}
@@ -5224,20 +5282,8 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
           visible={revealed || graded}
           graded={graded}
           correct={lastCorrect}
-          onCorrect={() => submit(true)}
-          onWrong={() => submit(false)}
-          onNext={goNext}
           isStarred={(store.starred || []).includes(question.source?.id)}
           onToggleStar={grammarMode || grammarPracticeMode ? null : () => toggleStarredItem(updateStore, question.source.id)}
-          canMarkLearned={canClassifyCurrentWord}
-          isLearned={isCurrentWordLearned}
-          learnedSaving={directLearnedSaving}
-          learnedError={directLearnedError}
-          onMarkLearned={markCurrentWordAsLearned}
-          isUnfamiliar={isCurrentWordUnfamiliar}
-          unfamiliarSaving={directUnfamiliarSaving}
-          unfamiliarError={directUnfamiliarError}
-          onMarkUnfamiliar={markCurrentWordAsUnfamiliar}
         />
       </div>
     </section>
@@ -5256,16 +5302,6 @@ function WordFolderButtons({ compact = false, isLearned = false, isUnfamiliar = 
     <div className={`answer-folder-buttons ${compact ? 'compact-folder-buttons' : ''}`}>
       <button
         type="button"
-        className={isLearned ? 'selected-soft' : ''}
-        disabled={isLearned || learnedSaving}
-        onClick={onMarkLearned}
-        title={isLearned ? '已加入「已學習」' : '加入「已學習」'}
-      >
-        <FolderInput size={compact ? 15 : 18} />
-        <span>{compact ? '已學習' : isLearned ? '已加入「已學習」' : learnedSaving ? '加入中' : '加入「已學習」'}</span>
-      </button>
-      <button
-        type="button"
         className={`unfamiliar-soft ${isUnfamiliar ? 'selected-soft' : ''}`}
         disabled={unfamiliarSaving}
         onClick={onMarkUnfamiliar}
@@ -5274,11 +5310,44 @@ function WordFolderButtons({ compact = false, isLearned = false, isUnfamiliar = 
         <FolderInput size={compact ? 15 : 18} />
         <span>{compact ? '不熟悉' : unfamiliarSaving ? '更新中' : isUnfamiliar ? '移出「不熟悉」' : '加入「不熟悉」'}</span>
       </button>
+      <button
+        type="button"
+        className={isLearned ? 'selected-soft' : ''}
+        disabled={learnedSaving}
+        onClick={onMarkLearned}
+        title={isLearned ? '移出「已學習」' : '加入「已學習」'}
+      >
+        <FolderInput size={compact ? 15 : 18} />
+        <span>{compact ? '已學會' : learnedSaving ? '更新中' : isLearned ? '移出「已學習」' : '加入「已學習」'}</span>
+      </button>
     </div>
   );
 }
 
-function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, onWrong, onNext, isStarred = false, onToggleStar, canMarkLearned = false, isLearned = false, learnedSaving = false, learnedError = '', onMarkLearned, isUnfamiliar = false, unfamiliarSaving = false, unfamiliarError = '', onMarkUnfamiliar }) {
+function PracticeDecisionBar({ canClassify, isLearned, isUnfamiliar, learnedSaving, unfamiliarSaving, learnedError, unfamiliarError, onToggleLearned, onToggleUnfamiliar, onCorrect, onWrong }) {
+  return (
+    <div className="answer-panel practice-decision-panel">
+      {canClassify && (
+        <WordFolderButtons
+          compact
+          isLearned={isLearned}
+          isUnfamiliar={isUnfamiliar}
+          learnedSaving={learnedSaving}
+          unfamiliarSaving={unfamiliarSaving}
+          onMarkLearned={onToggleLearned}
+          onMarkUnfamiliar={onToggleUnfamiliar}
+        />
+      )}
+      <div className="practice-grade-actions">
+        <button className="success" onClick={onCorrect}><Check size={18} /> 答對</button>
+        <button className="danger-button" onClick={onWrong}><X size={18} /> 答錯</button>
+      </div>
+      {(learnedError || unfamiliarError) && <small className="form-error">{learnedError || unfamiliarError}</small>}
+    </div>
+  );
+}
+
+function PracticeAnswerPanel({ question, visible, graded, correct, isStarred = false, onToggleStar }) {
   return (
     <aside className={`practice-answer-panel ${visible ? 'visible' : ''}`}>
       <div className="answer-panel-inner">
@@ -5308,28 +5377,6 @@ function PracticeAnswerPanel({ question, visible, graded, correct, onCorrect, on
                 <NoteCard item={question.source} isStarred={isStarred} onToggleStar={onToggleStar} />
               )}
             </div>
-            {canMarkLearned && (
-              <div className="answer-learned-action">
-                <WordFolderButtons
-                  isLearned={isLearned}
-                  isUnfamiliar={isUnfamiliar}
-                  learnedSaving={learnedSaving}
-                  unfamiliarSaving={unfamiliarSaving}
-                  onMarkLearned={onMarkLearned}
-                  onMarkUnfamiliar={onMarkUnfamiliar}
-                />
-                {learnedError && <small className="form-error">{learnedError}</small>}
-                {unfamiliarError && <small className="form-error">{unfamiliarError}</small>}
-              </div>
-            )}
-            {!graded && (
-              <div className="answer-review-actions">
-                <>
-                  <button className="success" onClick={onCorrect}><Check size={18} /> 答對</button>
-                  <button className="danger-button" onClick={onWrong}><X size={18} /> 答錯</button>
-                </>
-              </div>
-            )}
           </>
         )}
       </div>
