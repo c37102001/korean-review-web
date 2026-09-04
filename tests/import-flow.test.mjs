@@ -17,6 +17,22 @@ after(async () => {
   await server?.close();
 });
 
+test('ID generation falls back when randomUUID is unavailable', () => {
+  const originalCrypto = globalThis.crypto;
+  const fallbackCrypto = {
+    getRandomValues(bytes) {
+      for (let index = 0; index < bytes.length; index += 1) bytes[index] = index + 1;
+      return bytes;
+    },
+  };
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: fallbackCrypto });
+  try {
+    assert.match(helpers.createId(), /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  } finally {
+    Object.defineProperty(globalThis, 'crypto', { configurable: true, value: originalCrypto });
+  }
+});
+
 function item(ko, zh, extra = {}) {
   return {
     ko,
@@ -572,6 +588,47 @@ test('tagged note editor round-trips existing notes and rejects malformed sectio
     () => helpers.parseTaggedNoteText('[標題]\n一\n[標題]\n二\n[筆記]\n內容\n[例句]'),
     /\[標題\] 不可以重複/,
   );
+});
+
+test('YouTube subtitle JSON parses Korean and Chinese sentence cards', () => {
+  const entries = helpers.parseYoutubeSubtitleJson(JSON.stringify({
+    data: [
+      { ko: '안녕하세요.', zh: '你好。' },
+      { ko: '반가워요.', zh: '很高興見到你。' },
+    ],
+  }));
+  assert.deepEqual(entries.map(({ ko, zh, startMs }) => ({ ko, zh, startMs })), [
+    { ko: '안녕하세요.', zh: '你好。', startMs: null },
+    { ko: '반가워요.', zh: '很高興見到你。', startMs: null },
+  ]);
+  assert.throws(() => helpers.parseYoutubeSubtitleJson('{"data":[{"ko":"안녕하세요."}]}'), /第 1 句必須同時包含 ko 與 zh/);
+});
+
+test('SRT subtitles parse timestamps and retain matching entry ids on edit', () => {
+  const source = `1
+00:00:01,250 --> 00:00:03,500
+안녕하세요.
+你好。
+
+2
+00:00:04,000 --> 00:00:06,000
+반가워요.
+很高興見到你。`;
+  const entries = helpers.parseYoutubeSubtitleSrt(source);
+  assert.deepEqual(entries.map(({ ko, zh, startMs, endMs }) => ({ ko, zh, startMs, endMs })), [
+    { ko: '안녕하세요.', zh: '你好。', startMs: 1250, endMs: 3500 },
+    { ko: '반가워요.', zh: '很高興見到你。', startMs: 4000, endMs: 6000 },
+  ]);
+  const edited = helpers.parseYoutubeSubtitleSrt(source, [{ ...entries[0], id: 'kept-subtitle' }]);
+  assert.equal(edited[0].id, 'kept-subtitle');
+  assert.equal(helpers.formatYoutubeSubtitleSrt(entries), source);
+});
+
+test('YouTube links resolve standard watch, short, and embed video ids', () => {
+  assert.equal(helpers.youtubeVideoId('https://www.youtube.com/watch?v=abc123'), 'abc123');
+  assert.equal(helpers.youtubeVideoId('https://youtu.be/abc123?t=10'), 'abc123');
+  assert.equal(helpers.youtubeVideoId('https://www.youtube.com/shorts/abc123'), 'abc123');
+  assert.equal(helpers.youtubeVideoId('https://example.com/watch?v=abc123'), '');
 });
 
 test('word examples use alternating Korean and Chinese lines', () => {

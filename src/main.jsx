@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import {
   BookOpen,
   CalendarDays,
+  Captions,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -51,6 +52,8 @@ const DAILY_RECOGNITION_MODE = 'daily-recognition';
 const DAILY_GRAMMAR_MODE = 'daily-grammar';
 const NOTE_CATEGORY_GRAMMAR = 'grammar';
 const NOTE_CATEGORY_VOCABULARY = 'vocabulary';
+const YT_SUBTITLE_MODE_JSON = 'json';
+const YT_SUBTITLE_MODE_SRT = 'srt';
 const SYSTEM_LEARNED_FOLDER_ID = 'system-learned';
 const SYSTEM_LEARNED_FOLDER_NAME = '已學習';
 const SYSTEM_UNFAMILIAR_FOLDER_ID = 'system-unfamiliar';
@@ -66,6 +69,22 @@ const SPEECH_SAMPLE_TEXT = {
   ko: '오늘도 즐겁게 한국어를 공부해요.',
   zh: '今天也一起開心地學習韓文。',
 };
+
+let localIdSequence = 0;
+
+function createId() {
+  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+    globalThis.crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  localIdSequence += 1;
+  return `${Date.now().toString(36)}-${localIdSequence}-${Math.random().toString(36).slice(2, 12)}`;
+}
 
 const toDateKey = (date) => {
   const year = date.getFullYear();
@@ -169,7 +188,7 @@ function parseGrammarExamplesText(text, existingExamples = []) {
       usedIds.add(unused.id);
       return { ...example, id: unused.id };
     }
-    return { ...example, id: crypto.randomUUID() };
+    return { ...example, id: createId() };
   });
 }
 
@@ -221,6 +240,137 @@ function parseTaggedNoteText(text, existingExamples = []) {
   };
 }
 
+function normalizeYoutubeSubtitle(note, fallbackId = '') {
+  const mode = note?.mode === YT_SUBTITLE_MODE_SRT ? YT_SUBTITLE_MODE_SRT : YT_SUBTITLE_MODE_JSON;
+  const entries = Array.isArray(note?.entries)
+    ? note.entries.map((entry, index) => ({
+      id: String(entry?.id || `${fallbackId || 'subtitle'}-entry-${index}`),
+      ko: String(entry?.ko || '').trim(),
+      zh: String(entry?.zh || '').trim(),
+      startMs: Number.isFinite(Number(entry?.startMs)) ? Math.max(0, Math.floor(Number(entry.startMs))) : null,
+      endMs: Number.isFinite(Number(entry?.endMs)) ? Math.max(0, Math.floor(Number(entry.endMs))) : null,
+    })).filter((entry) => entry.ko && entry.zh)
+    : [];
+  return {
+    id: String(note?.id || fallbackId),
+    title: String(note?.title || '').trim(),
+    youtubeUrl: String(note?.youtubeUrl || '').trim(),
+    videoId: youtubeVideoId(note?.youtubeUrl || note?.videoId || ''),
+    mode,
+    entries,
+    createdAt: String(note?.createdAt || ''),
+    updatedAt: String(note?.updatedAt || ''),
+  };
+}
+
+function youtubeVideoId(value) {
+  const input = String(value || '').trim();
+  if (!input) return '';
+  try {
+    const url = new URL(input);
+    const host = url.hostname.replace(/^www\./, '').toLowerCase();
+    if (host === 'youtu.be') return url.pathname.split('/').filter(Boolean)[0] || '';
+    if (host.endsWith('youtube.com')) {
+      if (url.pathname === '/watch') return url.searchParams.get('v') || '';
+      const parts = url.pathname.split('/').filter(Boolean);
+      if (['embed', 'shorts', 'live'].includes(parts[0])) return parts[1] || '';
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+function subtitleEntryIds(entries, existingEntries = []) {
+  const usedIds = new Set();
+  return entries.map((entry, index) => {
+    const exact = existingEntries.find((current) => (
+      !usedIds.has(current.id)
+      && current.ko === entry.ko
+      && current.zh === entry.zh
+      && current.startMs === entry.startMs
+    ));
+    if (exact) {
+      usedIds.add(exact.id);
+      return { ...entry, id: exact.id };
+    }
+    const samePosition = existingEntries[index];
+    if (samePosition?.id && !usedIds.has(samePosition.id)) {
+      usedIds.add(samePosition.id);
+      return { ...entry, id: samePosition.id };
+    }
+    return { ...entry, id: createId() };
+  });
+}
+
+function parseYoutubeSubtitleJson(text, existingEntries = []) {
+  let parsed;
+  try {
+    parsed = JSON.parse(String(text || ''));
+  } catch {
+    throw new Error('字幕 JSON 格式無法解析');
+  }
+  if (!parsed || !Array.isArray(parsed.data)) throw new Error('字幕 JSON 必須是包含 data 陣列的物件');
+  const entries = parsed.data.map((entry, index) => {
+    const ko = String(entry?.ko || '').trim();
+    const zh = String(entry?.zh || '').trim();
+    if (!ko || !zh) throw new Error(`第 ${index + 1} 句必須同時包含 ko 與 zh`);
+    return { ko, zh, startMs: null, endMs: null };
+  });
+  if (!entries.length) throw new Error('字幕 JSON 至少需要一個句子');
+  return subtitleEntryIds(entries, existingEntries);
+}
+
+function parseSrtTimestamp(value) {
+  const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})$/);
+  if (!match) return null;
+  return (((Number(match[1]) * 60 + Number(match[2])) * 60 + Number(match[3])) * 1000) + Number(match[4]);
+}
+
+function formatSrtTimestamp(value) {
+  const milliseconds = Math.max(0, Math.floor(Number(value) || 0));
+  const hours = Math.floor(milliseconds / 3600000);
+  const minutes = Math.floor((milliseconds % 3600000) / 60000);
+  const seconds = Math.floor((milliseconds % 60000) / 1000);
+  const fraction = milliseconds % 1000;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(fraction).padStart(3, '0')}`;
+}
+
+function parseYoutubeSubtitleSrt(text, existingEntries = []) {
+  const blocks = String(text || '').replace(/\r\n?/g, '\n').trim().split(/\n\s*\n/).filter(Boolean);
+  const entries = blocks.map((block, index) => {
+    const lines = block.split('\n').map((line) => line.trim()).filter(Boolean);
+    if (/^\d+$/.test(lines[0])) lines.shift();
+    const timing = lines.shift()?.match(/^(.+?)\s+-->\s+(.+?)(?:\s+.*)?$/);
+    if (!timing) throw new Error(`第 ${index + 1} 段缺少有效的 SRT 時間戳`);
+    const startMs = parseSrtTimestamp(timing[1]);
+    const endMs = parseSrtTimestamp(timing[2]);
+    if (startMs === null || endMs === null) throw new Error(`第 ${index + 1} 段的時間戳格式不正確`);
+    if (lines.length < 2) throw new Error(`第 ${index + 1} 段必須提供韓文與中文各一行`);
+    return {
+      ko: lines[0].replace(/<[^>]+>/g, ''),
+      zh: lines.slice(1).join(' ').replace(/<[^>]+>/g, ''),
+      startMs,
+      endMs,
+    };
+  });
+  if (!entries.length) throw new Error('SRT 至少需要一段字幕');
+  return subtitleEntryIds(entries, existingEntries);
+}
+
+function formatYoutubeSubtitleJson(entries = []) {
+  return JSON.stringify({ data: entries.map(({ ko, zh }) => ({ ko, zh })) }, null, 2);
+}
+
+function formatYoutubeSubtitleSrt(entries = []) {
+  return entries.map((entry, index) => [
+    index + 1,
+    `${formatSrtTimestamp(entry.startMs)} --> ${formatSrtTimestamp(entry.endMs)}`,
+    entry.ko,
+    entry.zh,
+  ].join('\n')).join('\n\n');
+}
+
 function useGrammarNotes(user) {
   const [state, setState] = useState({
     notes: [],
@@ -270,7 +420,7 @@ function useGrammarNotes(user) {
 
   const save = useCallback(async (input) => {
     if (!user) throw new Error('尚未登入');
-    const id = input.id || crypto.randomUUID();
+    const id = input.id || createId();
     const now = new Date().toISOString();
     const note = normalizeGrammarNote({
       ...input,
@@ -305,6 +455,55 @@ function useGrammarNotes(user) {
   }, [user]);
 
   return { ...state, save, remove, completeReview };
+}
+
+function useYoutubeSubtitles(user) {
+  const [state, setState] = useState({ notes: [], loading: false, error: '' });
+
+  useEffect(() => {
+    if (!user) {
+      setState({ notes: [], loading: false, error: '' });
+      return undefined;
+    }
+    setState((current) => ({ ...current, loading: true, error: '' }));
+    return onSnapshot(
+      collection(db, 'users', user.uid, 'ytSubtitles'),
+      { includeMetadataChanges: true },
+      (snapshot) => {
+        if (snapshot.metadata.hasPendingWrites) return;
+        const notes = snapshot.docs
+          .map((documentSnap) => normalizeYoutubeSubtitle(documentSnap.data(), documentSnap.id))
+          .filter((note) => note.title)
+          .sort((left, right) => (right.updatedAt || right.createdAt || '').localeCompare(left.updatedAt || left.createdAt || '') || left.title.localeCompare(right.title));
+        setState({ notes, loading: false, error: '' });
+      },
+      (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
+    );
+  }, [user]);
+
+  const save = useCallback(async (input) => {
+    if (!user) throw new Error('尚未登入');
+    const id = input.id || createId();
+    const now = new Date().toISOString();
+    const note = normalizeYoutubeSubtitle({
+      ...input,
+      id,
+      createdAt: input.createdAt || now,
+      updatedAt: now,
+    }, id);
+    if (!note.title) throw new Error('請輸入字幕筆記標題');
+    if (!note.entries.length) throw new Error('請至少加入一個字幕句子');
+    if (note.youtubeUrl && !note.videoId) throw new Error('YouTube 連結格式無法辨識，請使用 youtube.com 或 youtu.be 連結');
+    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'ytSubtitles', id), note));
+    return note;
+  }, [user]);
+
+  const remove = useCallback(async (id) => {
+    if (!user) throw new Error('尚未登入');
+    await retryFirestoreWrite(() => deleteDoc(doc(db, 'users', user.uid, 'ytSubtitles', id)));
+  }, [user]);
+
+  return { ...state, save, remove };
 }
 
 function normalizeFolder(folder, fallbackId = '') {
@@ -430,7 +629,7 @@ function useWordFolders(user) {
 
   const save = useCallback(async (input) => {
     if (!user) throw new Error('尚未登入');
-    const id = input?.id || crypto.randomUUID();
+    const id = input?.id || createId();
     const existing = state.folders.find((folder) => folder.id === id);
     const systemFolder = isSystemFolder(existing || input);
     const name = systemFolder ? String(existing?.name || input?.name || '').trim() : String(input?.name || '').trim();
@@ -511,7 +710,7 @@ function useWordFolders(user) {
     if (targetFolderIds.length + 1 > 500) throw new Error('這次更新的資料夾數量超過 Firebase 單次批次上限');
     const now = new Date().toISOString();
     const folder = normalizeFolder({
-      id: crypto.randomUUID(),
+      id: createId(),
       name,
       tag: String(tagInput || '').trim(),
       wordIds: ids,
@@ -1054,7 +1253,7 @@ function buildJsonImportDraft(text, targetDate) {
   const entries = data.map((item, index) => {
     try {
       validateImportItem(item, index);
-      return { index, action: 'add', recordId: item.id || `${targetDate}-custom-${crypto.randomUUID()}`, item };
+      return { index, action: 'add', recordId: item.id || `${targetDate}-custom-${createId()}`, item };
     } catch (validationError) {
       return null;
     }
@@ -1179,7 +1378,7 @@ function createRecordsForDate(date, rawItems, existingItems = []) {
   const now = new Date().toISOString();
   const orderBase = Date.now() * 1000;
   const records = rawItems.map((item, index) => ({
-    id: item.id || `${date}-custom-${crypto.randomUUID()}`,
+    id: item.id || `${date}-custom-${createId()}`,
     date: item.date || date,
     order: Number.isSafeInteger(item.order) ? item.order : orderBase + index,
     item,
@@ -1979,7 +2178,7 @@ function recordAnswer(store, question, correct) {
         lastResult: correct ? 'correct' : 'wrong',
       },
     },
-    attempts: [{ id: crypto.randomUUID(), questionId: question.id, correct, date: todayString(), time: now }, ...store.attempts].slice(0, 5000),
+    attempts: [{ id: createId(), questionId: question.id, correct, date: todayString(), time: now }, ...store.attempts].slice(0, 5000),
   };
 }
 
@@ -2025,7 +2224,7 @@ function recordDailyRoundAnswer(store, question, correct, {
     ...store,
     [stateKey]: nextRound,
     attempts: [{
-      id: crypto.randomUUID(),
+      id: createId(),
       questionId: question.id,
       correct,
       date: todayString(),
@@ -2275,6 +2474,7 @@ function App() {
   const { loading: authLoading, user } = useAuthUser();
   const [store, updateStore, storeLoading, storeError, markDateComplete] = useFirestoreStore(user);
   const grammar = useGrammarNotes(user);
+  const ytSubtitles = useYoutubeSubtitles(user);
   const folders = useWordFolders(user);
   const [page, setPage] = useState('home');
   const [pageStack, setPageStack] = useState([]);
@@ -2282,6 +2482,7 @@ function App() {
   const [practiceSet, setPracticeSet] = useState(null);
   const [studySet, setStudySet] = useState(null);
   const [selectedFolderId, setSelectedFolderId] = useState(null);
+  const [selectedYoutubeSubtitleId, setSelectedYoutubeSubtitleId] = useState(null);
   const recognitionInitializationRef = useRef(new Set());
   const allRecords = useMemo(() => {
     const byId = new Map();
@@ -2403,10 +2604,14 @@ function App() {
     setSelectedFolderId(folderId);
     navChild('folder');
   };
+  const openYoutubeSubtitle = (subtitleId) => {
+    setSelectedYoutubeSubtitleId(subtitleId);
+    navChild('ytSubtitle');
+  };
 
   if (authLoading) return <LoadingScreen text="正在確認登入狀態" />;
   if (!user) return <LoginPage />;
-  if (storeLoading || folders.loading) return <LoadingScreen text="載入資料中" />;
+  if (storeLoading || folders.loading || ytSubtitles.loading) return <LoadingScreen text="載入資料中" />;
 
   const views = {
     home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} recognitionQuestions={todayRecognitionQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} />,
@@ -2419,6 +2624,8 @@ function App() {
     folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
     grammar: <GrammarNotebookPage category={NOTE_CATEGORY_GRAMMAR} notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} onPractice={startPractice} />,
     vocabularyNotes: <GrammarNotebookPage category={NOTE_CATEGORY_VOCABULARY} notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} onPractice={startPractice} />,
+    ytSubtitles: <YoutubeSubtitlesPage notes={ytSubtitles.notes} error={ytSubtitles.error} onSave={ytSubtitles.save} onDelete={ytSubtitles.remove} onOpen={openYoutubeSubtitle} />,
+    ytSubtitle: <YoutubeSubtitleReader note={ytSubtitles.notes.find((note) => note.id === selectedYoutubeSubtitleId)} onBack={goUp} onSave={ytSubtitles.save} onDelete={ytSubtitles.remove} />,
   };
 
   return (
@@ -2430,11 +2637,13 @@ function App() {
         <button className={page === 'folders' || page === 'folder' ? 'active' : ''} onClick={() => navTop('folders')}><Folder size={18} /> 資料夾</button>
         <button className={page === 'grammar' ? 'active' : ''} onClick={() => navTop('grammar')}><NotebookPen size={18} /> 文法筆記</button>
         <button className={page === 'vocabularyNotes' ? 'active' : ''} onClick={() => navTop('vocabularyNotes')}><BookOpen size={18} /> 單字筆記</button>
+        <button className={page === 'ytSubtitles' || page === 'ytSubtitle' ? 'active' : ''} onClick={() => navTop('ytSubtitles')}><Captions size={18} /> YT 字幕</button>
         <button className="logout-button" onClick={() => signOut(auth)}><LogOut size={18} /> 登出</button>
       </aside>
       <main>
         {storeError && <div className="sync-error">Firebase 同步失敗：{storeError}</div>}
         {folders.error && <div className="sync-error">資料夾同步失敗：{folders.error}</div>}
+        {ytSubtitles.error && <div className="sync-error">YT 字幕同步失敗：{ytSubtitles.error}</div>}
         {!!pageStack.length && page !== 'study' && <button className="back-button" onClick={goUp}><ChevronLeft size={18} /> 返回上一層</button>}
         {views[page]}
       </main>
@@ -3174,7 +3383,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
       nextEntries[issueIndex] = {
         index: issueIndex,
         action: 'add',
-        recordId: item.id || `${importDraft.targetDate}-custom-${crypto.randomUUID()}`,
+        recordId: item.id || `${importDraft.targetDate}-custom-${createId()}`,
         item,
       };
       const nextInvalid = importDraft.invalid.filter((entry) => entry.index !== issueIndex);
@@ -5861,6 +6070,223 @@ function GrammarEditorModal({ note, defaultCategory = NOTE_CATEGORY_GRAMMAR, onS
   );
 }
 
+function subtitleTimeLabel(milliseconds) {
+  const totalSeconds = Math.max(0, Math.floor((Number(milliseconds) || 0) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}` : `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function YoutubeSubtitleCard({ note, onOpen, onEdit, onDelete }) {
+  return (
+    <article className="yt-subtitle-note-card clickable-card" onClick={() => onOpen(note.id)}>
+      <div className="card-head">
+        <div><span className="eyebrow">{note.mode === YT_SUBTITLE_MODE_SRT ? 'SRT subtitles' : 'Bilingual subtitles'}</span><h2>{note.title}</h2></div>
+        <div className="card-actions">
+          <EditIconButton label="編輯字幕筆記" onClick={() => onEdit(note)} />
+          <button
+            type="button"
+            className="edit-icon-button delete-icon-button"
+            title="刪除字幕筆記"
+            aria-label="刪除字幕筆記"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete(note);
+            }}
+          >
+            <Trash2 size={15} />
+          </button>
+        </div>
+      </div>
+      <p>{note.mode === YT_SUBTITLE_MODE_SRT ? '可點擊字幕跳轉影片時間' : '中韓逐句字幕'}</p>
+      <div className="yt-subtitle-note-meta">
+        <span>{note.entries.length} 句</span>
+        <span>{note.videoId ? '已嵌入影片' : '沒有影片連結'}</span>
+        <span>{grammarTimestamp(note.updatedAt || note.createdAt)}</span>
+      </div>
+    </article>
+  );
+}
+
+function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, onOpen }) {
+  const [query, setQuery] = useState('');
+  const [editing, setEditing] = useState(null);
+  const [actionError, setActionError] = useState('');
+  const filtered = useMemo(() => {
+    const keyword = query.trim().toLocaleLowerCase('zh-TW');
+    if (!keyword) return notes;
+    return notes.filter((note) => [note.title, note.youtubeUrl, ...note.entries.flatMap((entry) => [entry.ko, entry.zh])]
+      .filter(Boolean)
+      .join(' ')
+      .toLocaleLowerCase('zh-TW')
+      .includes(keyword));
+  }, [notes, query]);
+  const deleteNote = async (note) => {
+    if (!window.confirm(`確定要刪除「${note.title}」嗎？`)) return;
+    setActionError('');
+    try {
+      await onDelete(note.id);
+    } catch (deleteError) {
+      setActionError(deleteError.message || '刪除字幕筆記失敗');
+    }
+  };
+
+  return (
+    <section className="page yt-subtitles-page">
+      <div className="topbar">
+        <div><span className="eyebrow">YouTube Subtitles</span><h1>YT 字幕</h1></div>
+        <div className="actions notebook-actions"><button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 新增字幕筆記</button></div>
+      </div>
+      <label className="search grammar-search">
+        <Search size={18} />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋標題、影片連結或字幕內容" />
+      </label>
+      {actionError && <div className="form-error">{actionError}</div>}
+      {error && <div className="sync-error">Firebase 同步失敗：{error}</div>}
+      {filtered.length ? (
+        <div className="yt-subtitle-note-grid">
+          {filtered.map((note) => <YoutubeSubtitleCard key={note.id} note={note} onOpen={onOpen} onEdit={setEditing} onDelete={deleteNote} />)}
+        </div>
+      ) : <div className="panel grammar-empty">{query ? '找不到符合的字幕筆記。' : '還沒有字幕筆記。新增一篇後即可放入中韓字幕。'}</div>}
+      {editing && (
+        <YoutubeSubtitleEditorModal
+          note={editing.id ? editing : null}
+          onSave={async (note) => {
+            await onSave(note);
+            setEditing(null);
+          }}
+          onClose={() => setEditing(null)}
+        />
+      )}
+    </section>
+  );
+}
+
+function YoutubeSubtitleEditorModal({ note, onSave, onClose }) {
+  const initialMode = note?.mode === YT_SUBTITLE_MODE_SRT ? YT_SUBTITLE_MODE_SRT : YT_SUBTITLE_MODE_JSON;
+  const [title, setTitle] = useState(note?.title || '');
+  const [youtubeUrl, setYoutubeUrl] = useState(note?.youtubeUrl || '');
+  const [mode, setMode] = useState(initialMode);
+  const [jsonText, setJsonText] = useState(() => formatYoutubeSubtitleJson(note?.entries || []));
+  const [srtText, setSrtText] = useState(() => formatYoutubeSubtitleSrt(note?.entries || []));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const activeText = mode === YT_SUBTITLE_MODE_SRT ? srtText : jsonText;
+  const setActiveText = mode === YT_SUBTITLE_MODE_SRT ? setSrtText : setJsonText;
+  const preview = useMemo(() => {
+    if (!activeText.trim()) return null;
+    try {
+      const entries = mode === YT_SUBTITLE_MODE_SRT ? parseYoutubeSubtitleSrt(activeText, note?.entries || []) : parseYoutubeSubtitleJson(activeText, note?.entries || []);
+      return { count: entries.length, error: '' };
+    } catch (parseError) {
+      return { count: 0, error: parseError.message || '格式無法解析' };
+    }
+  }, [activeText, mode, note?.entries]);
+  const submit = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      const entries = mode === YT_SUBTITLE_MODE_SRT
+        ? parseYoutubeSubtitleSrt(srtText, note?.entries || [])
+        : parseYoutubeSubtitleJson(jsonText, note?.entries || []);
+      await onSave({ ...note, title, youtubeUrl, mode, entries });
+    } catch (saveError) {
+      setError(saveError.message || '儲存字幕筆記失敗');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <form className="modal-panel yt-subtitle-editor" onSubmit={submit}>
+        <button type="button" className="modal-close" disabled={saving} onClick={onClose} aria-label="關閉"><X size={18} /></button>
+        <div className="grammar-modal-head"><span className="eyebrow">YouTube Subtitles</span><h2>{note ? '編輯字幕筆記' : '新增字幕筆記'}</h2></div>
+        <label className="grammar-field"><span>標題</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：影片名稱或主題" autoFocus required /></label>
+        <label className="grammar-field"><span>YouTube 連結 <small>選填</small></span><input type="url" value={youtubeUrl} onChange={(event) => setYoutubeUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=..." /></label>
+        <div className="grammar-field">
+          <span>字幕格式</span>
+          <div className="segmented compact note-category-control">
+            <button type="button" className={mode === YT_SUBTITLE_MODE_JSON ? 'active' : ''} onClick={() => setMode(YT_SUBTITLE_MODE_JSON)}>JSON 逐句字幕</button>
+            <button type="button" className={mode === YT_SUBTITLE_MODE_SRT ? 'active' : ''} onClick={() => setMode(YT_SUBTITLE_MODE_SRT)}>SRT 時間字幕</button>
+          </div>
+        </div>
+        <label className="grammar-field tagged-note-field">
+          <span>{mode === YT_SUBTITLE_MODE_SRT ? 'SRT 字幕內容' : 'JSON 字幕內容'}</span>
+          <textarea
+            className="yt-subtitle-source"
+            value={activeText}
+            onChange={(event) => setActiveText(event.target.value)}
+            spellCheck={false}
+            rows={18}
+            placeholder={mode === YT_SUBTITLE_MODE_SRT
+              ? '1\n00:00:01,000 --> 00:00:04,000\n안녕하세요.\n你好。'
+              : '{\n  "data": [\n    { "ko": "안녕하세요.", "zh": "你好。" }\n  ]\n}'}
+          />
+          <small>{mode === YT_SUBTITLE_MODE_SRT ? '每一段依序填入時間戳、韓文、中文。點擊字幕會跳轉到開始時間。' : '請使用 { "data": [{ "ko": "韓文", "zh": "中文" }] } 格式。'}</small>
+          {preview && <small className={preview.error ? 'subtitle-parse-error' : 'subtitle-parse-success'}>{preview.error || `可匯入 ${preview.count} 句字幕`}</small>}
+        </label>
+        {error && <div className="json-edit-error">{error}</div>}
+        <div className="actions grammar-editor-actions"><button type="button" disabled={saving} onClick={onClose}>取消</button><button className="primary" disabled={saving} type="submit"><Check size={17} /> {saving ? '儲存中' : '儲存字幕筆記'}</button></div>
+      </form>
+    </div>
+  );
+}
+
+function YoutubeSubtitleReader({ note, onBack, onSave, onDelete }) {
+  const [showChinese, setShowChinese] = useState(true);
+  const [editing, setEditing] = useState(null);
+  const [error, setError] = useState('');
+  const playerRef = useRef(null);
+  if (!note) return <section className="page"><div className="empty">找不到這篇字幕筆記。<button onClick={onBack}>返回上一層</button></div></section>;
+  const seekTo = (entry) => {
+    if (note.mode !== YT_SUBTITLE_MODE_SRT || entry.startMs === null || !playerRef.current) return;
+    const message = JSON.stringify({ event: 'command', func: 'seekTo', args: [entry.startMs / 1000, true] });
+    playerRef.current.contentWindow?.postMessage(message, 'https://www.youtube-nocookie.com');
+    playerRef.current.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), 'https://www.youtube-nocookie.com');
+  };
+  const deleteNote = async () => {
+    if (!window.confirm(`確定要刪除「${note.title}」嗎？`)) return;
+    setError('');
+    try {
+      await onDelete(note.id);
+      onBack();
+    } catch (deleteError) {
+      setError(deleteError.message || '刪除字幕筆記失敗');
+    }
+  };
+  const embedUrl = note.videoId ? `https://www.youtube-nocookie.com/embed/${note.videoId}?enablejsapi=1&rel=0` : '';
+
+  return (
+    <section className="page yt-reader-page">
+      <div className="topbar yt-reader-topbar">
+        <div><span className="eyebrow">{note.mode === YT_SUBTITLE_MODE_SRT ? 'SRT subtitles' : 'Bilingual subtitles'}</span><h1>{note.title}</h1></div>
+        <div className="actions">
+          <button className={showChinese ? 'selected-soft' : ''} onClick={() => setShowChinese((current) => !current)}>{showChinese ? <Eye size={17} /> : <EyeOff size={17} />}{showChinese ? '顯示中文' : '隱藏中文'}</button>
+          <EditIconButton label="編輯字幕筆記" onClick={() => setEditing(note)} />
+          <button className="edit-icon-button delete-icon-button" onClick={deleteNote} title="刪除字幕筆記" aria-label="刪除字幕筆記"><Trash2 size={15} /></button>
+        </div>
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      <div className="yt-reader-content">
+        <div className="yt-reader-video">
+          {embedUrl ? <div className="yt-video-frame"><iframe ref={playerRef} src={embedUrl} title={note.title} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen /></div> : <div className="yt-video-missing"><Link2 size={22} /><span>這篇字幕筆記沒有 YouTube 影片連結。</span></div>}
+        </div>
+        <div className="yt-subtitle-list" aria-label="字幕列表">
+          {note.entries.map((entry, index) => {
+            const clickable = note.mode === YT_SUBTITLE_MODE_SRT && entry.startMs !== null && !!embedUrl;
+          const content = <><strong><span className="yt-subtitle-entry-index">{index + 1}</span>{entry.startMs !== null && <small className="yt-subtitle-entry-time">{subtitleTimeLabel(entry.startMs)}</small>}<span>{entry.ko}</span></strong>{showChinese && <p>{entry.zh}</p>}</>;
+            return clickable ? <button type="button" className="yt-subtitle-entry clickable" onClick={() => seekTo(entry)} key={entry.id}>{content}</button> : <article className="yt-subtitle-entry" key={entry.id}>{content}</article>;
+          })}
+        </div>
+      </div>
+      {editing && <YoutubeSubtitleEditorModal note={editing} onSave={async (nextNote) => { await onSave(nextNote); setEditing(null); }} onClose={() => setEditing(null)} />}
+    </section>
+  );
+}
+
 function GrammarDetailModal({ note, category, onEdit, onDelete, onPractice, onClose }) {
   const meta = noteCategoryMeta(category);
   useEffect(() => {
@@ -6663,6 +7089,7 @@ export {
   attemptDate,
   buildStudyAutoPlaySpeechSequence,
   buildJsonImportDraft,
+  createId,
   createRecordsFromImportEntries,
   dailyGrammarSchedule,
   dailyRecognitionSchedule,
@@ -6696,6 +7123,8 @@ export {
   normalizeRecords,
   parseGrammarExamplesText,
   parseTaggedNoteText,
+  parseYoutubeSubtitleJson,
+  parseYoutubeSubtitleSrt,
   parsePairLines,
   nextRecognitionRevealState,
   recordOrder,
@@ -6709,6 +7138,8 @@ export {
   shouldRecordPracticeResults,
   shouldShowStudyChinese,
   toggleFolderGroupSelection,
+  formatYoutubeSubtitleSrt,
+  youtubeVideoId,
 };
 
 if (typeof document !== 'undefined') createRoot(document.getElementById('root')).render(<App />);
