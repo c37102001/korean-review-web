@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import {
+  ArrowDown,
+  ArrowUp,
   BookOpen,
   CalendarDays,
   Captions,
@@ -54,6 +56,7 @@ const NOTE_CATEGORY_GRAMMAR = 'grammar';
 const NOTE_CATEGORY_VOCABULARY = 'vocabulary';
 const YT_SUBTITLE_MODE_JSON = 'json';
 const YT_SUBTITLE_MODE_SRT = 'srt';
+const YOUTUBE_EMBED_ORIGIN = 'https://www.youtube-nocookie.com';
 const SYSTEM_LEARNED_FOLDER_ID = 'system-learned';
 const SYSTEM_LEARNED_FOLDER_NAME = '已學習';
 const SYSTEM_UNFAMILIAR_FOLDER_ID = 'system-unfamiliar';
@@ -71,6 +74,7 @@ const SPEECH_SAMPLE_TEXT = {
 };
 
 let localIdSequence = 0;
+let youtubeIframeApiPromise = null;
 
 function createId() {
   if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
@@ -84,6 +88,35 @@ function createId() {
   }
   localIdSequence += 1;
   return `${Date.now().toString(36)}-${localIdSequence}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function loadYoutubeIframeApi() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return Promise.reject(new Error('目前無法載入 YouTube 播放器'));
+  }
+  if (window.YT?.Player) return Promise.resolve(window.YT);
+  if (youtubeIframeApiPromise) return youtubeIframeApiPromise;
+  youtubeIframeApiPromise = new Promise((resolve, reject) => {
+    const previousReady = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      previousReady?.();
+      if (window.YT?.Player) resolve(window.YT);
+      else reject(new Error('YouTube 播放器初始化失敗'));
+    };
+    let script = document.querySelector('script[data-youtube-iframe-api]');
+    if (!script) {
+      script = document.createElement('script');
+      script.src = 'https://www.youtube.com/iframe_api';
+      script.async = true;
+      script.dataset.youtubeIframeApi = 'true';
+      document.head.appendChild(script);
+    }
+    script.addEventListener('error', () => {
+      youtubeIframeApiPromise = null;
+      reject(new Error('YouTube 播放器載入失敗'));
+    }, { once: true });
+  });
+  return youtubeIframeApiPromise;
 }
 
 const toDateKey = (date) => {
@@ -371,6 +404,43 @@ function formatYoutubeSubtitleSrt(entries = []) {
   ].join('\n')).join('\n\n');
 }
 
+function subtitleWordMatches(text, words = []) {
+  const source = String(text || '');
+  const byKorean = new Map();
+  words.forEach((word) => {
+    const ko = String(word?.ko || '').trim();
+    if (ko && !byKorean.has(ko)) byKorean.set(ko, word);
+  });
+  const candidates = [...byKorean.entries()]
+    .map(([ko, word]) => ({ ko, word }))
+    .sort((left, right) => right.ko.length - left.ko.length || left.ko.localeCompare(right.ko, 'ko'));
+  const found = [];
+  candidates.forEach((candidate) => {
+    let start = source.indexOf(candidate.ko);
+    while (start >= 0) {
+      found.push({ start, end: start + candidate.ko.length, word: candidate.word });
+      start = source.indexOf(candidate.ko, start + candidate.ko.length);
+    }
+  });
+  return found
+    .sort((left, right) => left.start - right.start || right.end - left.end)
+    .reduce((accepted, match) => {
+      const previous = accepted[accepted.length - 1];
+      if (!previous || match.start >= previous.end) accepted.push(match);
+      return accepted;
+    }, []);
+}
+
+function subtitleEntryAtTime(entries = [], milliseconds) {
+  const current = Number(milliseconds);
+  if (!Number.isFinite(current)) return null;
+  return entries.find((entry) => (
+    entry.startMs !== null
+    && current >= entry.startMs
+    && (entry.endMs === null || current < entry.endMs)
+  )) || null;
+}
+
 function useGrammarNotes(user) {
   const [state, setState] = useState({
     notes: [],
@@ -481,7 +551,7 @@ function useYoutubeSubtitles(user) {
     );
   }, [user]);
 
-  const save = useCallback(async (input) => {
+  const save = useCallback(async (input, linkedFolderPatch = null) => {
     if (!user) throw new Error('尚未登入');
     const id = input.id || createId();
     const now = new Date().toISOString();
@@ -494,7 +564,20 @@ function useYoutubeSubtitles(user) {
     if (!note.title) throw new Error('請輸入字幕筆記標題');
     if (!note.entries.length) throw new Error('請至少加入一個字幕句子');
     if (note.youtubeUrl && !note.videoId) throw new Error('YouTube 連結格式無法辨識，請使用 youtube.com 或 youtu.be 連結');
-    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'ytSubtitles', id), note));
+    await retryFirestoreWrite(async () => {
+      if (!linkedFolderPatch?.id) {
+        await setDoc(doc(db, 'users', user.uid, 'ytSubtitles', id), note);
+        return;
+      }
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'users', user.uid, 'ytSubtitles', id), note);
+      batch.set(doc(db, 'users', user.uid, 'folders', linkedFolderPatch.id), {
+        name: String(linkedFolderPatch.name || '').trim(),
+        tag: 'YT字幕',
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      await batch.commit();
+    });
     return note;
   }, [user]);
 
@@ -1692,17 +1775,27 @@ function resolveImportConflictDraft(draft, choice, allItems = []) {
   };
 }
 
-async function writeLearningRecords(uid, records, onProgress, folderIds = [], additionalFolderWordIds = []) {
+async function writeLearningRecords(uid, records, onProgress, folderIds = [], additionalFolderWordIds = [], foldersToCreate = [], folderPatches = []) {
   const uniqueFolderIds = [...new Set(folderIds)].filter(Boolean);
   const extraWordIds = [...new Set(additionalFolderWordIds)].filter(Boolean);
-  if (!records.length && (!uniqueFolderIds.length || !extraWordIds.length)) return;
+  const newFolders = foldersToCreate.filter((folder) => folder?.id && folder?.name);
+  const normalizedFolderPatches = folderPatches
+    .filter((patch) => patch?.id)
+    .map((patch) => ({ id: String(patch.id), data: patch.data || {} }));
+  if (!records.length && (!uniqueFolderIds.length || !extraWordIds.length) && !newFolders.length && !normalizedFolderPatches.length) return;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     throw new Error('目前網路離線，尚未送出任何資料');
   }
   if (records.length > MAX_ATOMIC_RECORD_WRITES) {
     throw new Error(`一次最多可以寫入 ${MAX_ATOMIC_RECORD_WRITES} 筆單字，請縮小匯入範圍`);
   }
-  if (records.length + uniqueFolderIds.length > 500) throw new Error('單字與資料夾更新超過 Firebase 單次批次上限');
+  if (records.length + uniqueFolderIds.length + newFolders.length + normalizedFolderPatches.length > 500) throw new Error('單字與資料夾更新超過 Firebase 單次批次上限');
+  const newFolderIds = newFolders.map((folder) => folder.id);
+  const patchedFolderIds = normalizedFolderPatches.map((patch) => patch.id);
+  const allFolderIds = [...uniqueFolderIds, ...newFolderIds, ...patchedFolderIds];
+  if (new Set(newFolderIds).size !== newFolderIds.length || new Set(patchedFolderIds).size !== patchedFolderIds.length || new Set(allFolderIds).size !== allFolderIds.length) {
+    throw new Error('資料夾寫入資料有重複 ID');
+  }
   const lookup = buildRecordLookup(records);
   const normalizedRecords = [];
   for (let index = 0; index < records.length; index += 1) {
@@ -1720,6 +1813,10 @@ async function writeLearningRecords(uid, records, onProgress, folderIds = [], ad
   const recordIds = [...new Set([...normalizedRecords.map((record) => record.id), ...extraWordIds])];
   if (recordIds.some((recordId) => !recordId)) throw new Error('寫入資料缺少必要的單字 ID');
   if (new Set(recordIds).size !== recordIds.length) throw new Error('寫入資料中含有重複的單字 ID');
+  const normalizedNewFolders = newFolders.map((folder) => normalizeFolder({
+    ...folder,
+    wordIds: [...new Set([...(folder.wordIds || []), ...recordIds])],
+  }, folder.id));
   onProgress?.({
     phase: 'uploading',
     current: records.length,
@@ -1748,6 +1845,15 @@ async function writeLearningRecords(uid, records, onProgress, folderIds = [], ad
         { wordIds: arrayUnion(...recordIds), updatedAt: serverTimestamp() },
         { merge: true },
       ));
+      normalizedNewFolders.forEach((folder) => batch.set(
+        doc(db, 'users', uid, 'folders', folder.id),
+        { ...folder, updatedAt: serverTimestamp() },
+      ));
+      normalizedFolderPatches.forEach((patch) => batch.set(
+        doc(db, 'users', uid, 'folders', patch.id),
+        { ...patch.data, wordIds: arrayUnion(...recordIds), updatedAt: serverTimestamp() },
+        { merge: true },
+      ));
       await batch.commit();
     });
   } finally {
@@ -1759,6 +1865,28 @@ async function writeLearningRecords(uid, records, onProgress, folderIds = [], ad
     total: records.length,
     detail: `Firebase 已確認完成 ${records.length} 筆寫入`,
   });
+}
+
+async function writeYoutubeSubtitleLearningRecords(uid, records, subtitle, folders = []) {
+  const name = String(subtitle?.title || '').trim();
+  if (!name) throw new Error('字幕筆記缺少標題，無法建立對應資料夾');
+  const matchingFolder = folders.find((folder) => folder.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+  if (matchingFolder) {
+    return writeLearningRecords(uid, records, undefined, [], [], [], [{
+      id: matchingFolder.id,
+      data: { tag: 'YT字幕' },
+    }]);
+  }
+  const now = new Date().toISOString();
+  const folder = normalizeFolder({
+    id: `yt-subtitle-${String(subtitle?.id || createId())}`,
+    name,
+    tag: 'YT字幕',
+    wordIds: records.map((record) => record.id),
+    createdAt: now,
+    updatedAt: now,
+  });
+  return writeLearningRecords(uid, records, undefined, [], [], [folder]);
 }
 
 async function writeLearningRecord(uid, record, onProgress, folderIds = []) {
@@ -2589,6 +2717,22 @@ function App() {
   const updateLearningRecords = async (updatedRecords, onProgress, folderIds = [], additionalFolderWordIds = []) => {
     await writeLearningRecords(user.uid, updatedRecords, onProgress, folderIds, additionalFolderWordIds);
   };
+  const addYoutubeSubtitleRecords = async (subtitle, records) => {
+    await writeYoutubeSubtitleLearningRecords(user.uid, records, subtitle, folders.folders);
+  };
+  const saveYoutubeSubtitle = async (input) => {
+    const existingNote = input.id ? ytSubtitles.notes.find((note) => note.id === input.id) : null;
+    const oldName = String(existingNote?.title || '').trim();
+    const newName = String(input.title || '').trim();
+    const nameChanged = !!oldName && oldName.toLocaleLowerCase() !== newName.toLocaleLowerCase();
+    const linkedFolder = nameChanged
+      ? folders.folders.find((folder) => !isSystemFolder(folder) && folder.name.toLocaleLowerCase() === oldName.toLocaleLowerCase())
+      : null;
+    if (!linkedFolder) return ytSubtitles.save(input);
+    const nameConflict = folders.folders.find((folder) => folder.id !== linkedFolder.id && folder.name.toLocaleLowerCase() === newName.toLocaleLowerCase());
+    if (nameConflict) throw new Error(`已有名為「${nameConflict.name}」的資料夾，請先處理同名資料夾後再修改字幕名稱。`);
+    return ytSubtitles.save(input, { id: linkedFolder.id, name: newName });
+  };
   const deleteLearningRecordsFromStore = async (recordIds) => {
     const ids = [...new Set(recordIds.filter(Boolean))];
     if (!ids.length) return;
@@ -2627,8 +2771,8 @@ function App() {
     folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
     grammar: <GrammarNotebookPage category={NOTE_CATEGORY_GRAMMAR} notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} onPractice={startPractice} />,
     vocabularyNotes: <GrammarNotebookPage category={NOTE_CATEGORY_VOCABULARY} notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} onPractice={startPractice} />,
-    ytSubtitles: <YoutubeSubtitlesPage notes={ytSubtitles.notes} error={ytSubtitles.error} onSave={ytSubtitles.save} onDelete={ytSubtitles.remove} onOpen={openYoutubeSubtitle} />,
-    ytSubtitle: <YoutubeSubtitleReader note={ytSubtitles.notes.find((note) => note.id === selectedYoutubeSubtitleId)} onBack={goUp} onSave={ytSubtitles.save} onDelete={ytSubtitles.remove} />,
+    ytSubtitles: <YoutubeSubtitlesPage notes={ytSubtitles.notes} error={ytSubtitles.error} onSave={saveYoutubeSubtitle} onDelete={ytSubtitles.remove} onOpen={openYoutubeSubtitle} />,
+    ytSubtitle: <YoutubeSubtitleReader note={ytSubtitles.notes.find((note) => note.id === selectedYoutubeSubtitleId)} allItems={items} folders={folders.folders} onAddRecords={addYoutubeSubtitleRecords} onBack={goUp} onSave={saveYoutubeSubtitle} onDelete={ytSubtitles.remove} />,
   };
 
   return (
@@ -6238,17 +6382,158 @@ function YoutubeSubtitleEditorModal({ note, onSave, onClose }) {
   );
 }
 
-function YoutubeSubtitleReader({ note, onBack, onSave, onDelete }) {
+function SubtitleKoreanText({ text, words, onSelectWord }) {
+  const matches = subtitleWordMatches(text, words);
+  if (!matches.length) return text;
+  const parts = [];
+  let cursor = 0;
+  matches.forEach((match, index) => {
+    if (match.start > cursor) parts.push(<React.Fragment key={`text-${cursor}`}>{text.slice(cursor, match.start)}</React.Fragment>);
+    parts.push(<mark className="subtitle-known-word" onClick={(event) => onSelectWord(event, match.word)} key={`word-${match.start}-${index}`}>{text.slice(match.start, match.end)}</mark>);
+    cursor = match.end;
+  });
+  if (cursor < text.length) parts.push(<React.Fragment key={`text-${cursor}`}>{text.slice(cursor)}</React.Fragment>);
+  return parts;
+}
+
+function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords, onBack, onSave, onDelete }) {
   const [showChinese, setShowChinese] = useState(true);
   const [editing, setEditing] = useState(null);
+  const [quickAdd, setQuickAdd] = useState(null);
+  const [selectionAction, setSelectionAction] = useState(null);
+  const [definitionBubble, setDefinitionBubble] = useState(null);
+  const [playerLoaded, setPlayerLoaded] = useState(false);
+  const [activeSubtitleEntryId, setActiveSubtitleEntryId] = useState(null);
   const [error, setError] = useState('');
-  const playerRef = useRef(null);
+  const iframeRef = useRef(null);
+  const youtubePlayerRef = useRef(null);
+  const subtitleListRef = useRef(null);
+  const subtitleEntryRefs = useRef(new Map());
+  useEffect(() => {
+    setPlayerLoaded(false);
+    setActiveSubtitleEntryId(null);
+  }, [note?.id]);
+  const updateSelectionAction = useCallback(() => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) {
+      setSelectionAction(null);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const selectionElement = (node) => (node?.nodeType === 1 ? node : node?.parentElement);
+    const startElement = selectionElement(selection.anchorNode)?.closest?.('[data-subtitle-entry-id]');
+    const endElement = selectionElement(selection.focusNode)?.closest?.('[data-subtitle-entry-id]');
+    const entryId = startElement?.dataset.subtitleEntryId;
+    const selectedKo = selection.toString().replace(/\s+/g, ' ').trim();
+    if (!entryId || entryId !== endElement?.dataset.subtitleEntryId || !selectedKo) {
+      setSelectionAction(null);
+      return;
+    }
+    const entry = note?.entries.find((candidate) => candidate.id === entryId);
+    const rect = range.getBoundingClientRect();
+    if (!entry || (!rect.width && !rect.height)) {
+      setSelectionAction(null);
+      return;
+    }
+    setSelectionAction({
+      ko: selectedKo,
+      entry,
+      top: Math.max(10, rect.top - 42),
+      left: Math.min(Math.max(10, rect.left + (rect.width / 2) - 19), window.innerWidth - 48),
+    });
+  }, [note]);
+  useEffect(() => {
+    document.addEventListener('selectionchange', updateSelectionAction);
+    window.addEventListener('scroll', updateSelectionAction, true);
+    window.addEventListener('resize', updateSelectionAction);
+    return () => {
+      document.removeEventListener('selectionchange', updateSelectionAction);
+      window.removeEventListener('scroll', updateSelectionAction, true);
+      window.removeEventListener('resize', updateSelectionAction);
+    };
+  }, [updateSelectionAction]);
+  const subtitleFolder = useMemo(() => {
+    const title = String(note?.title || '').trim().toLocaleLowerCase();
+    return folders.find((folder) => folder.tag === 'YT字幕' && folder.name.toLocaleLowerCase() === title) || null;
+  }, [folders, note?.title]);
+  const subtitleWords = useMemo(() => {
+    const wordIds = new Set(subtitleFolder?.wordIds || []);
+    return allItems.filter((item) => wordIds.has(item.id));
+  }, [allItems, subtitleFolder]);
+  useEffect(() => {
+    const dismissDefinition = (event) => {
+      if (!event.target?.closest?.('.subtitle-known-word, .subtitle-word-definition')) setDefinitionBubble(null);
+    };
+    const dismissOnScroll = () => setDefinitionBubble(null);
+    document.addEventListener('pointerdown', dismissDefinition);
+    window.addEventListener('scroll', dismissOnScroll, true);
+    return () => {
+      document.removeEventListener('pointerdown', dismissDefinition);
+      window.removeEventListener('scroll', dismissOnScroll, true);
+    };
+  }, []);
+  useEffect(() => {
+    if (!note?.videoId || note.mode !== YT_SUBTITLE_MODE_SRT || !iframeRef.current) return undefined;
+    let disposed = false;
+    let player = null;
+    loadYoutubeIframeApi()
+      .then((YT) => {
+        if (disposed || !iframeRef.current) return;
+        player = new YT.Player(iframeRef.current, {
+          events: {
+            onReady: () => {
+              if (disposed) return;
+              youtubePlayerRef.current = player;
+              setPlayerLoaded(true);
+            },
+          },
+        });
+      })
+      .catch((playerError) => {
+        if (!disposed) setError(playerError.message || 'YouTube 播放器無法同步字幕');
+      });
+    return () => {
+      disposed = true;
+      if (youtubePlayerRef.current === player) youtubePlayerRef.current = null;
+      player?.destroy?.();
+    };
+  }, [note?.id, note?.mode, note?.videoId]);
+  useEffect(() => {
+    if (!playerLoaded || note?.mode !== YT_SUBTITLE_MODE_SRT) return undefined;
+    const syncCurrentSubtitle = () => {
+      try {
+        const currentTime = Number(youtubePlayerRef.current?.getCurrentTime?.());
+        if (!Number.isFinite(currentTime)) return;
+        setActiveSubtitleEntryId(subtitleEntryAtTime(note.entries, currentTime * 1000)?.id || null);
+      } catch {
+        // The YouTube player can reject a read while its iframe is being reinitialized.
+      }
+    };
+    syncCurrentSubtitle();
+    const interval = window.setInterval(syncCurrentSubtitle, 350);
+    return () => window.clearInterval(interval);
+  }, [note?.entries, note?.mode, playerLoaded]);
+  useEffect(() => {
+    if (!activeSubtitleEntryId) return;
+    const list = subtitleListRef.current;
+    const entry = subtitleEntryRefs.current.get(activeSubtitleEntryId);
+    if (!list || !entry) return;
+    const listRect = list.getBoundingClientRect();
+    const entryRect = entry.getBoundingClientRect();
+    const aboveVisibleArea = entryRect.top < listRect.top + 12;
+    const belowVisibleArea = entryRect.bottom > listRect.bottom - 12;
+    if (!aboveVisibleArea && !belowVisibleArea) return;
+    list.scrollTo({
+      top: Math.max(0, list.scrollTop + entryRect.top - listRect.top - (list.clientHeight * 0.35)),
+      behavior: 'smooth',
+    });
+  }, [activeSubtitleEntryId]);
   if (!note) return <section className="page"><div className="empty">找不到這篇字幕筆記。<button onClick={onBack}>返回上一層</button></div></section>;
   const seekTo = (entry) => {
-    if (note.mode !== YT_SUBTITLE_MODE_SRT || entry.startMs === null || !playerRef.current) return;
-    const message = JSON.stringify({ event: 'command', func: 'seekTo', args: [entry.startMs / 1000, true] });
-    playerRef.current.contentWindow?.postMessage(message, 'https://www.youtube-nocookie.com');
-    playerRef.current.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), 'https://www.youtube-nocookie.com');
+    if (note.mode !== YT_SUBTITLE_MODE_SRT || entry.startMs === null || !youtubePlayerRef.current) return;
+    youtubePlayerRef.current.seekTo(entry.startMs / 1000, true);
+    youtubePlayerRef.current.playVideo();
+    setActiveSubtitleEntryId(entry.id);
   };
   const deleteNote = async () => {
     if (!window.confirm(`確定要刪除「${note.title}」嗎？`)) return;
@@ -6260,7 +6545,18 @@ function YoutubeSubtitleReader({ note, onBack, onSave, onDelete }) {
       setError(deleteError.message || '刪除字幕筆記失敗');
     }
   };
-  const embedUrl = note.videoId ? `https://www.youtube-nocookie.com/embed/${note.videoId}?enablejsapi=1&rel=0` : '';
+  const embedOrigin = typeof window === 'undefined' ? '' : `&origin=${encodeURIComponent(window.location.origin)}`;
+  const embedUrl = note.videoId ? `${YOUTUBE_EMBED_ORIGIN}/embed/${note.videoId}?enablejsapi=1&rel=0${embedOrigin}` : '';
+  const showDefinition = (event, word) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setDefinitionBubble({
+      zh: word.zh,
+      top: Math.max(10, rect.top - 48),
+      left: Math.min(Math.max(10, rect.left + (rect.width / 2)), window.innerWidth - 18),
+    });
+  };
 
   return (
     <section className="page yt-reader-page">
@@ -6272,23 +6568,130 @@ function YoutubeSubtitleReader({ note, onBack, onSave, onDelete }) {
         </div>
       </div>
       {error && <div className="form-error">{error}</div>}
+      {selectionAction && <button
+        type="button"
+        className="subtitle-selection-add"
+        style={{ top: selectionAction.top, left: selectionAction.left }}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => {
+          setQuickAdd(selectionAction);
+          setSelectionAction(null);
+          window.getSelection()?.removeAllRanges();
+        }}
+        title="新增單字"
+        aria-label="將選取的韓文新增為單字"
+      ><Plus size={18} /></button>}
+      {definitionBubble && <div className="subtitle-word-definition" style={{ top: definitionBubble.top, left: definitionBubble.left }} role="status">{definitionBubble.zh}</div>}
       <div className="yt-reader-floating-actions" aria-label="字幕閱讀控制">
         <button type="button" className={`yt-reader-floating-button ${showChinese ? 'selected' : ''}`} onClick={() => setShowChinese((current) => !current)} title={showChinese ? '隱藏中文' : '顯示中文'} aria-label={showChinese ? '隱藏中文' : '顯示中文'}>{showChinese ? <Eye size={22} /> : <EyeOff size={22} />}</button>
       </div>
       <div className="yt-reader-content">
         <div className="yt-reader-video">
-          {embedUrl ? <div className="yt-video-frame"><iframe ref={playerRef} src={embedUrl} title={note.title} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen /></div> : <div className="yt-video-missing"><Link2 size={22} /><span>這篇字幕筆記沒有 YouTube 影片連結。</span></div>}
+          {embedUrl ? <div className="yt-video-frame"><iframe ref={iframeRef} src={embedUrl} title={note.title} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen /></div> : <div className="yt-video-missing"><Link2 size={22} /><span>這篇字幕筆記沒有 YouTube 影片連結。</span></div>}
         </div>
-        <div className="yt-subtitle-list" aria-label="字幕列表">
+        <div className="yt-subtitle-list" ref={subtitleListRef} aria-label="字幕列表">
           {note.entries.map((entry, index) => {
             const clickable = note.mode === YT_SUBTITLE_MODE_SRT && entry.startMs !== null && !!embedUrl;
-          const content = <><strong><span className="yt-subtitle-entry-index">{index + 1}</span>{entry.startMs !== null && <small className="yt-subtitle-entry-time">{subtitleTimeLabel(entry.startMs)}</small>}<span>{entry.ko}</span></strong>{showChinese && <p>{entry.zh}</p>}</>;
-            return clickable ? <button type="button" className="yt-subtitle-entry clickable" onClick={() => seekTo(entry)} key={entry.id}>{content}</button> : <article className="yt-subtitle-entry" key={entry.id}>{content}</article>;
+            const content = <><strong><span className="yt-subtitle-entry-index">{index + 1}</span>{entry.startMs !== null && <small className="yt-subtitle-entry-time">{subtitleTimeLabel(entry.startMs)}</small>}<span className="yt-subtitle-ko" data-subtitle-entry-id={entry.id}><SubtitleKoreanText text={entry.ko} words={subtitleWords} onSelectWord={showDefinition} /></span></strong>{showChinese && <p>{entry.zh}</p>}</>;
+            const className = `yt-subtitle-entry ${clickable ? 'clickable' : ''} ${activeSubtitleEntryId === entry.id ? 'is-playing' : ''}`;
+            const setEntryRef = (element) => {
+              if (element) subtitleEntryRefs.current.set(entry.id, element);
+              else subtitleEntryRefs.current.delete(entry.id);
+            };
+            return clickable ? <button type="button" ref={setEntryRef} className={className} aria-current={activeSubtitleEntryId === entry.id ? 'true' : undefined} onClick={() => seekTo(entry)} key={entry.id}>{content}</button> : <article ref={setEntryRef} className={className} aria-current={activeSubtitleEntryId === entry.id ? 'true' : undefined} key={entry.id}>{content}</article>;
           })}
         </div>
       </div>
+      {quickAdd && <SubtitleQuickAddModal selection={quickAdd} entries={note.entries} allItems={allItems} onAddRecords={(records) => onAddRecords(note, records)} onClose={() => setQuickAdd(null)} />}
       {editing && <YoutubeSubtitleEditorModal note={editing} onSave={async (nextNote) => { await onSave(nextNote); setEditing(null); }} onClose={() => setEditing(null)} />}
     </section>
+  );
+}
+
+function SubtitleQuickAddModal({ selection, entries = [], allItems, onAddRecords, onClose }) {
+  const [ko, setKo] = useState(selection.ko);
+  const [zh, setZh] = useState('');
+  const [examples, setExamples] = useState(() => formatPairLines([selection.entry]));
+  const entryIndex = entries.findIndex((entry) => entry.id === selection.entry.id);
+  const [previousIndex, setPreviousIndex] = useState(entryIndex - 1);
+  const [nextIndex, setNextIndex] = useState(entryIndex + 1);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const extendExample = (entry, position) => {
+    try {
+      const currentExamples = parsePairLines(examples);
+      const current = {
+        ko: currentExamples.map((example) => example.ko).join(' ').trim(),
+        zh: currentExamples.map((example) => example.zh).join('').trim(),
+      };
+      const combined = position === 'before'
+        ? { ko: `${entry.ko} ${current.ko}`.trim(), zh: `${entry.zh}${current.zh}`.trim() }
+        : { ko: `${current.ko} ${entry.ko}`.trim(), zh: `${current.zh}${entry.zh}`.trim() };
+      setExamples(formatPairLines([combined]));
+      setError('');
+      return true;
+    } catch {
+      setError('例句需要維持韓文一行、中文一行的格式，才能加入相鄰逐字稿。');
+      return false;
+    }
+  };
+  const addPreviousExample = () => {
+    if (previousIndex < 0) return;
+    if (extendExample(entries[previousIndex], 'before')) setPreviousIndex((index) => index - 1);
+  };
+  const addNextExample = () => {
+    if (nextIndex >= entries.length) return;
+    if (extendExample(entries[nextIndex], 'after')) setNextIndex((index) => index + 1);
+  };
+  const submit = async (event) => {
+    event.preventDefault();
+    const korean = ko.trim();
+    const chinese = zh.trim();
+    if (!korean || !chinese) {
+      setError('韓文與中文都是必填');
+      return;
+    }
+    if (allItems.some((item) => normalizeKoreanKey(item.ko) === normalizeKoreanKey(korean))) {
+      setError(`韓文單字「${korean}」已存在於單字本，請直接編輯既有單字卡。`);
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const parsedExamples = parsePairLines(examples);
+      const records = createRecordsForDate(todayString(), [{
+        ko: korean,
+        meanings: [{ zh: chinese, examples: parsedExamples }],
+        related: [],
+      }], allItems);
+      await onAddRecords(records);
+      onClose();
+    } catch (submitError) {
+      setError(describeImportError(submitError).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="從字幕新增單字">
+      <form className="modal-panel subtitle-quick-add-modal" onSubmit={submit}>
+        <button type="button" className="modal-close" onClick={onClose} disabled={saving} aria-label="關閉"><X size={18} /></button>
+        <div className="panel-title"><div><span className="eyebrow">Subtitle word</span><h2>新增單字</h2><span>例句已自動帶入目前字幕。</span></div></div>
+        <div className="form-grid subtitle-quick-add-fields">
+          <label>韓文<input value={ko} onChange={(event) => setKo(event.target.value)} required autoFocus /></label>
+          <label>中文<input value={zh} onChange={(event) => setZh(event.target.value)} required placeholder="請填寫中文意思" /></label>
+          <label className="full-width">例句
+            <span className="subtitle-example-extend-actions">
+              <button type="button" className="small" onClick={addPreviousExample} disabled={previousIndex < 0} title="加入前一句逐字稿"><ArrowUp size={16} /><Plus size={14} /> 往前加</button>
+              <button type="button" className="small" onClick={addNextExample} disabled={nextIndex >= entries.length} title="加入後一句逐字稿"><ArrowDown size={16} /><Plus size={14} /> 往後加</button>
+            </span>
+            <textarea value={examples} onChange={(event) => setExamples(event.target.value)} rows={4} />
+          </label>
+        </div>
+        {error && <div className="form-error">{error}</div>}
+        <div className="actions grammar-editor-actions"><button type="button" onClick={onClose} disabled={saving}>取消</button><button className="primary" type="submit" disabled={saving}><Plus size={17} /> {saving ? '新增中' : '新增到單字本'}</button></div>
+      </form>
+    </div>
   );
 }
 
@@ -7142,6 +7545,8 @@ export {
   shouldAutoPronouncePracticePrompt,
   shouldRecordPracticeResults,
   shouldShowStudyChinese,
+  subtitleEntryAtTime,
+  subtitleWordMatches,
   toggleFolderGroupSelection,
   formatYoutubeSubtitleSrt,
   youtubeVideoId,

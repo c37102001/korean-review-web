@@ -631,6 +631,31 @@ test('YouTube links resolve standard watch, short, and embed video ids', () => {
   assert.equal(helpers.youtubeVideoId('https://example.com/watch?v=abc123'), '');
 });
 
+test('subtitle highlights only saved words and prefers the longest overlapping word', () => {
+  const matches = helpers.subtitleWordMatches('우리 사랑 얘기와 사랑 이야기', [
+    { ko: '사랑', zh: '愛情' },
+    { ko: '우리 사랑', zh: '我們的愛情' },
+  ]);
+
+  assert.deepEqual(matches.map(({ start, end, word }) => ({ start, end, ko: word.ko })), [
+    { start: 0, end: 5, ko: '우리 사랑' },
+    { start: 10, end: 12, ko: '사랑' },
+  ]);
+});
+
+test('SRT playback resolves the subtitle entry at the current time', () => {
+  const entries = [
+    { id: 'first', startMs: 0, endMs: 1400 },
+    { id: 'second', startMs: 1400, endMs: 2600 },
+    { id: 'third', startMs: 2600, endMs: 4000 },
+  ];
+
+  assert.equal(helpers.subtitleEntryAtTime(entries, 0)?.id, 'first');
+  assert.equal(helpers.subtitleEntryAtTime(entries, 1399)?.id, 'first');
+  assert.equal(helpers.subtitleEntryAtTime(entries, 1400)?.id, 'second');
+  assert.equal(helpers.subtitleEntryAtTime(entries, 4500), null);
+});
+
 test('word examples use alternating Korean and Chinese lines', () => {
   const text = `오늘은 날씨가 좋아요.
 今天天氣很好。

@@ -56,6 +56,7 @@ SYSTEM_UNFAMILIAR_FOLDER_ID = "system-unfamiliar"
 SYSTEM_UNFAMILIAR_FOLDER_NAME = "不熟悉"
 KOREAN_NEURAL_VOICE = "ko-KR-SunHiNeural"
 KOREAN_NEURAL_RATE = "-8%"
+CACHE_DIR = Path.home() / ".cache" / "korean-review-web-terminal"
 
 
 def utc_now_iso() -> str:
@@ -123,6 +124,7 @@ class FirebaseClient:
         self.project_id = project_id
         self._saved_state: Dict[str, Any] = empty_state()
         self._writes_blocked_until = 0.0
+        self.offline_mode = False
 
     def sign_in(self, email: str, password: str) -> AuthSession:
         url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={self.api_key}"
@@ -302,6 +304,11 @@ class FirebaseClient:
         return state
 
     def save_review_state(self, session: AuthSession, state: Dict[str, Any]) -> None:
+        if self.offline_mode:
+            # Keep the current terminal session usable while Firestore has rejected reads.
+            # These changes are intentionally not presented as persisted data.
+            self._saved_state = _clone_json(state)
+            return
         if time.monotonic() < self._writes_blocked_until:
             raise RuntimeError("HTTP 429: Quota exceeded.")
         try:
@@ -753,8 +760,55 @@ def load_data(
         grammar_note_records = grammar_notes_future.result()
         grammar_review = grammar_review_future.result()
 
-    learned_folder = client.ensure_learned_folder(session, folders)
-    unfamiliar_folder = client.ensure_unfamiliar_folder(session, folders)
+    payload = {
+        "state": state,
+        "records": records,
+        "folders": folders,
+        "grammarNotes": grammar_note_records,
+        "grammarReview": grammar_review,
+    }
+    _write_terminal_cache(session.uid, payload)
+    return _hydrate_loaded_data(client, session, payload, ensure_system_folders=True)
+
+
+def load_data_with_cache(
+    client: FirebaseClient,
+    session: AuthSession,
+) -> Tuple[Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any]], bool]:
+    """Load Firebase data, falling back to the most recent local snapshot on quota exhaustion."""
+    try:
+        loaded = load_data(client, session)
+    except RuntimeError as exc:
+        if not _is_quota_exceeded_error(str(exc)):
+            raise
+        payload = _read_terminal_cache(session.uid)
+        if payload is None:
+            raise
+        client.offline_mode = True
+        return _hydrate_loaded_data(client, session, payload, ensure_system_folders=False), True
+    client.offline_mode = False
+    return loaded, False
+
+
+def _hydrate_loaded_data(
+    client: FirebaseClient,
+    session: AuthSession,
+    payload: Dict[str, Any],
+    ensure_system_folders: bool,
+) -> Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any]]:
+    state = _clone_json(payload.get("state") or empty_state())
+    records = _clone_json(payload.get("records") or [])
+    folders = _clone_json(payload.get("folders") or [])
+    grammar_note_records = _clone_json(payload.get("grammarNotes") or [])
+    grammar_review = _clone_json(payload.get("grammarReview") or {})
+
+    learned_folder = next((folder for folder in folders if folder.get("id") == SYSTEM_LEARNED_FOLDER_ID), None)
+    unfamiliar_folder = next((folder for folder in folders if folder.get("id") == SYSTEM_UNFAMILIAR_FOLDER_ID), None)
+    if ensure_system_folders:
+        learned_folder = client.ensure_learned_folder(session, folders)
+        unfamiliar_folder = client.ensure_unfamiliar_folder(session, folders)
+    learned_folder = learned_folder or {"id": SYSTEM_LEARNED_FOLDER_ID, "wordIds": []}
+    unfamiliar_folder = unfamiliar_folder or {"id": SYSTEM_UNFAMILIAR_FOLDER_ID, "wordIds": []}
     if not any(folder.get("id") == learned_folder.get("id") for folder in folders):
         folders.append(learned_folder)
     if not any(folder.get("id") == unfamiliar_folder.get("id") for folder in folders):
@@ -774,6 +828,31 @@ def load_data(
     cards, questions = normalize_records(list(records_by_id.values()), state)
     grammar_notes = normalize_grammar_notes(grammar_note_records)
     return state, cards, questions, grammar_notes, grammar_review
+
+
+def _terminal_cache_path(uid: str) -> Path:
+    digest = hashlib.sha256(uid.encode("utf-8")).hexdigest()[:24]
+    return CACHE_DIR / f"{digest}.json"
+
+
+def _write_terminal_cache(uid: str, payload: Dict[str, Any]) -> None:
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_path = _terminal_cache_path(uid)
+        temporary_path = cache_path.with_suffix(".tmp")
+        temporary_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        temporary_path.replace(cache_path)
+    except OSError:
+        # A cache failure must never block normal Firebase-backed practice.
+        pass
+
+
+def _read_terminal_cache(uid: str) -> Optional[Dict[str, Any]]:
+    try:
+        payload = json.loads(_terminal_cache_path(uid).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def get_progress(state: Dict[str, Any], question: Question) -> Dict[str, Any]:
@@ -3520,9 +3599,9 @@ def run_folder_notebook(
 
 def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: AuthSession) -> None:
     try:
-        state, cards, questions, grammar_notes, grammar_review = load_data(client, session)
+        (state, cards, questions, grammar_notes, grammar_review), using_cached_data = load_data_with_cache(client, session)
     except RuntimeError as exc:
-        wait_message(stdscr, "載入失敗", str(exc))
+        wait_message(stdscr, "載入失敗", friendly_firebase_error(exc))
         return
     skip_round_initialization = False
     while True:
@@ -3556,7 +3635,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
             )
         choice = menu(
             stdscr,
-            f"韓文筆記 Terminal | {session.email}",
+            f"韓文筆記 Terminal | {session.email}{' | 離線快取（不會同步）' if using_cached_data else ''}",
             [
                 ("due", "今日複習題"),
                 ("calendar", "月曆"),
@@ -3573,10 +3652,10 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
             return
         if choice == "refresh":
             try:
-                state, cards, questions, grammar_notes, grammar_review = load_data(client, session)
+                (state, cards, questions, grammar_notes, grammar_review), using_cached_data = load_data_with_cache(client, session)
                 skip_round_initialization = False
             except RuntimeError as exc:
-                wait_message(stdscr, "同步失敗", str(exc))
+                wait_message(stdscr, "同步失敗", friendly_firebase_error(exc))
             continue
         if choice == "due":
             grammar_task = daily_grammar_questions(grammar_notes, grammar_review)
