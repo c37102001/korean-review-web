@@ -5644,7 +5644,7 @@ function WordFolderButtons({ compact = false, isLearned = false, isUnfamiliar = 
       </button>
       <button
         type="button"
-        className={isLearned ? 'selected-soft' : ''}
+        className={`learned-soft ${isLearned ? 'selected-soft' : ''}`}
         disabled={learnedSaving}
         onClick={onMarkLearned}
         title={isLearned ? '移出「已學習」' : '加入「已學習」'}

@@ -3102,8 +3102,21 @@ main {
 .answer-folder-buttons button.selected-soft:not(.unfamiliar-soft) {
   border-color: #67b9aa;
   color: #176f62;
-  background: #dff7ef;
-  box-shadow: inset 0 0 0 1px rgba(24, 124, 106, 0.1);
+  background: #cdeee5;
+  box-shadow: inset 0 0 0 1px rgba(24, 124, 106, 0.12);
+}
+
+.answer-folder-buttons button.learned-soft {
+  border-color: #f1c1bd;
+  color: #a2443d;
+  background: #fff3f1;
+}
+
+.answer-folder-buttons button.learned-soft.selected-soft {
+  border-color: #d9827b;
+  color: #8d312b;
+  background: #ffdcd8;
+  box-shadow: inset 0 0 0 1px rgba(164, 68, 61, 0.12);
 }
 
 .answer-learned-action button.selected-soft {
