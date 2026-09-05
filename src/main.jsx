@@ -1976,9 +1976,15 @@ function reviewQuestions(questions) {
   return orderReviewQuestions(questions.filter((question) => question.kind === 'term' || question.kind === 'example'));
 }
 
+function folderWordIdsInclude(wordIds, itemId) {
+  const normalizedItemId = String(itemId || '').trim();
+  if (!normalizedItemId) return false;
+  if (wordIds instanceof Set) return wordIds.has(normalizedItemId);
+  return Array.isArray(wordIds) && wordIds.some((wordId) => String(wordId || '').trim() === normalizedItemId);
+}
+
 function excludeLearnedQuestions(questions, learnedWordIds = []) {
-  const learned = learnedWordIds instanceof Set ? learnedWordIds : new Set(learnedWordIds);
-  return questions.filter((question) => !learned.has(question.itemId));
+  return questions.filter((question) => !folderWordIdsInclude(learnedWordIds, question.itemId));
 }
 
 function dailyReviewQuestions(store, questions, date = todayString()) {
@@ -4637,10 +4643,10 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
   const isStarred = !!item && (store.starred || []).includes(item.id);
   const isLearned = !!item
     && !removedLearnedIds.has(item.id)
-    && (learnedWordIds.has(item.id) || markedLearnedIds.has(item.id));
+    && (folderWordIdsInclude(learnedWordIds, item.id) || markedLearnedIds.has(String(item.id)));
   const isUnfamiliar = !!item
     && !removedUnfamiliarIds.has(item.id)
-    && (unfamiliarWordIds.has(item.id) || markedUnfamiliarIds.has(item.id));
+    && (folderWordIdsInclude(unfamiliarWordIds, item.id) || markedUnfamiliarIds.has(String(item.id)));
   const showChinese = shouldShowStudyChinese(hideChineseInitially, cardChineseRevealed);
   const frontShowsChinese = frontSide === 'zh' && showChinese;
   const frontText = frontShowsChinese ? item?.zh : item?.ko;
@@ -5133,12 +5139,12 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const isCurrentWordLearned = Boolean(
     question
     && !removedLearnedIds.has(question.itemId)
-    && (learnedWordIds.has(question.itemId) || markedLearnedIds.has(question.itemId))
+    && (folderWordIdsInclude(learnedWordIds, question.itemId) || markedLearnedIds.has(String(question.itemId)))
   );
   const isCurrentWordUnfamiliar = Boolean(
     question
     && !removedUnfamiliarIds.has(question.itemId)
-    && (unfamiliarWordIds.has(question.itemId) || markedUnfamiliarIds.has(question.itemId))
+    && (folderWordIdsInclude(unfamiliarWordIds, question.itemId) || markedUnfamiliarIds.has(String(question.itemId)))
   );
   useEffect(() => {
     setMarkedLearnedIds((current) => new Set([...current].filter((id) => !learnedWordIds.has(id))));
