@@ -6467,23 +6467,24 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
       }
       const range = selection.getRangeAt(0);
       const selectionElement = (node) => (node?.nodeType === 1 ? node : node?.parentElement);
-      const startElement = selectionElement(selection.anchorNode)?.closest?.('[data-subtitle-entry-id]');
-      const endElement = selectionElement(selection.focusNode)?.closest?.('[data-subtitle-entry-id]');
-      const entryId = startElement?.dataset.subtitleEntryId;
+      const startCard = selectionElement(range.startContainer)?.closest?.('.yt-subtitle-entry');
+      const endCard = selectionElement(range.endContainer)?.closest?.('.yt-subtitle-entry');
+      const subtitleElement = startCard?.querySelector?.('[data-subtitle-entry-id]');
+      const entryId = subtitleElement?.dataset.subtitleEntryId;
       const selectedKo = selection.toString().replace(/\s+/g, ' ').trim();
       const rect = range.getBoundingClientRect();
-      if (!entryId || entryId !== endElement?.dataset.subtitleEntryId || !selectedKo || (!rect.width && !rect.height)) {
+      const entry = note?.entries.find((candidate) => candidate.id === entryId);
+      const entryKo = String(entry?.ko || '').replace(/\s+/g, ' ').trim();
+      const selectionIsKoreanSubtitle = startCard
+        && startCard === endCard
+        && entryKo.includes(selectedKo);
+      if (!entryId || !selectionIsKoreanSubtitle || !selectedKo || (!rect.width && !rect.height)) {
         clearLater();
         return;
       }
       if (selectionClearTimerRef.current !== null) {
         window.clearTimeout(selectionClearTimerRef.current);
         selectionClearTimerRef.current = null;
-      }
-      const entry = note?.entries.find((candidate) => candidate.id === entryId);
-      if (!entry) {
-        clearLater();
-        return;
       }
       setSelectionAction({
         ko: selectedKo,
