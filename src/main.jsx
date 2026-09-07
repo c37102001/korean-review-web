@@ -4915,7 +4915,14 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
     const onKeyDown = (event) => {
       const target = event.target;
       const isTyping = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT' || target?.isContentEditable;
-      if (isTyping || event.isComposing) return;
+      if (isTyping || event.isComposing || editingItem || event.defaultPrevented) return;
+      if (event.key === ' ') {
+        event.preventDefault();
+        if (!event.repeat && hideChineseInitially && (flipped ? frontSide === 'ko' : frontSide === 'zh')) {
+          setCardChineseRevealed((current) => !current);
+        }
+        return;
+      }
       if (event.key === 'ArrowLeft') {
         event.preventDefault();
         setAutoPlay(false);
@@ -4932,7 +4939,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [item?.id, autoPlay, flipped, playVoice, frontSide, showChinese, index, ordered.length]);
+  }, [item?.id, autoPlay, flipped, playVoice, frontSide, showChinese, hideChineseInitially, editingItem, index, ordered.length]);
 
   if (!filtered.length) return <section className="page"><div className="empty">沒有可學習的卡片。</div></section>;
   return (
@@ -4977,7 +4984,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
           onPointerDown={handleCardPointerDown}
           onPointerUp={handleCardPointerUp}
           onPointerCancel={() => { cardPointerRef.current.start = null; cardPointerRef.current.lastTap = null; }}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCard(); } }}
+          onKeyDown={(e) => { if (e.target === e.currentTarget && e.key === 'Enter') { e.preventDefault(); toggleCard(); } }}
         >
           <div className="study-folder-actions" onClick={(event) => event.stopPropagation()}>
             <WordFolderButtons
@@ -4996,8 +5003,8 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
           </div>
           <div className="flash-face front">
             <span>{index + 1} / {ordered.length}</span>
-            <strong>{frontShowsChinese ? item.ko : frontText}</strong>
-            {frontShowsChinese && <span className="flashcard-translation">{item.zh}</span>}
+            <div className="study-pronunciation-row"><strong>{item.ko}</strong><TextSpeakButton text={item.ko} lang="ko-KR" label="播放韓文單字" /></div>
+            {frontShowsChinese && <div className="study-pronunciation-row"><span className="flashcard-translation">{item.zh}</span><TextSpeakButton text={item.zh} lang="zh-TW" label="播放中文意思" /></div>}
             {frontSide === 'zh' && hideChineseInitially && (
               <button
                 className="card-chinese-toggle"
@@ -5008,14 +5015,13 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
               </button>
             )}
             <small>{frontShowsChinese ? '點擊看韓文' : showChinese ? item.pos || '未分類' : '點擊查看韓文例句'}</small>
-            <button className="card-speak-btn" onClick={(e) => { e.stopPropagation(); speakText(frontText, frontLang); }} aria-label="播放發音"><Volume2 size={18} /></button>
           </div>
           <div className="flash-face back">
             <div className="flash-back-content" onClick={(event) => event.stopPropagation()}>
               <div className="flash-back-answer">
                 <div className="flash-back-answer-copy">
-                  <strong>{item.ko}</strong>
-                  {frontSide === 'ko' && showChinese && <span>{item.zh}</span>}
+                  <div className="study-pronunciation-row"><strong>{item.ko}</strong><TextSpeakButton text={item.ko} lang="ko-KR" label="播放韓文單字" /></div>
+                  {frontSide === 'ko' && showChinese && <div className="study-pronunciation-row"><span>{item.zh}</span><TextSpeakButton text={item.zh} lang="zh-TW" label="播放中文意思" /></div>}
                   {frontSide === 'ko' && hideChineseInitially && (
                     <button
                       className="card-chinese-toggle"
@@ -5026,7 +5032,6 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
                     </button>
                   )}
                 </div>
-                <button className="card-speak-btn" onClick={(e) => { e.stopPropagation(); speakText(visibleBackText, visibleBackLang); }} aria-label="播放發音"><Volume2 size={18} /></button>
               </div>
               <StudyDetails item={item} allItems={currentItems} onOpenItem={jumpToItem} showChinese={showChinese} />
             </div>
@@ -6678,7 +6683,7 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
         <div className="yt-subtitle-list" ref={subtitleListRef} aria-label="字幕列表">
           {note.entries.map((entry, index) => {
             const clickable = note.mode === YT_SUBTITLE_MODE_SRT && entry.startMs !== null && !!embedUrl;
-            const content = <><strong><span className="yt-subtitle-entry-index">{index + 1}</span>{entry.startMs !== null && <small className="yt-subtitle-entry-time">{subtitleTimeLabel(entry.startMs)}</small>}<span className="yt-subtitle-ko" data-subtitle-entry-id={entry.id} onPointerDown={pauseVideo}><SubtitleKoreanText text={entry.ko} words={subtitleWords} onSelectWord={showDefinition} /></span></strong>{showChinese && <p>{entry.zh}</p>}</>;
+            const content = <><strong><span className="yt-subtitle-entry-index">{index + 1}</span>{entry.startMs !== null && <small className="yt-subtitle-entry-time">{subtitleTimeLabel(entry.startMs)}</small>}<span className="yt-subtitle-ko" data-subtitle-entry-id={entry.id} onPointerDown={pauseVideo}><SubtitleKoreanText text={entry.ko} words={subtitleWords} onSelectWord={showDefinition} /></span></strong><p className={!showChinese ? 'is-hidden' : ''} aria-hidden={!showChinese}>{entry.zh}</p></>;
             const isPlaying = activeSubtitleEntryId === entry.id;
             const className = `yt-subtitle-entry ${clickable ? 'clickable' : ''} ${isPlaying ? 'is-playing' : ''}`;
             const setEntryRef = (element) => {

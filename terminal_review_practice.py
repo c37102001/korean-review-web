@@ -1593,6 +1593,16 @@ def _split_by_cell_width(text: str, max_cells: int) -> List[str]:
     return lines or [""]
 
 
+def folder_prompt_notice(message: str) -> Tuple[str, str]:
+    match = re.match(r'(已加入|已移出|已移除)「(不熟悉|已學習)」', message)
+    if match:
+        return f" （{match.group(0)}）", ""
+    match = re.match(r'這個單字已經在「(不熟悉|已學習)」資料夾中。', message)
+    if match:
+        return f" （已在「{match.group(1)}」）", ""
+    return "", message
+
+
 def draw_line(stdscr: curses.window, y: int, x: int, text: str, attr: int = 0) -> None:
     height, width = stdscr.getmaxyx()
     if y < 0 or y >= height or x >= width:
@@ -2842,8 +2852,8 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回 A=自動:{'開' if auto_playing else '關'} 1/2/3=重複:{repeat_count} {auto_audio_control_label()} 0=星號 *=不熟悉 5=中文 9=單字 7=例句 +=下一例句 8=詳情 4/6=上下張",
             curses.A_BOLD,
         )
-        draw_line(stdscr, 2, 2, f"{'★' if card.is_starred else '☆'} {card.ko}", curses.A_BOLD)
-        y = 3
+        folder_notice, display_message = folder_prompt_notice(message)
+        y = draw_wrapped(stdscr, 2, 2, stdscr.getmaxyx()[1] - 4, f"{'★' if card.is_starred else '☆'} {card.ko}{folder_notice}", curses.A_BOLD)
         if show_chinese and auto_face != "front":
             y = draw_wrapped(stdscr, y, 2, stdscr.getmaxyx()[1] - 4, card.zh)
         if examples and auto_face != "front":
@@ -2868,8 +2878,8 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
                     y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, f"- {' · '.join(detail_parts)}")
             for note in card.notes:
                 y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, f"筆記: {note}", curses.A_DIM)
-        if message:
-            draw_line(stdscr, y, 2, message, curses.A_BOLD)
+        if display_message:
+            draw_line(stdscr, y, 2, display_message, curses.A_BOLD)
         if auto_step:
             face_label = "正面" if auto_face == "front" else "反面"
             draw_line(
@@ -3088,7 +3098,8 @@ def run_daily_recognition(
         else:
             prompt_text = question.ko if revealed else "[韓文隱藏，請聆聽例句]"
             prompt_prefix = f"{'★' if card.is_starred else '☆'} "
-        draw_wrapped(stdscr, 2, 2, width - 4, f"{prompt_prefix}{prompt_text}", curses.A_BOLD)
+        folder_notice, display_message = folder_prompt_notice(message)
+        detail_start = draw_wrapped(stdscr, 2, 2, width - 4, f"{prompt_prefix}{prompt_text}{folder_notice}", curses.A_BOLD)
         detail_lines: List[Tuple[str, int, int]] = []
 
         def append_detail(text: str, indent: int = 0, attr: int = 0) -> None:
@@ -3131,11 +3142,11 @@ def run_daily_recognition(
                     append_detail(f"相關詞: {'、'.join(related_words)}", indent=2, attr=curses.A_DIM)
             if not graded:
                 append_detail("請按 1（答錯）或 2（答對）自評。", attr=curses.A_BOLD)
-        visible_rows = max(1, height - 5)
+        visible_rows = max(1, height - detail_start - 2)
         scroll_offset = min(scroll_offset, max(0, len(detail_lines) - visible_rows))
-        for row, (line, indent, attr) in enumerate(detail_lines[scroll_offset:scroll_offset + visible_rows], 3):
+        for row, (line, indent, attr) in enumerate(detail_lines[scroll_offset:scroll_offset + visible_rows], detail_start):
             draw_line(stdscr, row, 2 + indent, line, attr)
-        footer = message
+        footer = display_message
         if graded:
             if results[question.id]:
                 result_text = "答對"
@@ -3351,7 +3362,8 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         draw_line(stdscr, 1, 2, f"測驗{record_label} | {title} | {idx + 1}/{len(questions)}  {auto_audio_control_label()} {controls}", curses.A_BOLD)
         length_hint = f"  ({count_korean_letters(answer)} 個韓文字)" if config["direction"] == "zh-ko" else ""
         star_prefix = f"{'★' if question.source.is_starred else '☆'} " if allow_star else ""
-        y = draw_wrapped(stdscr, 2, 2, width - 4, f"{star_prefix}題目: {prompt}{length_hint}")
+        folder_notice, display_message = folder_prompt_notice(message)
+        y = draw_wrapped(stdscr, 2, 2, width - 4, f"{star_prefix}題目: {prompt}{length_hint}{folder_notice}")
         draw_line(stdscr, y, 2, f"答案: {answer}" if show_hint else "答案: hidden (press 8)")
         input_y = y + 1
         if self_grade_mode:
@@ -3401,12 +3413,12 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         if not self_grade_mode and (retry_diff or (graded and last_correct is False)):
             draw_answer_diff(stdscr, message_y, 2, user_input, answer, wrong_attr)
             message_y += 1
-        if message:
+        if display_message:
             draw_line(
                 stdscr,
                 message_y,
                 2,
-                message,
+                display_message,
                 wrong_result_attr if retry_diff or (graded and last_correct is False) else curses.A_BOLD,
             )
         if not self_grade_mode:

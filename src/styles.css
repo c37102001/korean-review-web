@@ -1723,6 +1723,11 @@ main {
   overflow-wrap: anywhere;
 }
 
+.yt-subtitle-entry p.is-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .yt-subtitle-ko {
   -webkit-user-select: text;
   user-select: text;
@@ -2484,6 +2489,44 @@ main {
   display: grid;
   justify-items: center;
   gap: 10px;
+}
+
+.study-pronunciation-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.study-pronunciation-row > strong {
+  font-size: 40px;
+  line-height: 1.2;
+}
+
+.study-pronunciation-row > span {
+  font-size: 26px;
+  line-height: 1.35;
+  font-weight: 850;
+  color: #33434b;
+}
+
+.study-pronunciation-row > strong,
+.study-pronunciation-row > span {
+  min-width: 0;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.study-pronunciation-row .speak-icon-button {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 700px) {
+  .study-pronunciation-row > strong { font-size: 30px; }
+  .study-pronunciation-row > span { font-size: 22px; }
 }
 
 .card-chinese-toggle {
