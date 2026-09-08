@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   ArrowDown,
   ArrowUp,
@@ -73,6 +75,7 @@ const SPEECH_SAMPLE_TEXT = {
   ko: '오늘도 즐겁게 한국어를 공부해요.',
   zh: '今天也一起開心地學習韓文。',
 };
+const MARKDOWN_PLUGINS = [remarkGfm];
 
 let localIdSequence = 0;
 let youtubeIframeApiPromise = null;
@@ -3760,7 +3763,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
             </div>
             <label className="wide-field">
               補充說明
-              <textarea value={manual.notes} onChange={(event) => setManual({ ...manual, notes: event.target.value })} placeholder="每行一筆說明" />
+              <textarea value={manual.notes} onChange={(event) => setManual({ ...manual, notes: event.target.value })} placeholder={'支援 Markdown，例如：\n\n### 使用提醒\n這個單字常用於 **口語**。\n\n- 注意語氣\n- 可與其他單字搭配'} rows={8} />
             </label>
             <RelatedSelector manual={manual} setManual={setManual} allItems={allItems} editItem={editItem} />
           </>
@@ -4033,8 +4036,8 @@ function manualToItem(manual, allItems = []) {
     meanings: meaningInputs.map(manualMeaningToItemMeaning),
   };
   if (manual.pos) item.pos = manual.pos;
-  const notesList = linesToArray(manual.notes);
-  if (notesList.length) item.notes = notesList;
+  const notesMarkdown = manual.notes.trim();
+  if (notesMarkdown) item.notes = [notesMarkdown];
   const related = (manual.relatedSelected || []).filter((id) => allItems.some((candidate) => candidate.id === id));
   if (related.length) item.related = related;
   return item;
@@ -4053,7 +4056,7 @@ function itemToManual(item) {
       pattern: meaning.pattern || '',
       examples: formatPairLines(meaning.examples),
     })),
-    notes: (item.notes || []).join('\n'),
+    notes: (item.notes || []).join('\n\n'),
     relatedSelected: (item.related || []).filter(Boolean),
     relatedQuery: '',
   };
@@ -4482,9 +4485,7 @@ function CardRichDetails({ item, relatedItems = [], onOpenItem, showChinese = tr
       {showChinese && !!item.notes?.length && (
         <section className="detail-section note-section">
           <div className="detail-section-title"><span>筆記</span></div>
-          <div className="note-list">
-            {item.notes.map((note) => <p key={note}>{note}</p>)}
-          </div>
+          <MarkdownContent value={item.notes} className="note-markdown" />
         </section>
       )}
       {showChinese && !!relatedItems.length && (
@@ -4495,6 +4496,24 @@ function CardRichDetails({ item, relatedItems = [], onOpenItem, showChinese = tr
           </div>
         </section>
       )}
+    </div>
+  );
+}
+
+function MarkdownContent({ value, className = '' }) {
+  const markdown = (Array.isArray(value) ? value : [value])
+    .map((entry) => String(entry || '').trim())
+    .filter(Boolean)
+    .join('\n\n');
+  if (!markdown) return null;
+  return (
+    <div className={`markdown-content ${className}`.trim()}>
+      <ReactMarkdown
+        remarkPlugins={MARKDOWN_PLUGINS}
+        components={{
+          a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+        }}
+      >{markdown}</ReactMarkdown>
     </div>
   );
 }
@@ -4590,7 +4609,7 @@ function RelatedPreviewCard({ item, position }) {
         {item.pos && <span>{item.pos}</span>}
       </div>
       <p className="preview-zh">{item.zh}</p>
-      {!!item.notes?.length && <p className="preview-note">{item.notes[0]}</p>}
+      {!!item.notes?.length && <MarkdownContent value={item.notes} className="preview-note" />}
       {!!firstExamples.length && (
         <div className="preview-examples">
           {firstExamples.map((example) => (
