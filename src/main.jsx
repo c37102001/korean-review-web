@@ -1833,12 +1833,14 @@ async function writeLearningRecords(uid, records, onProgress, folderIds = [], ad
   });
 }
 
-async function writeYoutubeSubtitleLearningRecords(uid, records, subtitle, folders = []) {
+async function writeYoutubeSubtitleLearningRecords(uid, records, subtitle, folders = [], { markLearned = false } = {}) {
   const name = String(subtitle?.title || '').trim();
   if (!name) throw new Error('字幕筆記缺少標題，無法建立對應資料夾');
-  const matchingFolder = folders.find((folder) => folder.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+  const learnedFolderId = folders.find(isLearnedFolder)?.id || SYSTEM_LEARNED_FOLDER_ID;
+  const targetFolderIds = markLearned ? [learnedFolderId] : [];
+  const matchingFolder = folders.find((folder) => !isSystemFolder(folder) && folder.name.toLocaleLowerCase() === name.toLocaleLowerCase());
   if (matchingFolder) {
-    return writeLearningRecords(uid, records, undefined, [], [], [], [{
+    return writeLearningRecords(uid, records, undefined, targetFolderIds, [], [], [{
       id: matchingFolder.id,
       data: { tag: 'YT字幕' },
     }]);
@@ -1852,7 +1854,7 @@ async function writeYoutubeSubtitleLearningRecords(uid, records, subtitle, folde
     createdAt: now,
     updatedAt: now,
   });
-  return writeLearningRecords(uid, records, undefined, [], [], [folder]);
+  return writeLearningRecords(uid, records, undefined, targetFolderIds, [], [folder]);
 }
 
 async function writeLearningRecord(uid, record, onProgress, folderIds = []) {
@@ -2699,8 +2701,8 @@ function App() {
   const updateLearningRecords = async (updatedRecords, onProgress, folderIds = [], additionalFolderWordIds = []) => {
     await writeLearningRecords(user.uid, updatedRecords, onProgress, folderIds, additionalFolderWordIds);
   };
-  const addYoutubeSubtitleRecords = async (subtitle, records) => {
-    await writeYoutubeSubtitleLearningRecords(user.uid, records, subtitle, folders.folders);
+  const addYoutubeSubtitleRecords = async (subtitle, records, options) => {
+    await writeYoutubeSubtitleLearningRecords(user.uid, records, subtitle, folders.folders, options);
   };
   const saveYoutubeSubtitle = async (input) => {
     const existingNote = input.id ? ytSubtitles.notes.find((note) => note.id === input.id) : null;
@@ -2775,7 +2777,7 @@ function App() {
         {ytSubtitles.error && <div className="sync-error">YT 字幕同步失敗：{ytSubtitles.error}</div>}
         {views[page]}
       </main>
-      {page !== 'home' && <button type="button" className={`global-back-button ${page === 'ytSubtitle' ? `with-yt-controls ${selectedSubtitleHasFolder ? 'with-yt-folder' : ''}` : ''}`} onClick={goUp} title="回到上一層" aria-label="回到上一層"><ChevronLeft size={24} /></button>}
+      {page !== 'home' && <button type="button" className={`global-back-button ${page === 'ytSubtitle' ? `with-yt-controls ${selectedYoutubeSubtitle?.videoId ? 'with-yt-video' : ''} ${selectedSubtitleHasFolder ? 'with-yt-folder' : ''}` : ''}`} onClick={goUp} title="回到上一層" aria-label="回到上一層"><ChevronLeft size={24} /></button>}
     </div>
   );
 }
@@ -6437,6 +6439,7 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
   const [selectionAction, setSelectionAction] = useState(null);
   const [definitionBubble, setDefinitionBubble] = useState(null);
   const [playerLoaded, setPlayerLoaded] = useState(false);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [activeSubtitleEntryId, setActiveSubtitleEntryId] = useState(null);
   const [error, setError] = useState('');
   const iframeRef = useRef(null);
@@ -6446,7 +6449,16 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
   const selectionUpdateFrameRef = useRef(null);
   const selectionClearTimerRef = useRef(null);
   useEffect(() => {
+    document.documentElement.classList.add('yt-reader-scroll-snap');
+    document.body.classList.add('yt-reader-scroll-snap');
+    return () => {
+      document.documentElement.classList.remove('yt-reader-scroll-snap');
+      document.body.classList.remove('yt-reader-scroll-snap');
+    };
+  }, []);
+  useEffect(() => {
     setPlayerLoaded(false);
+    setIsVideoPlaying(false);
     setActiveSubtitleEntryId(null);
   }, [note?.id]);
   const updateSelectionAction = useCallback(() => {
@@ -6527,7 +6539,7 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
     };
   }, []);
   useEffect(() => {
-    if (!note?.videoId || note.mode !== YT_SUBTITLE_MODE_SRT || !iframeRef.current) return undefined;
+    if (!note?.videoId || !iframeRef.current) return undefined;
     let disposed = false;
     let player = null;
     loadYoutubeIframeApi()
@@ -6540,6 +6552,9 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
               youtubePlayerRef.current = player;
               setPlayerLoaded(true);
             },
+            onStateChange: (event) => {
+              if (!disposed) setIsVideoPlaying(event.data === 1);
+            },
           },
         });
       })
@@ -6551,7 +6566,7 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
       if (youtubePlayerRef.current === player) youtubePlayerRef.current = null;
       player?.destroy?.();
     };
-  }, [note?.id, note?.mode, note?.videoId]);
+  }, [note?.id, note?.videoId]);
   useEffect(() => {
     if (!playerLoaded || note?.mode !== YT_SUBTITLE_MODE_SRT) return undefined;
     const syncCurrentSubtitle = () => {
@@ -6575,33 +6590,51 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
     const listRect = list.getBoundingClientRect();
     const entryRect = entry.getBoundingClientRect();
     const listCanScroll = list.scrollHeight > list.clientHeight + 2;
-    const visibleTop = listCanScroll ? listRect.top + 12 : 12;
-    const visibleBottom = listCanScroll ? listRect.bottom - 12 : window.innerHeight - 12;
-    const aboveVisibleArea = entryRect.top < visibleTop;
-    const belowVisibleArea = entryRect.bottom > visibleBottom;
-    if (!aboveVisibleArea && !belowVisibleArea) return;
     if (listCanScroll) {
       list.scrollTo({
-        top: Math.max(0, list.scrollTop + entryRect.top - listRect.top - (list.clientHeight * 0.35)),
+        top: Math.max(0, list.scrollTop + entryRect.top - listRect.top - ((list.clientHeight - entryRect.height) / 2)),
         behavior: 'smooth',
       });
       return;
     }
-    const targetTop = Math.max(12, window.innerHeight * 0.62);
-    window.scrollBy({ top: entryRect.top - targetTop, behavior: 'smooth' });
   }, [activeSubtitleEntryId]);
   if (!note) return <section className="page"><div className="empty">找不到這篇字幕筆記。<button onClick={onBack}>返回上一層</button></div></section>;
   const seekTo = (entry) => {
     if (note.mode !== YT_SUBTITLE_MODE_SRT || entry.startMs === null || !youtubePlayerRef.current) return;
     youtubePlayerRef.current.seekTo(entry.startMs / 1000, true);
     youtubePlayerRef.current.playVideo();
+    setIsVideoPlaying(true);
     setActiveSubtitleEntryId(entry.id);
+    window.requestAnimationFrame(() => {
+      const list = subtitleListRef.current;
+      const element = subtitleEntryRefs.current.get(entry.id);
+      if (!list || !element) return;
+      const listRect = list.getBoundingClientRect();
+      const entryRect = element.getBoundingClientRect();
+      list.scrollTo({
+        top: Math.max(0, list.scrollTop + entryRect.top - listRect.top - ((list.clientHeight - entryRect.height) / 2)),
+        behavior: 'smooth',
+      });
+    });
   };
   const pauseVideo = () => {
     try {
       youtubePlayerRef.current?.pauseVideo?.();
+      setIsVideoPlaying(false);
     } catch {
       // The YouTube iframe may be between player states while the selection starts.
+    }
+  };
+  const toggleVideoPlayback = () => {
+    const player = youtubePlayerRef.current;
+    if (!player) return;
+    try {
+      const playing = player.getPlayerState?.() === 1;
+      if (playing) player.pauseVideo?.();
+      else player.playVideo?.();
+      setIsVideoPlaying(!playing);
+    } catch {
+      setError('YouTube 播放器尚未準備完成，請稍後再試。');
     }
   };
   const deleteNote = async () => {
@@ -6630,10 +6663,13 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
   return (
     <section className="page yt-reader-page">
       <div className="topbar yt-reader-topbar">
-        <div><span className="eyebrow">{note.mode === YT_SUBTITLE_MODE_SRT ? 'SRT subtitles' : 'Bilingual subtitles'}</span><h1>{note.title}</h1></div>
-        <div className="actions">
-          <EditIconButton label="編輯字幕筆記" onClick={() => setEditing(note)} />
-          <button className="edit-icon-button delete-icon-button" onClick={deleteNote} title="刪除字幕筆記" aria-label="刪除字幕筆記"><Trash2 size={15} /></button>
+        <span className="eyebrow">{note.mode === YT_SUBTITLE_MODE_SRT ? 'SRT subtitles' : 'Bilingual subtitles'}</span>
+        <div className="yt-reader-title-line">
+          <h1>{note.title}</h1>
+          <div className="actions">
+            <EditIconButton label="編輯字幕筆記" onClick={() => setEditing(note)} />
+            <button className="edit-icon-button delete-icon-button" onClick={deleteNote} title="刪除字幕筆記" aria-label="刪除字幕筆記"><Trash2 size={15} /></button>
+          </div>
         </div>
       </div>
       {error && <div className="form-error">{error}</div>}
@@ -6674,6 +6710,7 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
       </div>}
       {definitionBubble && <div className="subtitle-word-definition" style={{ top: definitionBubble.top, left: definitionBubble.left }} role="status">{definitionBubble.zh}</div>}
       <div className="yt-reader-floating-actions" aria-label="字幕閱讀控制">
+        {embedUrl && <button type="button" className="yt-reader-floating-button" onClick={toggleVideoPlayback} disabled={!playerLoaded} title={isVideoPlaying ? '暫停影片' : '播放影片'} aria-label={isVideoPlaying ? '暫停影片' : '播放影片'}>{isVideoPlaying ? <Pause size={22} /> : <Play size={22} />}</button>}
         <button type="button" className={`yt-reader-floating-button ${showChinese ? 'selected' : ''}`} onClick={() => setShowChinese((current) => !current)} title={showChinese ? '隱藏中文' : '顯示中文'} aria-label={showChinese ? '隱藏中文' : '顯示中文'}>{showChinese ? <Eye size={22} /> : <EyeOff size={22} />}</button>
         {subtitleFolder && <button type="button" className="yt-reader-floating-button" onClick={() => onOpenFolder?.(subtitleFolder.id)} title={`開啟資料夾「${subtitleFolder.name}」`} aria-label={`開啟資料夾「${subtitleFolder.name}」`}><FolderOpen size={22} /></button>}
       </div>
@@ -6691,11 +6728,36 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
               if (element) subtitleEntryRefs.current.set(entry.id, element);
               else subtitleEntryRefs.current.delete(entry.id);
             };
-            return clickable ? <button type="button" ref={setEntryRef} className={className} aria-current={isPlaying ? 'true' : undefined} onClick={() => seekTo(entry)} key={entry.id}>{content}</button> : <article ref={setEntryRef} className={className} aria-current={isPlaying ? 'true' : undefined} key={entry.id}>{content}</article>;
+            const openWholeEntryQuickAdd = (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              pauseVideo();
+              setQuickAdd({ ko: entry.ko, zh: entry.zh, entry });
+              setSelectionAction(null);
+              window.getSelection()?.removeAllRanges();
+            };
+            return <article
+              ref={setEntryRef}
+              className={className}
+              aria-current={isPlaying ? 'true' : undefined}
+              role={clickable ? 'button' : undefined}
+              tabIndex={clickable ? 0 : undefined}
+              onClick={clickable ? () => seekTo(entry) : undefined}
+              onKeyDown={clickable ? (event) => {
+                if ((event.key === 'Enter' || event.key === ' ') && event.target === event.currentTarget) {
+                  event.preventDefault();
+                  seekTo(entry);
+                }
+              } : undefined}
+              key={entry.id}
+            >
+              <button type="button" className="yt-subtitle-entry-add" onPointerDown={(event) => { event.stopPropagation(); pauseVideo(); }} onClick={openWholeEntryQuickAdd} title="將整句新增為單字" aria-label={`將第 ${index + 1} 句新增為單字`}><Plus size={16} /></button>
+              {content}
+            </article>;
           })}
         </div>
       </div>
-      {quickAdd && <SubtitleQuickAddModal selection={quickAdd} entries={note.entries} allItems={allItems} onAddRecords={(records) => onAddRecords(note, records)} onClose={() => setQuickAdd(null)} />}
+      {quickAdd && <SubtitleQuickAddModal selection={quickAdd} entries={note.entries} allItems={allItems} onAddRecords={(records, options) => onAddRecords(note, records, options)} onClose={() => setQuickAdd(null)} />}
       {editing && <YoutubeSubtitleEditorModal note={editing} onSave={async (nextNote) => { await onSave(nextNote); setEditing(null); }} onClose={() => setEditing(null)} />}
     </section>
   );
@@ -6703,11 +6765,13 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
 
 function SubtitleQuickAddModal({ selection, entries = [], allItems, onAddRecords, onClose }) {
   const [ko, setKo] = useState(selection.ko);
-  const [zh, setZh] = useState('');
+  const [zh, setZh] = useState(selection.zh || '');
   const [examples, setExamples] = useState(() => formatPairLines([selection.entry]));
   const entryIndex = entries.findIndex((entry) => entry.id === selection.entry.id);
   const [previousIndex, setPreviousIndex] = useState(entryIndex - 1);
   const [nextIndex, setNextIndex] = useState(entryIndex + 1);
+  const [exampleHistory, setExampleHistory] = useState([]);
+  const [markLearned, setMarkLearned] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const extendExample = (entry, position) => {
@@ -6720,7 +6784,10 @@ function SubtitleQuickAddModal({ selection, entries = [], allItems, onAddRecords
       const combined = position === 'before'
         ? { ko: `${entry.ko} ${current.ko}`.trim(), zh: `${entry.zh}${current.zh}`.trim() }
         : { ko: `${current.ko} ${entry.ko}`.trim(), zh: `${current.zh}${entry.zh}`.trim() };
+      setExampleHistory((history) => [...history, { examples, previousIndex, nextIndex }]);
       setExamples(formatPairLines([combined]));
+      if (position === 'before') setPreviousIndex((index) => index - 1);
+      else setNextIndex((index) => index + 1);
       setError('');
       return true;
     } catch {
@@ -6730,11 +6797,20 @@ function SubtitleQuickAddModal({ selection, entries = [], allItems, onAddRecords
   };
   const addPreviousExample = () => {
     if (previousIndex < 0) return;
-    if (extendExample(entries[previousIndex], 'before')) setPreviousIndex((index) => index - 1);
+    extendExample(entries[previousIndex], 'before');
   };
   const addNextExample = () => {
     if (nextIndex >= entries.length) return;
-    if (extendExample(entries[nextIndex], 'after')) setNextIndex((index) => index + 1);
+    extendExample(entries[nextIndex], 'after');
+  };
+  const undoExampleExtension = () => {
+    if (!exampleHistory.length) return;
+    const previous = exampleHistory[exampleHistory.length - 1];
+    setExamples(previous.examples);
+    setPreviousIndex(previous.previousIndex);
+    setNextIndex(previous.nextIndex);
+    setExampleHistory((history) => history.slice(0, -1));
+    setError('');
   };
   const submit = async (event) => {
     event.preventDefault();
@@ -6757,7 +6833,7 @@ function SubtitleQuickAddModal({ selection, entries = [], allItems, onAddRecords
         meanings: [{ zh: chinese, examples: parsedExamples }],
         related: [],
       }], allItems);
-      await onAddRecords(records);
+      await onAddRecords(records, { markLearned });
       onClose();
     } catch (submitError) {
       setError(describeImportError(submitError).message);
@@ -6773,13 +6849,16 @@ function SubtitleQuickAddModal({ selection, entries = [], allItems, onAddRecords
         <div className="form-grid subtitle-quick-add-fields">
           <label>韓文<input value={ko} onChange={(event) => setKo(event.target.value)} required autoFocus /></label>
           <label>中文<input value={zh} onChange={(event) => setZh(event.target.value)} required placeholder="請填寫中文意思" /></label>
-          <label className="full-width">例句
+          <div className="full-width subtitle-example-field">
+            <label htmlFor="subtitle-quick-add-examples">例句</label>
             <span className="subtitle-example-extend-actions">
               <button type="button" className="small" onClick={addPreviousExample} disabled={previousIndex < 0} title="加入前一句逐字稿"><ArrowUp size={16} /><Plus size={14} /> 往前加</button>
               <button type="button" className="small" onClick={addNextExample} disabled={nextIndex >= entries.length} title="加入後一句逐字稿"><ArrowDown size={16} /><Plus size={14} /> 往後加</button>
+              <button type="button" className="small subtitle-example-undo" onClick={undoExampleExtension} disabled={!exampleHistory.length} title="復原上一次例句延伸" aria-label="復原上一次例句延伸"><RotateCcw size={16} /></button>
             </span>
-            <textarea value={examples} onChange={(event) => setExamples(event.target.value)} rows={4} />
-          </label>
+            <textarea id="subtitle-quick-add-examples" value={examples} onChange={(event) => { setExamples(event.target.value); setExampleHistory([]); }} rows={4} />
+          </div>
+          <label className="subtitle-quick-add-learned"><input type="checkbox" checked={markLearned} onChange={(event) => setMarkLearned(event.target.checked)} /><span><strong>已學會</strong><small>同時加入「已學習」資料夾，不會出現在每日測驗。</small></span></label>
         </div>
         {error && <div className="form-error">{error}</div>}
         <div className="actions grammar-editor-actions"><button type="button" onClick={onClose} disabled={saving}>取消</button><button className="primary" type="submit" disabled={saving}><Plus size={17} /> {saving ? '新增中' : '新增到單字本'}</button></div>
