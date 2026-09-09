@@ -52,6 +52,7 @@ import { auth, db } from './firebase.js';
 import './styles.css';
 
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
+const INITIAL_FAMILIARITY_SCORE = -3;
 const DAILY_RECOGNITION_LIMIT = 50;
 const DAILY_RECOGNITION_MODE = 'daily-recognition';
 const DAILY_GRAMMAR_MODE = 'daily-grammar';
@@ -1896,7 +1897,7 @@ function familiarityScore(stats = {}) {
   const wrong = Number.isFinite(Number(stats.wrong))
     ? Number(stats.wrong)
     : Math.max(0, (Number(stats.total) || 0) - correct);
-  return correct - wrong;
+  return correct - wrong + INITIAL_FAMILIARITY_SCORE;
 }
 
 function familiarityLevel(score) {
@@ -1945,7 +1946,7 @@ function aggregateItemStats(store, questionIds) {
   const wrong = stats.reduce((sum, current) => (
     sum + (Number.isFinite(Number(current.wrong)) ? Number(current.wrong) : Math.max(0, (current.total || 0) - (current.correct || 0)))
   ), 0);
-  const score = correct - wrong;
+  const score = correct - wrong + INITIAL_FAMILIARITY_SCORE;
   return { total, correct, wrong, score, level: familiarityLevel(score) };
 }
 
@@ -2008,9 +2009,10 @@ function dailyWrongTermQuestions(store, questions, date = todayString()) {
       .filter((attempt) => attemptDate(attempt) === date && attempt.correct === false)
       .map((attempt) => attempt.questionId),
   );
-  return orderReviewQuestions(
-    [...wrongIds].map((questionId) => termById.get(questionId)).filter(Boolean),
-  );
+  return [...wrongIds]
+    .map((questionId) => termById.get(questionId))
+    .filter(Boolean)
+    .sort(compareQuestionsByKoreanAlphabet);
 }
 
 function seedFromString(text) {
@@ -2256,34 +2258,42 @@ function calculateReviewStreaks(completedReviewDates, today = todayString()) {
 
 function recordAnswer(store, question, correct) {
   const now = new Date().toISOString();
+  const answerDate = todayString();
   const previous = getProgress(store, question);
   const previousStats = store.stats[question.id] || {};
-  const stage = correct
-    ? Math.min(previous.stage + 1, REVIEW_INTERVALS.length - 1)
-    : 0;
+  const nextStats = {
+    ...previousStats,
+    total: (previousStats.total || 0) + 1,
+    correct: (previousStats.correct || 0) + (correct ? 1 : 0),
+    wrong: (previousStats.wrong || 0) + (correct ? 0 : 1),
+    lastAnsweredAt: now,
+    lastResult: correct ? 'correct' : 'wrong',
+  };
+  const previousScore = familiarityScore(previousStats);
+  const nextScore = familiarityScore(nextStats);
+  const remainsUnfamiliar = nextScore < 0;
+  const stage = remainsUnfamiliar
+    ? 0
+    : correct
+      ? Math.min((previousScore < 0 ? 0 : previous.stage) + 1, REVIEW_INTERVALS.length - 1)
+      : 0;
+  const intervalDays = remainsUnfamiliar && correct ? 2 : REVIEW_INTERVALS[stage];
   return {
     ...store,
     stats: {
       ...store.stats,
-      [question.id]: {
-        ...previousStats,
-        total: (previousStats.total || 0) + 1,
-        correct: (previousStats.correct || 0) + (correct ? 1 : 0),
-        wrong: (previousStats.wrong || 0) + (correct ? 0 : 1),
-        lastAnsweredAt: now,
-        lastResult: correct ? 'correct' : 'wrong',
-      },
+      [question.id]: nextStats,
     },
     progress: {
       ...store.progress,
       [question.id]: {
         stage,
-        nextDue: addDays(todayString(), REVIEW_INTERVALS[stage]),
+        nextDue: addDays(answerDate, intervalDays),
         lastAnsweredAt: now,
         lastResult: correct ? 'correct' : 'wrong',
       },
     },
-    attempts: [{ id: createId(), questionId: question.id, correct, date: todayString(), time: now }, ...store.attempts].slice(0, 5000),
+    attempts: [{ id: createId(), questionId: question.id, correct, date: answerDate, time: now }, ...store.attempts].slice(0, 5000),
   };
 }
 
@@ -2683,6 +2693,7 @@ function App() {
       dailyReview: !!options.dailyReview,
       grammarOnly: !!options.grammarOnly,
       repeatable: !!options.repeatable,
+      allowAlphabeticalOrder: !!options.allowAlphabeticalOrder,
       mode: options.mode || '',
       grammarNote: options.grammarNote || null,
       noteCategory: options.noteCategory || NOTE_CATEGORY_GRAMMAR,
@@ -3081,7 +3092,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
                 <button className="primary small" onClick={() => onPractice(
                   wrongReview,
                   '今日答錯題目',
-                  { dueOnly: true, repeatable: true },
+                  { dueOnly: true, repeatable: true, allowAlphabeticalOrder: true },
                 )}>開始</button>
               </div>
             )}
@@ -4154,6 +4165,13 @@ function compareItemsByKoreanAlphabet(left, right) {
   return String(left?.id || '').localeCompare(String(right?.id || ''));
 }
 
+function compareQuestionsByKoreanAlphabet(left, right) {
+  return compareItemsByKoreanAlphabet(
+    left?.source || left,
+    right?.source || right,
+  ) || String(left?.id || '').localeCompare(String(right?.id || ''));
+}
+
 function SearchScopeControl({ value, onChange }) {
   return (
     <div className="search-scope segmented" aria-label="搜尋範圍">
@@ -5152,13 +5170,14 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     const applyStarFilter = (list) => (starredOnly ? list.filter((q) => starredSet.has(q.itemId)) : list);
     if (recognitionMode || grammarMode) return set.questions;
     if (grammarPracticeMode) return set.questions.filter((q) => q.kind === 'grammar-example');
+    if (set.allowAlphabeticalOrder) return [...set.questions].sort(compareQuestionsByKoreanAlphabet);
     if (set.dueOnly) return orderReviewQuestions(set.questions);
     if (direction === 'ko-zh') return applyStarFilter(set.questions.filter((q) => q.kind === 'term'));
     const activeSource = set.termOnly ? 'term' : source;
     const filtered = set.questions.filter((q) => activeSource === 'all' || q.kind === activeSource);
     const orderedFiltered = activeSource === 'all' ? orderReviewQuestions(filtered) : filtered;
     return applyStarFilter(orderedFiltered);
-  }, [set.questions, source, direction, set.termOnly, set.dueOnly, recognitionMode, grammarMode, grammarPracticeMode, store, starredOnly]);
+  }, [set.questions, source, direction, set.termOnly, set.dueOnly, set.allowAlphabeticalOrder, recognitionMode, grammarMode, grammarPracticeMode, store, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
   const canClassifyCurrentWord = Boolean(question && !grammarMode && !grammarPracticeMode && question.kind !== 'grammar-example');
@@ -5201,8 +5220,9 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const startSession = () => {
     const orderedQuestions = recognitionMode || grammarMode
       ? sourceQuestions
-      : set.dueOnly ? shuffleReviewQuestionsByKind(sourceQuestions) : sourceQuestions;
-    const nextQuestions = !set.dueOnly && randomOrder
+      : set.allowAlphabeticalOrder ? sourceQuestions
+        : set.dueOnly ? shuffleReviewQuestionsByKind(sourceQuestions) : sourceQuestions;
+    const nextQuestions = (set.allowAlphabeticalOrder || !set.dueOnly) && randomOrder
       ? shuffleItems(orderedQuestions, Date.now())
       : orderedQuestions;
     if (!nextQuestions.length) {
@@ -5466,7 +5486,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
             <button className={starredOnly ? 'active' : ''} onClick={() => setStarredOnly(true)}><Star size={16} /> 有星號</button>
           </div>}
           {!dailyWordMode && <div className="segmented compact">
-            <button className={!randomOrder ? 'active' : ''} onClick={() => setRandomOrder(false)}>依原順序</button>
+            <button className={!randomOrder ? 'active' : ''} onClick={() => setRandomOrder(false)}>{set.allowAlphabeticalOrder ? '韓文字母順序' : '依原順序'}</button>
             <button className={randomOrder ? 'active' : ''} onClick={() => setRandomOrder(true)}><Shuffle size={16} /> 隨機順序</button>
           </div>}
           {canChooseResultRecording && <div className="segmented compact">

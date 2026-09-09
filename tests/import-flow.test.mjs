@@ -304,7 +304,7 @@ test('daily correct answers count for both translation directions', () => {
     assert.equal(next.stats[question.id].total, 7);
     assert.equal(next.stats[question.id].correct, 5);
     assert.equal(next.stats[question.id].wrong, 2);
-    assert.equal(next.progress[question.id].stage, 3);
+    assert.equal(next.progress[question.id].stage, 1);
     assert.equal(next.attempts[0].correct, true);
   }
 });
@@ -341,17 +341,17 @@ test('Chinese-to-Korean supports typing and self-grading while Korean-to-Chinese
 });
 
 test('today wrong review contains only unique term questions failed on that date', () => {
-  const source = { index: 0 };
+  const source = { index: 0, ko: '하다' };
   const questions = [
-    { id: 'term-a', itemId: 'card-a', date: '2026-08-19', kind: 'term', source },
-    { id: 'term-b', itemId: 'card-b', date: '2026-08-19', kind: 'term', source: { index: 1 } },
+    { id: 'term-a', itemId: 'card-a', date: '2026-08-19', kind: 'term', ko: '하다', source },
+    { id: 'term-b', itemId: 'card-b', date: '2026-08-19', kind: 'term', ko: '가다', source: { index: 1, ko: '가다' } },
     { id: 'example-a', itemId: 'card-a', date: '2026-08-19', kind: 'example', source },
   ];
   const store = {
     attempts: [
       { questionId: 'term-a', correct: false, date: '2026-08-19' },
       { questionId: 'term-a', correct: false, date: '2026-08-19' },
-      { questionId: 'term-b', correct: true, date: '2026-08-19' },
+      { questionId: 'term-b', correct: false, date: '2026-08-19' },
       { questionId: 'example-a', correct: false, date: '2026-08-19' },
       { questionId: 'term-b', correct: false, date: '2026-08-18' },
     ],
@@ -359,7 +359,7 @@ test('today wrong review contains only unique term questions failed on that date
 
   assert.deepEqual(
     helpers.dailyWrongTermQuestions(store, questions, '2026-08-19').map((question) => question.id),
-    ['term-a'],
+    ['term-b', 'term-a'],
   );
 });
 
@@ -389,6 +389,57 @@ test('daily correct answers keep the normal review progression', () => {
   assert.equal(
     (Date.parse(normal.progress[question.id].nextDue) - Date.parse(normal.attempts[0].date)) / millisecondsPerDay,
     7,
+  );
+});
+
+test('negative familiarity cards return tomorrow after a wrong answer', () => {
+  const question = { id: 'term-negative-wrong', kind: 'term' };
+  const store = {
+    attempts: [],
+    stats: { [question.id]: { total: 2, correct: 1, wrong: 1 } },
+    progress: { [question.id]: { stage: 3, nextDue: '2026-09-20' } },
+  };
+  const next = helpers.recordAnswer(store, question, false);
+  const millisecondsPerDay = 24 * 60 * 60 * 1000;
+  assert.equal(helpers.familiarityScore(next.stats[question.id]), -4);
+  assert.equal(next.progress[question.id].stage, 0);
+  assert.equal(
+    (Date.parse(next.progress[question.id].nextDue) - Date.parse(next.attempts[0].date)) / millisecondsPerDay,
+    1,
+  );
+});
+
+test('negative familiarity cards rest one day after a correct answer', () => {
+  const question = { id: 'term-negative-correct', kind: 'term' };
+  const store = {
+    attempts: [],
+    stats: { [question.id]: { total: 3, correct: 1, wrong: 2 } },
+    progress: { [question.id]: { stage: 4, nextDue: '2026-09-20' } },
+  };
+  const next = helpers.recordAnswer(store, question, true);
+  const millisecondsPerDay = 24 * 60 * 60 * 1000;
+  assert.equal(helpers.familiarityScore(next.stats[question.id]), -3);
+  assert.equal(next.progress[question.id].stage, 0);
+  assert.equal(
+    (Date.parse(next.progress[question.id].nextDue) - Date.parse(next.attempts[0].date)) / millisecondsPerDay,
+    2,
+  );
+});
+
+test('a negative card re-enters the forgetting curve after reaching zero', () => {
+  const question = { id: 'term-recovered', kind: 'term' };
+  const store = {
+    attempts: [],
+    stats: { [question.id]: { total: 6, correct: 4, wrong: 2 } },
+    progress: { [question.id]: { stage: 4, nextDue: '2026-09-20' } },
+  };
+  const next = helpers.recordAnswer(store, question, true);
+  const millisecondsPerDay = 24 * 60 * 60 * 1000;
+  assert.equal(helpers.familiarityScore(next.stats[question.id]), 0);
+  assert.equal(next.progress[question.id].stage, 1);
+  assert.equal(
+    (Date.parse(next.progress[question.id].nextDue) - Date.parse(next.attempts[0].date)) / millisecondsPerDay,
+    3,
   );
 });
 
@@ -836,10 +887,11 @@ test('Korean alphabetical sorting applies to the current filtered word set', () 
   assert.deepEqual(filtered.map((entry) => entry.ko), ['가다', '가르치다', '나타나다']);
 });
 
-test('familiarity score subtracts wrong answers and uses the new level thresholds', () => {
-  assert.equal(helpers.familiarityScore({ correct: 3, wrong: 1, total: 4 }), 2);
-  assert.equal(helpers.familiarityScore({ correct: 1, wrong: 3, total: 4 }), -2);
-  assert.equal(helpers.familiarityScore({ correct: 4, total: 5 }), 3);
+test('familiarity score starts at negative three and subtracts one per wrong answer', () => {
+  assert.equal(helpers.familiarityScore({}), -3);
+  assert.equal(helpers.familiarityScore({ correct: 3, wrong: 1, total: 4 }), -1);
+  assert.equal(helpers.familiarityScore({ correct: 1, wrong: 3, total: 4 }), -5);
+  assert.equal(helpers.familiarityScore({ correct: 4, total: 5 }), 0);
 
   assert.equal(helpers.familiarityLevel(-1), '不熟悉');
   assert.equal(helpers.familiarityLevel(0), '學習中');

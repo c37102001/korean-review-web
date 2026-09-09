@@ -43,6 +43,7 @@ PROJECT_ID = "korean-review-web"
 FIRESTORE_SCHEMA_VERSION = 3
 PROGRESS_SHARD_COUNT = 16
 REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90]
+INITIAL_FAMILIARITY_SCORE = -3
 DAILY_RECOGNITION_LIMIT = 50
 DAILY_RECOGNITION_MODE = "daily-recognition"
 DAILY_GRAMMAR_MODE = "daily-grammar"
@@ -959,7 +960,14 @@ def daily_wrong_term_questions(
         for attempt in (state.get("attempts") or [])
         if attempt_date(attempt) == date_key and attempt.get("correct") is False
     }
-    return order_questions(term_by_id[question_id] for question_id in wrong_ids if question_id in term_by_id)
+    return sorted(
+        (term_by_id[question_id] for question_id in wrong_ids if question_id in term_by_id),
+        key=lambda question: (
+            unicodedata.normalize("NFC", question.ko).casefold(),
+            question.zh,
+            question.id,
+        ),
+    )
 
 
 def daily_grammar_questions(
@@ -1145,14 +1153,9 @@ def record_answer(
 ) -> None:
     now = utc_now_iso()
     previous = get_progress(state, question)
-    stage = (
-        min(int(previous.get("stage", 0)) + 1, len(REVIEW_INTERVALS) - 1)
-        if correct
-        else 0
-    )
     stats = state.setdefault("stats", {})
     old = stats.get(question.id, {})
-    stats[question.id] = {
+    next_stats = {
         **old,
         "total": int(old.get("total", 0)) + 1,
         "correct": int(old.get("correct", 0)) + (1 if correct else 0),
@@ -1160,9 +1163,21 @@ def record_answer(
         "lastAnsweredAt": now,
         "lastResult": "correct" if correct else "wrong",
     }
+    stats[question.id] = next_stats
+    previous_score = familiarity_score(old)
+    next_score = familiarity_score(next_stats)
+    remains_unfamiliar = next_score < 0
+    if remains_unfamiliar:
+        stage = 0
+    elif correct:
+        previous_stage = 0 if previous_score < 0 else int(previous.get("stage", 0))
+        stage = min(previous_stage + 1, len(REVIEW_INTERVALS) - 1)
+    else:
+        stage = 0
+    interval_days = 2 if remains_unfamiliar and correct else REVIEW_INTERVALS[stage]
     state.setdefault("progress", {})[question.id] = {
         "stage": stage,
-        "nextDue": add_days(today_string(), REVIEW_INTERVALS[stage]),
+        "nextDue": add_days(today_string(), interval_days),
         "lastAnsweredAt": now,
         "lastResult": "correct" if correct else "wrong",
     }
@@ -1281,7 +1296,7 @@ def familiarity_score(stats: Dict[str, Any]) -> int:
     correct = int(stats.get("correct") or 0)
     wrong_value = stats.get("wrong")
     wrong = int(wrong_value) if wrong_value is not None else max(0, int(stats.get("total") or 0) - correct)
-    return correct - wrong
+    return correct - wrong + INITIAL_FAMILIARITY_SCORE
 
 
 def familiarity_level(score: int) -> str:
@@ -1296,7 +1311,15 @@ def familiarity_level(score: int) -> str:
 
 def card_familiarity(state: Dict[str, Any], questions: List[Question], card_id: str) -> Tuple[int, str]:
     question_ids = [question.id for question in questions if question.item_id == card_id]
-    score = sum(familiarity_score((state.get("stats") or {}).get(question_id, {})) for question_id in question_ids)
+    question_stats = [(state.get("stats") or {}).get(question_id, {}) for question_id in question_ids]
+    correct = sum(int(stats.get("correct") or 0) for stats in question_stats)
+    wrong = sum(
+        int(stats.get("wrong"))
+        if stats.get("wrong") is not None
+        else max(0, int(stats.get("total") or 0) - int(stats.get("correct") or 0))
+        for stats in question_stats
+    )
+    score = familiarity_score({"correct": correct, "wrong": wrong})
     return score, familiarity_level(score)
 
 
@@ -2457,9 +2480,7 @@ def due_task_menu(
         random.shuffle(shuffled)
         return selected, shuffled
     if selected == DAILY_WRONG_REVIEW_MODE:
-        shuffled = list(wrong_review)
-        random.shuffle(shuffled)
-        return selected, shuffled
+        return selected, list(wrong_review)
     shuffled = list(grouped[selected])
     random.shuffle(shuffled)
     return selected, shuffled
@@ -3976,17 +3997,27 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                     if not answer_setup:
                         continue
                     direction, answer_mode = answer_setup
+                    order_mode = menu(
+                        stdscr,
+                        "今日答錯題目 | 選擇出題順序",
+                        [("alphabetical", "韓文字母順序"), ("random", "隨機打亂順序")],
+                    )
+                    if not order_mode:
+                        continue
+                    active_wrong_review = list(selected)
+                    if order_mode == "random":
+                        random.shuffle(active_wrong_review)
                     while True:
                         completed_wrong_review = run_practice(
                             stdscr,
                             "今日答錯題目",
-                            selected,
+                            active_wrong_review,
                             {
                                 "direction": direction,
                                 "answer_mode": answer_mode,
                                 "source": "term",
                                 "starred": False,
-                                "random": True,
+                                "random": False,
                                 "record_results": False,
                                 "enforce_answer_length": direction == "zh-ko" and answer_mode == "typing",
                                 "daily_review": False,
@@ -4005,7 +4036,8 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                         )
                         if replay != "again":
                             break
-                        random.shuffle(selected)
+                        if order_mode == "random":
+                            random.shuffle(active_wrong_review)
                 else:
                     answer_setup = translation_answer_mode_menu(stdscr, "每日單字測驗 | 選擇測驗方式")
                     if not answer_setup:
