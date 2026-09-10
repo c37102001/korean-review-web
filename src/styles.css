@@ -1538,6 +1538,48 @@ main {
   background: #e3f5f0;
 }
 
+.yt-subtitle-note-meta .yt-subtitle-learned-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #9b6a18;
+  background: #fff3cf;
+}
+
+.yt-subtitle-learned-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: fit-content;
+  padding: 10px 12px;
+  border: 1px solid #dbece8;
+  border-radius: 12px;
+  background: #f4fbf9;
+  cursor: pointer;
+}
+
+.yt-subtitle-learned-option input[type="checkbox"] {
+  width: 17px;
+  min-width: 17px;
+  height: 17px;
+  margin: 2px 0 0;
+  accent-color: #1e9d88;
+}
+
+.yt-subtitle-learned-option span {
+  display: grid;
+  gap: 2px;
+}
+
+.yt-subtitle-learned-option strong {
+  color: #29464a;
+}
+
+.yt-subtitle-learned-option small {
+  color: #718087;
+  font-weight: 600;
+}
+
 .yt-subtitle-editor {
   width: min(900px, 100%);
 }

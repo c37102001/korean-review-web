@@ -294,6 +294,7 @@ function normalizeYoutubeSubtitle(note, fallbackId = '') {
     id: String(note?.id || fallbackId),
     title: String(note?.title || '').trim(),
     tag: String(note?.tag || '').trim(),
+    learned: note?.learned === true,
     youtubeUrl: String(note?.youtubeUrl || '').trim(),
     videoId: youtubeVideoId(note?.youtubeUrl || note?.videoId || ''),
     mode,
@@ -6409,6 +6410,7 @@ function YoutubeSubtitleCard({ note, onOpen, onEdit, onDelete }) {
       <p>{note.mode === YT_SUBTITLE_MODE_SRT ? '可點擊字幕跳轉影片時間' : '中韓逐句字幕'}</p>
       <div className="yt-subtitle-note-meta">
         <span className="yt-subtitle-tag-chip">{youtubeSubtitleTagLabel(note)}</span>
+        {note.learned && <span className="yt-subtitle-learned-chip"><Check size={13} /> 已學習</span>}
         <span>{note.entries.length} 句</span>
         <span>{note.videoId ? '已嵌入影片' : '沒有影片連結'}</span>
         <span>{grammarTimestamp(note.updatedAt || note.createdAt)}</span>
@@ -6422,15 +6424,18 @@ function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, onOpen }) {
   const [editing, setEditing] = useState(null);
   const [actionError, setActionError] = useState('');
   const [collapsedTags, setCollapsedTags] = useState(() => new Set());
+  const [hideLearned, setHideLearned] = useState(true);
+  const visibleNotes = useMemo(() => (hideLearned ? notes.filter((note) => !note.learned) : notes), [hideLearned, notes]);
+  const learnedCount = notes.filter((note) => note.learned).length;
   const filtered = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase('zh-TW');
-    if (!keyword) return notes;
-    return notes.filter((note) => [note.title, note.tag, note.youtubeUrl, ...note.entries.flatMap((entry) => [entry.ko, entry.zh])]
+    if (!keyword) return visibleNotes;
+    return visibleNotes.filter((note) => [note.title, note.tag, note.youtubeUrl, ...note.entries.flatMap((entry) => [entry.ko, entry.zh])]
       .filter(Boolean)
       .join(' ')
       .toLocaleLowerCase('zh-TW')
       .includes(keyword));
-  }, [notes, query]);
+  }, [query, visibleNotes]);
   const groups = useMemo(() => groupYoutubeSubtitlesByTag(filtered), [filtered]);
   const tagSuggestions = useMemo(() => groupYoutubeSubtitlesByTag(notes)
     .filter((group) => group.label !== UNTAGGED_FOLDER_LABEL)
@@ -6455,7 +6460,19 @@ function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, onOpen }) {
     <section className="page yt-subtitles-page">
       <div className="topbar">
         <div><span className="eyebrow">YouTube Subtitles</span><h1>YT 字幕</h1></div>
-        <div className="actions notebook-actions"><button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 新增字幕筆記</button></div>
+        <div className="actions notebook-actions">
+          <button
+            type="button"
+            className={`learned-visibility-button ${hideLearned ? 'active' : ''}`}
+            aria-pressed={hideLearned}
+            title={`${hideLearned ? '目前隱藏' : '目前顯示'} ${learnedCount} 個已學習字幕檔案`}
+            onClick={() => setHideLearned((current) => !current)}
+          >
+            {hideLearned ? <EyeOff size={18} /> : <Eye size={18} />}
+            {hideLearned ? '隱藏已學習' : '顯示已學習'}
+          </button>
+          <button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 新增字幕筆記</button>
+        </div>
       </div>
       <label className="search grammar-search">
         <Search size={18} />
@@ -6491,7 +6508,7 @@ function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, onOpen }) {
             );
           })}
         </div>
-      ) : <div className="panel grammar-empty">{query ? '找不到符合的字幕筆記。' : '還沒有字幕筆記。新增一篇後即可放入中韓字幕。'}</div>}
+      ) : <div className="panel grammar-empty">{query ? '找不到符合的字幕筆記。' : hideLearned && notes.length ? '目前沒有未學習的字幕筆記。取消隱藏即可查看全部字幕。' : '還沒有字幕筆記。新增一篇後即可放入中韓字幕。'}</div>}
       {editing && (
         <YoutubeSubtitleEditorModal
           note={editing.id ? editing : null}
@@ -6511,6 +6528,7 @@ function YoutubeSubtitleEditorModal({ note, tagSuggestions = [], onSave, onClose
   const initialMode = note?.mode === YT_SUBTITLE_MODE_SRT ? YT_SUBTITLE_MODE_SRT : YT_SUBTITLE_MODE_JSON;
   const [title, setTitle] = useState(note?.title || '');
   const [tag, setTag] = useState(note?.tag || '');
+  const [learned, setLearned] = useState(note?.learned === true);
   const [youtubeUrl, setYoutubeUrl] = useState(note?.youtubeUrl || '');
   const [mode, setMode] = useState(initialMode);
   const [jsonText, setJsonText] = useState(() => formatYoutubeSubtitleJson(note?.entries || []));
@@ -6536,7 +6554,7 @@ function YoutubeSubtitleEditorModal({ note, tagSuggestions = [], onSave, onClose
       const entries = mode === YT_SUBTITLE_MODE_SRT
         ? parseYoutubeSubtitleSrt(srtText, note?.entries || [])
         : parseYoutubeSubtitleJson(jsonText, note?.entries || []);
-      await onSave({ ...note, title, tag, youtubeUrl, mode, entries });
+      await onSave({ ...note, title, tag, learned, youtubeUrl, mode, entries });
     } catch (saveError) {
       setError(saveError.message || '儲存字幕筆記失敗');
     } finally {
@@ -6554,6 +6572,10 @@ function YoutubeSubtitleEditorModal({ note, tagSuggestions = [], onSave, onClose
           <span>標籤 <small>選填</small></span>
           <input value={tag} onChange={(event) => setTag(event.target.value)} list="yt-subtitle-tag-suggestions" placeholder="留空會歸類為無標籤" />
           {!!tagSuggestions.length && <datalist id="yt-subtitle-tag-suggestions">{tagSuggestions.map((suggestion) => <option value={suggestion} key={suggestion} />)}</datalist>}
+        </label>
+        <label className="yt-subtitle-learned-option">
+          <input type="checkbox" checked={learned} onChange={(event) => setLearned(event.target.checked)} />
+          <span><strong>已學習</strong><small>標示完成後，預設不顯示在 YT 字幕列表中。</small></span>
         </label>
         <label className="grammar-field"><span>YouTube 連結 <small>選填</small></span><input type="url" value={youtubeUrl} onChange={(event) => setYoutubeUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=..." /></label>
         <div className="grammar-field">

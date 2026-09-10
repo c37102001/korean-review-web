@@ -544,7 +544,9 @@ test('folders are grouped by tag and untagged folders share a fallback group', (
 
 test('youtube subtitles normalize and group tags without migrating old notes', () => {
   assert.equal(helpers.normalizeYoutubeSubtitle({ title: '舊字幕' }, 'old').tag, '');
+  assert.equal(helpers.normalizeYoutubeSubtitle({ title: '舊字幕' }, 'old').learned, false);
   assert.equal(helpers.normalizeYoutubeSubtitle({ title: '新字幕', tag: '  Podcast  ' }, 'new').tag, 'Podcast');
+  assert.equal(helpers.normalizeYoutubeSubtitle({ title: '完成', learned: true }, 'learned').learned, true);
 
   const groups = helpers.groupYoutubeSubtitlesByTag([
     { id: 'one', title: '第一集', tag: 'Podcast' },
