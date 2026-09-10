@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { useOptionalPractice } from './optionalPractice.js';
 import {
   ArrowDown,
   ArrowUp,
@@ -2598,6 +2599,7 @@ function App() {
   const grammar = useGrammarNotes(user, grammarEnabled);
   const ytSubtitles = useYoutubeSubtitles(user, ytEnabled);
   const folders = useWordFolders(user, foldersEnabled);
+  const optionalPractice = useOptionalPractice(user);
   const [pageStack, setPageStack] = useState([]);
   const [selectedDate, setSelectedDate] = useState(() => todayString());
   const [studySet, setStudySet] = useState(null);
@@ -2608,7 +2610,6 @@ function App() {
     folder.tag === 'YT字幕'
       && folder.name.toLocaleLowerCase() === selectedYoutubeSubtitle.title.toLocaleLowerCase()
   ));
-  const recognitionInitializationRef = useRef(new Set());
   const allRecords = useMemo(() => {
     const byId = new Map();
     (store.customRecords || []).forEach((record) => byId.set(record.id, record));
@@ -2627,31 +2628,6 @@ function App() {
     () => dailyWrongTermQuestions(store, dailyQuestions, todayString()),
     [store.attempts, dailyQuestions],
   );
-  const todayRecognitionSchedule = useMemo(
-    () => dailyRecognitionSchedule(store, dailyQuestions, todayString()),
-    [store.attempts, store.recognition, dailyQuestions],
-  );
-  const todayRecognitionQuestions = todayRecognitionSchedule.questions;
-  const todayGrammarSchedule = useMemo(
-    () => dailyGrammarSchedule(grammar.notes, grammar.review, todayString()),
-    [grammar.notes, grammar.review],
-  );
-  const todayGrammarQuestions = todayGrammarSchedule.questions;
-  useEffect(() => {
-    if (!user || storeLoading) return;
-    const date = todayString();
-    if (!shouldInitializeDailyRecognition(store.recognition, date)) return;
-    const initializationKey = `${user.uid}:${date}`;
-    if (recognitionInitializationRef.current.has(initializationKey)) return;
-    recognitionInitializationRef.current.add(initializationKey);
-    updateStore((current) => {
-      if (!shouldInitializeDailyRecognition(current.recognition, date)) return current;
-      const schedule = dailyRecognitionSchedule(current, dailyQuestions, date);
-      return { ...current, recognition: schedule.state };
-    }).catch(() => {
-      recognitionInitializationRef.current.delete(initializationKey);
-    });
-  }, [user, storeLoading, store.recognition?.dailyDate, dailyQuestions, updateStore]);
 
   useEffect(() => {
     if (!user || storeLoading) return;
@@ -2699,6 +2675,9 @@ function App() {
       noteCategory: options.noteCategory || NOTE_CATEGORY_GRAMMAR,
       onComplete: options.onComplete || null,
       allowResultRecording: !!options.allowResultRecording,
+      optionalKind: options.optionalKind || '',
+      onOptionalAnswer: options.onOptionalAnswer || null,
+      direction: options.direction || 'ko-zh',
     });
     navChild('practice');
   };
@@ -2761,7 +2740,7 @@ function App() {
   }
 
   const views = {
-    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} recognitionQuestions={todayRecognitionQuestions} grammarSchedule={todayGrammarSchedule} onCompleteGrammar={grammar.completeReview} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} />,
+    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} optionalPractice={optionalPractice} grammarNotes={grammar.notes} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('dateNotes')} />,
     dateNotes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
@@ -2992,16 +2971,84 @@ function VoiceSettingsModal({ onClose }) {
   );
 }
 
-function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestionsForToday, recognitionQuestions, grammarSchedule, onCompleteGrammar, onPractice, onAddRecords, onUpdateRecord, onWriteRecords, folders = [] }) {
+export function OptionalPracticeModal({ store, questions, grammarQuestions, folders, practicePools = {}, onCreate, onClose }) {
+  const [kind, setKind] = useState('listening');
+  const [count, setCount] = useState(10);
+  const [query, setQuery] = useState('');
+  const [scope, setScope] = useState('all');
+  const [levels, setLevels] = useState([]);
+  const [folderIds, setFolderIds] = useState([]);
+  const [direction, setDirection] = useState('ko-zh');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const grammarGroups = [...new Map(grammarQuestions.map((q) => [q.itemId, q.source])).values()]
+    .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '') || a.id.localeCompare(b.id));
+  const [grammarId, setGrammarId] = useState(() => {
+    const seen = new Set(practicePools.grammar || []);
+    return grammarGroups.find((note) => grammarQuestions.some((q) => q.itemId === note.id && !seen.has(q.id)))?.id || grammarGroups[0]?.id || '';
+  });
+  const labels = { words: '單字練習', listening: '單字例句聽力練習', reading: '單字例句閱讀練習', grammar: '文法例句練習' };
+  const folderWords = folderFilterWordIds(folders, folderIds);
+  const pool = kind === 'grammar' ? grammarQuestions.filter((q) => q.itemId === grammarId) : questions.filter((question) => {
+    if (question.kind !== (kind === 'words' ? 'term' : 'example')) return false;
+    if (kind !== 'words') return true;
+    const stats = aggregateItemStats(store, questions.filter((q) => q.itemId === question.itemId).map((q) => q.id));
+    return itemMatchesSearch(question.source, query, scope)
+      && matchesFamiliarityLevels(stats.level, levels, stats.score)
+      && (!folderWords || folderWords.has(question.itemId));
+  });
+  const requestedCount = kind === 'words' ? Number(count) : kind === 'grammar' ? pool.length : 10;
+  const toggle = (setter, value) => setter((current) => current.includes(value) ? current.filter((entry) => entry !== value) : [...current, value]);
+  const submit = async (event) => {
+    event.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const title = kind === 'grammar' ? `${labels[kind]} · ${grammarGroups.find((note) => note.id === grammarId)?.title || ''}` : labels[kind];
+      await onCreate({ id: createId(), kind, title, direction, createdAt: new Date().toISOString() }, pool.map((q) => q.id), requestedCount);
+      onClose();
+    } catch (failure) { setError(failure.message); }
+    finally { setSaving(false); }
+  };
+  return <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="新增練習">
+    <form className="modal-panel optional-practice-modal" onSubmit={submit}>
+      <button type="button" className="modal-close" aria-label="關閉" disabled={saving} onClick={onClose}><X size={18} /></button>
+      <h2>新增練習</h2>
+      <div className="form-grid">
+        <label>練習類型<select value={kind} onChange={(event) => { setKind(event.target.value); setCount(event.target.value === 'words' ? 50 : 10); }}>{Object.entries(labels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        {kind === 'words' && <label>題數<input type="number" min="1" max="500" required value={count} onChange={(event) => setCount(event.target.value)} /></label>}
+        {kind === 'grammar' && <label>文法<select value={grammarId} onChange={(event) => setGrammarId(event.target.value)}>{grammarGroups.map((note) => <option key={note.id} value={note.id}>{note.title}</option>)}</select></label>}
+      </div>
+      {kind === 'words' && <>
+        <div className="form-grid"><label>搜尋<input value={query} onChange={(event) => setQuery(event.target.value)} /></label><label>方向<select value={direction} onChange={(event) => setDirection(event.target.value)}><option value="ko-zh">韓翻中</option><option value="zh-ko">中翻韓</option></select></label></div>
+        <SearchScopeControl value={scope} onChange={setScope} />
+        <MultiSelectFilter label="熟悉度" options={FAMILIARITY_FILTER_OPTIONS} selectedValues={levels} onToggle={(value) => toggle(setLevels, value)} onClear={() => setLevels([])} />
+        <GroupedFolderMultiSelect folders={folders} selectedValues={folderIds} onToggle={(value) => toggle(setFolderIds, value)} onToggleGroup={(ids) => setFolderIds((current) => toggleFolderGroupSelection(current, ids))} onClear={() => setFolderIds([])} />
+      </>}
+      <p>可用 {pool.length} 題 · 本次最多 {requestedCount} 題</p>
+      {error && <div className="form-error">{error}</div>}
+      <div className="actions"><button type="button" disabled={saving} onClick={onClose}>取消</button><button className="primary" disabled={saving || !pool.length}>{saving ? '新增中' : '新增練習'}</button></div>
+    </form>
+  </div>;
+}
+
+function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestionsForToday, optionalPractice, grammarNotes, onPractice, onAddRecords, onUpdateRecord, onWriteRecords, folders = [] }) {
   const [addOpen, setAddOpen] = useState(false);
+  const [practiceCreatorOpen, setPracticeCreatorOpen] = useState(false);
+  const [practiceError, setPracticeError] = useState('');
   const [editingItem, setEditingItem] = useState(null);
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
   const today = todayString();
   const due = dueQuestionsForToday;
   const wrongReview = due.length ? [] : wrongQuestionsForToday;
-  const recognition = recognitionQuestions;
-  const grammarQuestions = grammarSchedule.questions;
-  const totalPending = due.length + recognition.length + grammarQuestions.length;
+  const grammarQuestions = grammarPracticeQuestions(grammarNotes.filter((note) => note.category !== NOTE_CATEGORY_VOCABULARY));
+  const questionById = new Map([...questions, ...grammarQuestions].map((question) => [question.id, question]));
+  const practiceTasks = optionalPractice.tasks.map((task) => ({
+    ...task,
+    questions: task.ids.filter((id) => !task.answeredIds.includes(id)).map((id) => questionById.get(id)).filter(Boolean),
+  }));
+  const totalPending = due.length;
   const tasks = groupTasks(store, due, today);
   const answeredToday = store.attempts.filter((attempt) => attemptDate(attempt) === today);
   const correctToday = answeredToday.filter((attempt) => attempt.correct).length;
@@ -3010,13 +3057,6 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
   const progress = totalPending ? Math.max(0, Math.round((answeredToday.length / (answeredToday.length + totalPending)) * 100)) : 100;
   const startNextDailyTask = () => {
     if (due.length) onPractice(due, '今日測驗', { dueOnly: true, dailyReview: true });
-    else if (recognition.length) onPractice(recognition, '每日單字例句聽力', { dueOnly: true, mode: DAILY_RECOGNITION_MODE });
-    else onPractice(grammarQuestions, `每日文法例句聽力 · ${grammarSchedule.note.title}`, {
-      dueOnly: true,
-      mode: DAILY_GRAMMAR_MODE,
-      grammarNote: grammarSchedule.note,
-      onComplete: () => onCompleteGrammar(grammarSchedule.note, today),
-    });
   };
 
   return (
@@ -3027,11 +3067,11 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
           <h1>今天也來練一點韓文</h1>
           <p>
             今日有 {due.length} 題到期單字；完成單字測驗即可取得火焰。
-            另外 {recognition.length + grammarQuestions.length} 題聽力練習可自由選做。
           </p>
           <div className="actions">
             <button className="primary" disabled={!totalPending} onClick={startNextDailyTask}><Dumbbell size={18} /> 開始今日測驗</button>
             <button onClick={() => setAddOpen(true)}><Plus size={18} /> 快速新增單字</button>
+            <button onClick={() => setPracticeCreatorOpen(true)} disabled={optionalPractice.loading}><Plus size={18} /> 新增練習</button>
             <button onClick={() => setVoiceSettingsOpen(true)}><Volume2 size={18} /> 語音設定</button>
           </div>
         </div>
@@ -3080,7 +3120,9 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
 
       <div className="split">
         <div className="panel">
-          <div className="panel-title"><h2>測驗任務</h2><span>{tasks.length || recognition.length || grammarQuestions.length ? '未完成任務會保留' : '目前沒有待完成任務'}</span></div>
+          <div className="panel-title"><h2>測驗與練習</h2><span>未完成練習會保留</span></div>
+          {(optionalPractice.error || practiceError) && <div className="form-error">{optionalPractice.error || practiceError}</div>}
+          {practiceCreatorOpen && <OptionalPracticeModal store={store} questions={questions} grammarQuestions={grammarQuestions} folders={folders} practicePools={optionalPractice.pools} onClose={() => setPracticeCreatorOpen(false)} onCreate={optionalPractice.create} />}
           <div className="task-list">
             {!!wrongReview.length && (
               <div className="task-card wrong-review-task-card">
@@ -3096,31 +3138,20 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
                 )}>開始</button>
               </div>
             )}
-            {!!recognition.length && (
-              <div className="task-card recognition-task-card">
-                <div>
-                  <span className="badge">選做</span>
-                  <h3>單字例句聽力</h3>
-                  <p>從全部單字的所有例句隨機抽題 · 剩餘 {recognition.length} 題</p>
-                </div>
-                <button className="primary small" onClick={() => onPractice(recognition, '每日單字例句聽力', { dueOnly: true, mode: DAILY_RECOGNITION_MODE })}>開始</button>
-              </div>
-            )}
-            {!!grammarQuestions.length && (
-              <div className="task-card grammar-task-card">
-                <div>
-                  <span className="badge">選做</span>
-                  <h3>文法例句聽力</h3>
-                  <p>{grammarSchedule.note.title} · 全部 {grammarQuestions.length} 個例句</p>
-                </div>
-                <button className="primary small" onClick={() => onPractice(grammarQuestions, `每日文法例句聽力 · ${grammarSchedule.note.title}`, {
-                  dueOnly: true,
-                  mode: DAILY_GRAMMAR_MODE,
-                  grammarNote: grammarSchedule.note,
-                  onComplete: () => onCompleteGrammar(grammarSchedule.note, today),
+            {practiceTasks.map((task) => <div className="task-card" key={task.id}>
+              <div><span className="badge">自由練習</span><h3>{task.title}</h3><p>剩餘 {task.questions.length} 題</p></div>
+              <div className="actions">
+                <button className="primary small" disabled={!task.questions.length} onClick={() => onPractice(task.questions, task.title, {
+                  dueOnly: true, optionalKind: task.kind, direction: task.direction,
+                  onOptionalAnswer: (questionId, correct) => optionalPractice.answer(task.id, questionId, correct),
+                  onComplete: () => optionalPractice.remove(task.id),
                 })}>開始</button>
+                <button aria-label="移除練習" title="移除練習" onClick={async () => {
+                  if (!window.confirm('移除這組練習？')) return;
+                  try { await optionalPractice.remove(task.id); } catch (error) { setPracticeError(error.message); }
+                }}><Trash2 size={16} /></button>
               </div>
-            )}
+            </div>)}
             {tasks.map((task) => (
               <div className="task-card" key={task.id}>
                 <div>
@@ -3135,7 +3166,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
                 )}>開始</button>
               </div>
             ))}
-            {!tasks.length && !recognition.length && !grammarQuestions.length && !wrongReview.length && <div className="empty">今天的測驗已完成。你可以從日曆或單字本主動測驗。</div>}
+            {!tasks.length && !practiceTasks.length && !wrongReview.length && <div className="empty">目前沒有待完成任務</div>}
           </div>
         </div>
         <div className="panel">
@@ -5107,6 +5138,7 @@ function StudyDetails({ item, allItems, onOpenItem, showChinese }) {
 }
 
 function shouldRecordPracticeResults(practiceSet) {
+  if (practiceSet?.optionalKind) return false;
   return Boolean(
     practiceSet?.dailyReview
     || (practiceSet?.allowResultRecording && practiceSet?.recordResults),
@@ -5124,20 +5156,22 @@ function shouldAutoPronouncePracticePrompt({ started, recognitionMode, grammarMo
 }
 
 function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onToggleLearned, onToggleUnfamiliar }) {
-  const [direction, setDirection] = useState('zh-ko');
+  const optionalMode = Boolean(set.optionalKind);
+  const readingMode = set.optionalKind === 'reading';
+  const [direction, setDirection] = useState(optionalMode ? set.direction : 'zh-ko');
   const [source, setSource] = useState('term');
   const [starredOnly, setStarredOnly] = useState(false);
   const [randomOrder, setRandomOrder] = useState(true);
   const [recordResults, setRecordResults] = useState(false);
-  const [answerMode, setAnswerMode] = useState('typing');
-  const recognitionMode = set.mode === DAILY_RECOGNITION_MODE;
-  const grammarMode = set.mode === DAILY_GRAMMAR_MODE;
+  const [answerMode, setAnswerMode] = useState(optionalMode ? 'self-grade' : 'typing');
+  const recognitionMode = set.mode === DAILY_RECOGNITION_MODE || set.optionalKind === 'listening';
+  const grammarMode = set.mode === DAILY_GRAMMAR_MODE || set.optionalKind === 'grammar';
   const grammarPracticeMode = !!set.grammarOnly;
   const practiceNoteMeta = noteCategoryMeta(set.noteCategory || NOTE_CATEGORY_GRAMMAR);
   const dailyWordMode = Boolean(set.dailyReview && !recognitionMode && !grammarMode);
   const configurableWordMode = Boolean(dailyWordMode || set.repeatable);
   const fixedSource = set.termOnly || set.dueOnly || grammarPracticeMode;
-  const activeDirection = recognitionMode || grammarMode ? 'ko-zh' : set.dueOnly && !configurableWordMode ? 'zh-ko' : direction;
+  const activeDirection = recognitionMode || grammarMode || readingMode ? 'ko-zh' : optionalMode ? direction : set.dueOnly && !configurableWordMode ? 'zh-ko' : direction;
   const shouldRecordResults = shouldRecordPracticeResults({ ...set, recordResults });
   const canChooseResultRecording = Boolean(set.allowResultRecording && !set.dailyReview);
   const selfGradeMode = isSelfGradeAnswerMode(activeDirection, answerMode);
@@ -5164,11 +5198,13 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const [directUnfamiliarError, setDirectUnfamiliarError] = useState('');
   const completionStartedRef = useRef(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [autoPronounce, setAutoPronounce] = useState(true);
+  const [autoPronounce, setAutoPronounce] = useState(!readingMode);
+  const [optionalSaving, setOptionalSaving] = useState(false);
+  const optionalSavingRef = useRef(false);
   const sourceQuestions = useMemo(() => {
     const starredSet = new Set(store.starred || []);
     const applyStarFilter = (list) => (starredOnly ? list.filter((q) => starredSet.has(q.itemId)) : list);
-    if (recognitionMode || grammarMode) return set.questions;
+    if (optionalMode || recognitionMode || grammarMode) return set.questions;
     if (grammarPracticeMode) return set.questions.filter((q) => q.kind === 'grammar-example');
     if (set.allowAlphabeticalOrder) return [...set.questions].sort(compareQuestionsByKoreanAlphabet);
     if (set.dueOnly) return orderReviewQuestions(set.questions);
@@ -5177,7 +5213,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     const filtered = set.questions.filter((q) => activeSource === 'all' || q.kind === activeSource);
     const orderedFiltered = activeSource === 'all' ? orderReviewQuestions(filtered) : filtered;
     return applyStarFilter(orderedFiltered);
-  }, [set.questions, source, direction, set.termOnly, set.dueOnly, set.allowAlphabeticalOrder, recognitionMode, grammarMode, grammarPracticeMode, store, starredOnly]);
+  }, [set.questions, source, direction, set.termOnly, set.dueOnly, set.allowAlphabeticalOrder, optionalMode, recognitionMode, grammarMode, grammarPracticeMode, store, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
   const canClassifyCurrentWord = Boolean(question && !grammarMode && !grammarPracticeMode && question.kind !== 'grammar-example');
@@ -5247,7 +5283,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   useEffect(() => {
     if (!set.dueOnly || configurableWordMode) return;
     if (questionQueue.length) return;
-    const nextQuestions = recognitionMode || grammarMode ? sourceQuestions : shuffleReviewQuestionsByKind(sourceQuestions);
+    const nextQuestions = optionalMode || recognitionMode || grammarMode ? sourceQuestions : shuffleReviewQuestionsByKind(sourceQuestions);
     setQuestionQueue(nextQuestions);
     setStarted(!!nextQuestions.length);
     setIndex(0);
@@ -5258,7 +5294,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     setLastCorrect(null);
     setTypedAttempts(0);
     setRecognitionWordVisible(false);
-  }, [set.dueOnly, configurableWordMode, recognitionMode, grammarMode, sourceQuestions, questionQueue.length]);
+  }, [set.dueOnly, configurableWordMode, optionalMode, recognitionMode, grammarMode, sourceQuestions, questionQueue.length]);
 
   useEffect(() => {
     if (!shouldAutoPronouncePracticePrompt({
@@ -5287,7 +5323,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     Promise.resolve(set.onComplete())
       .catch((error) => {
         completionStartedRef.current = false;
-        setCompletionError(error.message || '文法測驗進度儲存失敗');
+        setCompletionError(error.message || '練習進度儲存失敗');
       })
       .finally(() => setCompletionSaving(false));
   };
@@ -5360,13 +5396,34 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     setRecognitionWordVisible(false);
     setDirectLearnedError('');
     setDirectUnfamiliarError('');
-    if (index + 1 < queue.length) setIndex(index + 1);
+    let nextIndex = index + 1;
+    if (optionalMode && !grammarMode) {
+      while (nextIndex < queue.length) {
+        const itemId = queue[nextIndex].itemId;
+        const learned = (learnedWordIds.has(itemId) || markedLearnedIds.has(itemId)) && !removedLearnedIds.has(itemId);
+        if (!learned) break;
+        nextIndex += 1;
+      }
+    }
+    if (nextIndex < queue.length) setIndex(nextIndex);
     else if (set.dueOnly) finishSession();
     else resetSession();
   };
   // Self-directed tests never alter long-term accuracy. Daily listening rounds
   // still update their dedicated rotation state in the recognition branch.
-  const submit = (correct) => {
+  const submit = async (correct) => {
+    if (optionalMode) {
+      if (optionalSavingRef.current) return;
+      optionalSavingRef.current = true;
+      setOptionalSaving(true);
+      setCompletionError('');
+      try {
+        await set.onOptionalAnswer(question.id, correct);
+        goNext();
+      } catch (error) { setCompletionError(error.message || '練習進度儲存失敗，請重試'); }
+      finally { optionalSavingRef.current = false; setOptionalSaving(false); }
+      return;
+    }
     if (recognitionMode) {
       updateStore((current) => recordDailyRecognitionAnswer(current, question, correct));
     } else if (shouldRecordResults) {
@@ -5562,6 +5619,8 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
               <button disabled={!recognitionMode && !grammarMode && activeDirection !== 'ko-zh' && !revealed && !graded} onClick={() => speakAnswer(question)}><Volume2 size={16} /> {recognitionMode || grammarMode || activeDirection === 'ko-zh' ? '重播' : '發音'}</button>
             </div>
           </div>
+          {optionalSaving && <p role="status">儲存練習進度中…</p>}
+          {completionError && <p className="form-error" role="alert">{completionError}</p>}
           {!selfGradeMode ? (
             <>
               <div className="prompt">
@@ -5645,6 +5704,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
                 </button>
               ) : (
                 <PracticeDecisionBar
+                  disabled={optionalSaving}
                   canClassify={canClassifyCurrentWord}
                   isLearned={isCurrentWordLearned}
                   isUnfamiliar={isCurrentWordUnfamiliar}
@@ -5708,7 +5768,7 @@ function WordFolderButtons({ compact = false, isLearned = false, isUnfamiliar = 
   );
 }
 
-function PracticeDecisionBar({ canClassify, isLearned, isUnfamiliar, learnedSaving, unfamiliarSaving, learnedError, unfamiliarError, onToggleLearned, onToggleUnfamiliar, onCorrect, onWrong }) {
+function PracticeDecisionBar({ canClassify, isLearned, isUnfamiliar, learnedSaving, unfamiliarSaving, learnedError, unfamiliarError, onToggleLearned, onToggleUnfamiliar, onCorrect, onWrong, disabled = false }) {
   return (
     <div className="answer-panel practice-decision-panel">
       {canClassify && (
@@ -5723,8 +5783,8 @@ function PracticeDecisionBar({ canClassify, isLearned, isUnfamiliar, learnedSavi
         />
       )}
       <div className="practice-grade-actions">
-        <button className="success" onClick={onCorrect}><Check size={18} /> 答對</button>
-        <button className="danger-button" onClick={onWrong}><X size={18} /> 答錯</button>
+        <button className="success" disabled={disabled} onClick={onCorrect}><Check size={18} /> 答對</button>
+        <button className="danger-button" disabled={disabled} onClick={onWrong}><X size={18} /> 答錯</button>
       </div>
       {(learnedError || unfamiliarError) && <small className="form-error">{learnedError || unfamiliarError}</small>}
     </div>
@@ -7722,6 +7782,7 @@ function WordCard({ item, folders = [], onEdit, onDelete, onOpen, isStarred = fa
 }
 
 export {
+  PracticePage,
   attemptDate,
   buildStudyAutoPlaySpeechSequence,
   buildJsonImportDraft,

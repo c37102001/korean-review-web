@@ -3894,6 +3894,30 @@ textarea:focus {
   background: transparent;
 }
 
+.optional-practice-modal {
+  display: grid;
+  gap: 16px;
+  border-radius: 8px;
+}
+
+.optional-practice-modal h2 {
+  margin: 0 32px 0 0;
+  font-size: 24px;
+}
+
+.optional-practice-modal p {
+  margin: 0;
+}
+
+.optional-practice-modal .form-grid {
+  margin-top: 0;
+}
+
+.optional-practice-modal .segmented,
+.optional-practice-modal .actions:not(.answer-actions) {
+  flex-direction: row;
+}
+
 .learned-prompt-modal {
   width: min(520px, 100%);
 }

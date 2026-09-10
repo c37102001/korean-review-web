@@ -49,6 +49,12 @@ function item(ko, zh, extra = {}) {
   };
 }
 
+test('user-created optional tasks never write daily scores or scheduling results', () => {
+  for (const optionalKind of ['words', 'listening', 'reading', 'grammar']) {
+    assert.equal(helpers.shouldRecordPracticeResults({ optionalKind, dailyReview: true, allowResultRecording: true, recordResults: true }), false);
+  }
+});
+
 test('replacing an existing duplicate becomes one update with no second conflict', () => {
   const existing = { id: 'existing-id', date: '2026-07-20', createdAt: '2026-07-20T00:00:00.000Z', ...item('질문', '問題') };
   const draft = helpers.buildJsonImportDraft(JSON.stringify({ data: [item('질문', '提問')] }), '2026-07-22');
