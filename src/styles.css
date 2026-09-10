@@ -1533,6 +1533,11 @@ main {
   font-weight: 800;
 }
 
+.yt-subtitle-note-meta .yt-subtitle-tag-chip {
+  color: #267d70;
+  background: #e3f5f0;
+}
+
 .yt-subtitle-editor {
   width: min(900px, 100%);
 }

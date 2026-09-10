@@ -542,6 +542,23 @@ test('folders are grouped by tag and untagged folders share a fallback group', (
   assert.equal(helpers.folderTagLabel({}), '無標籤');
 });
 
+test('youtube subtitles normalize and group tags without migrating old notes', () => {
+  assert.equal(helpers.normalizeYoutubeSubtitle({ title: '舊字幕' }, 'old').tag, '');
+  assert.equal(helpers.normalizeYoutubeSubtitle({ title: '新字幕', tag: '  Podcast  ' }, 'new').tag, 'Podcast');
+
+  const groups = helpers.groupYoutubeSubtitlesByTag([
+    { id: 'one', title: '第一集', tag: 'Podcast' },
+    { id: 'two', title: '第二集', tag: 'Podcast' },
+    { id: 'three', title: '其他', tag: '' },
+  ]);
+  assert.deepEqual(groups.map((group) => [group.label, group.notes.map((note) => note.id)]), [
+    ['Podcast', ['one', 'two']],
+    ['無標籤', ['three']],
+  ]);
+  assert.equal(helpers.youtubeSubtitleTagLabel({ tag: '  TOPIK  ' }), 'TOPIK');
+  assert.equal(helpers.youtubeSubtitleTagLabel({}), '無標籤');
+});
+
 test('folder tag selection selects the whole group and toggles it off', () => {
   assert.deepEqual(
     helpers.toggleFolderGroupSelection(['outside', 'one'], ['one', 'two']),

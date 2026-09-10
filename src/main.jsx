@@ -293,6 +293,7 @@ function normalizeYoutubeSubtitle(note, fallbackId = '') {
   return {
     id: String(note?.id || fallbackId),
     title: String(note?.title || '').trim(),
+    tag: String(note?.tag || '').trim(),
     youtubeUrl: String(note?.youtubeUrl || '').trim(),
     videoId: youtubeVideoId(note?.youtubeUrl || note?.videoId || ''),
     mode,
@@ -625,6 +626,26 @@ function groupFoldersByTag(folders = []) {
   });
   return [...groups.entries()]
     .map(([label, groupedFolders]) => ({ label, folders: groupedFolders }))
+    .sort((left, right) => {
+      if (left.label === UNTAGGED_FOLDER_LABEL) return 1;
+      if (right.label === UNTAGGED_FOLDER_LABEL) return -1;
+      return left.label.localeCompare(right.label, 'zh-TW');
+    });
+}
+
+function youtubeSubtitleTagLabel(note) {
+  return String(note?.tag || '').trim() || UNTAGGED_FOLDER_LABEL;
+}
+
+function groupYoutubeSubtitlesByTag(notes = []) {
+  const groups = new Map();
+  notes.forEach((note) => {
+    const label = youtubeSubtitleTagLabel(note);
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(note);
+  });
+  return [...groups.entries()]
+    .map(([label, groupedNotes]) => ({ label, notes: groupedNotes }))
     .sort((left, right) => {
       if (left.label === UNTAGGED_FOLDER_LABEL) return 1;
       if (right.label === UNTAGGED_FOLDER_LABEL) return -1;
@@ -6387,6 +6408,7 @@ function YoutubeSubtitleCard({ note, onOpen, onEdit, onDelete }) {
       </div>
       <p>{note.mode === YT_SUBTITLE_MODE_SRT ? '可點擊字幕跳轉影片時間' : '中韓逐句字幕'}</p>
       <div className="yt-subtitle-note-meta">
+        <span className="yt-subtitle-tag-chip">{youtubeSubtitleTagLabel(note)}</span>
         <span>{note.entries.length} 句</span>
         <span>{note.videoId ? '已嵌入影片' : '沒有影片連結'}</span>
         <span>{grammarTimestamp(note.updatedAt || note.createdAt)}</span>
@@ -6399,15 +6421,26 @@ function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, onOpen }) {
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [actionError, setActionError] = useState('');
+  const [collapsedTags, setCollapsedTags] = useState(() => new Set());
   const filtered = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase('zh-TW');
     if (!keyword) return notes;
-    return notes.filter((note) => [note.title, note.youtubeUrl, ...note.entries.flatMap((entry) => [entry.ko, entry.zh])]
+    return notes.filter((note) => [note.title, note.tag, note.youtubeUrl, ...note.entries.flatMap((entry) => [entry.ko, entry.zh])]
       .filter(Boolean)
       .join(' ')
       .toLocaleLowerCase('zh-TW')
       .includes(keyword));
   }, [notes, query]);
+  const groups = useMemo(() => groupYoutubeSubtitlesByTag(filtered), [filtered]);
+  const tagSuggestions = useMemo(() => groupYoutubeSubtitlesByTag(notes)
+    .filter((group) => group.label !== UNTAGGED_FOLDER_LABEL)
+    .map((group) => group.label), [notes]);
+  const toggleTag = (tag) => setCollapsedTags((current) => {
+    const next = new Set(current);
+    if (next.has(tag)) next.delete(tag);
+    else next.add(tag);
+    return next;
+  });
   const deleteNote = async (note) => {
     if (!window.confirm(`確定要刪除「${note.title}」嗎？`)) return;
     setActionError('');
@@ -6426,18 +6459,43 @@ function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, onOpen }) {
       </div>
       <label className="search grammar-search">
         <Search size={18} />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋標題、影片連結或字幕內容" />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋標題、標籤、影片連結或字幕內容" />
       </label>
       {actionError && <div className="form-error">{actionError}</div>}
       {error && <div className="sync-error">Firebase 同步失敗：{error}</div>}
       {filtered.length ? (
-        <div className="yt-subtitle-note-grid">
-          {filtered.map((note) => <YoutubeSubtitleCard key={note.id} note={note} onOpen={onOpen} onEdit={setEditing} onDelete={deleteNote} />)}
+        <div className="folder-tag-groups yt-subtitle-tag-groups">
+          {groups.map((group) => {
+            const collapsed = collapsedTags.has(group.label);
+            return (
+              <section className={`folder-tag-group ${collapsed ? 'collapsed' : ''}`} key={group.label}>
+                <div className="folder-tag-group-head">
+                  <button
+                    type="button"
+                    className="folder-tag-group-toggle"
+                    aria-expanded={!collapsed}
+                    onClick={() => toggleTag(group.label)}
+                    title={collapsed ? `展開${group.label}` : `收合${group.label}`}
+                  >
+                    <span className="folder-tag-group-heading"><span className="folder-tag-mark">標籤</span><h2>{group.label}</h2></span>
+                    <ChevronDown size={18} />
+                  </button>
+                  <span>{group.notes.length} 個字幕檔案</span>
+                </div>
+                {!collapsed && (
+                  <div className="yt-subtitle-note-grid">
+                    {group.notes.map((note) => <YoutubeSubtitleCard key={note.id} note={note} onOpen={onOpen} onEdit={setEditing} onDelete={deleteNote} />)}
+                  </div>
+                )}
+              </section>
+            );
+          })}
         </div>
       ) : <div className="panel grammar-empty">{query ? '找不到符合的字幕筆記。' : '還沒有字幕筆記。新增一篇後即可放入中韓字幕。'}</div>}
       {editing && (
         <YoutubeSubtitleEditorModal
           note={editing.id ? editing : null}
+          tagSuggestions={tagSuggestions}
           onSave={async (note) => {
             await onSave(note);
             setEditing(null);
@@ -6449,9 +6507,10 @@ function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, onOpen }) {
   );
 }
 
-function YoutubeSubtitleEditorModal({ note, onSave, onClose }) {
+function YoutubeSubtitleEditorModal({ note, tagSuggestions = [], onSave, onClose }) {
   const initialMode = note?.mode === YT_SUBTITLE_MODE_SRT ? YT_SUBTITLE_MODE_SRT : YT_SUBTITLE_MODE_JSON;
   const [title, setTitle] = useState(note?.title || '');
+  const [tag, setTag] = useState(note?.tag || '');
   const [youtubeUrl, setYoutubeUrl] = useState(note?.youtubeUrl || '');
   const [mode, setMode] = useState(initialMode);
   const [jsonText, setJsonText] = useState(() => formatYoutubeSubtitleJson(note?.entries || []));
@@ -6477,7 +6536,7 @@ function YoutubeSubtitleEditorModal({ note, onSave, onClose }) {
       const entries = mode === YT_SUBTITLE_MODE_SRT
         ? parseYoutubeSubtitleSrt(srtText, note?.entries || [])
         : parseYoutubeSubtitleJson(jsonText, note?.entries || []);
-      await onSave({ ...note, title, youtubeUrl, mode, entries });
+      await onSave({ ...note, title, tag, youtubeUrl, mode, entries });
     } catch (saveError) {
       setError(saveError.message || '儲存字幕筆記失敗');
     } finally {
@@ -6491,6 +6550,11 @@ function YoutubeSubtitleEditorModal({ note, onSave, onClose }) {
         <button type="button" className="modal-close" disabled={saving} onClick={onClose} aria-label="關閉"><X size={18} /></button>
         <div className="grammar-modal-head"><span className="eyebrow">YouTube Subtitles</span><h2>{note ? '編輯字幕筆記' : '新增字幕筆記'}</h2></div>
         <label className="grammar-field"><span>標題</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：影片名稱或主題" autoFocus required /></label>
+        <label className="grammar-field">
+          <span>標籤 <small>選填</small></span>
+          <input value={tag} onChange={(event) => setTag(event.target.value)} list="yt-subtitle-tag-suggestions" placeholder="留空會歸類為無標籤" />
+          {!!tagSuggestions.length && <datalist id="yt-subtitle-tag-suggestions">{tagSuggestions.map((suggestion) => <option value={suggestion} key={suggestion} />)}</datalist>}
+        </label>
         <label className="grammar-field"><span>YouTube 連結 <small>選填</small></span><input type="url" value={youtubeUrl} onChange={(event) => setYoutubeUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=..." /></label>
         <div className="grammar-field">
           <span>字幕格式</span>
@@ -7804,6 +7868,7 @@ export {
   folderFilterWordIds,
   folderTagLabel,
   groupFoldersByTag,
+  groupYoutubeSubtitlesByTag,
   isTransientFirestoreError,
   markReviewDateComplete,
   isDailyWordReviewComplete,
@@ -7815,6 +7880,7 @@ export {
   grammarPracticeQuestions,
   studyCardDoubleTapAction,
   normalizeFolder,
+  normalizeYoutubeSubtitle,
   isLearnedFolder,
   isUnfamiliarFolder,
   isSystemFolder,
@@ -7843,6 +7909,7 @@ export {
   toggleFolderGroupSelection,
   formatYoutubeSubtitleSrt,
   youtubeVideoId,
+  youtubeSubtitleTagLabel,
   naverDictionaryUrl,
 };
 
