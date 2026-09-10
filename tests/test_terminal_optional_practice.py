@@ -75,6 +75,18 @@ class OptionalPracticeTests(unittest.TestCase):
         self.assertEqual(terminal.familiarity_filter_value("不熟悉", -8), "score-negative-4-or-less")
         self.assertEqual(terminal.familiarity_filter_value("熟悉", 4), "熟悉")
 
+    def test_word_search_text_contains_korean_and_chinese_meanings_only(self):
+        card = terminal.Card(
+            "word", "2026-09-10", "날씨", "天氣", meanings=[{
+                "zh": "天氣", "examples": [{"ko": "시장이 가까워요.", "zh": "市場很近。"}],
+            }], notes=["市場附近"],
+        )
+        search_text = terminal.card_word_search_text(card)
+        self.assertIn("날씨", search_text)
+        self.assertIn("天氣", search_text)
+        self.assertNotIn("市場", search_text)
+        self.assertNotIn("시장", search_text)
+
     def test_terminal_can_create_a_listening_task(self):
         card, term = self.card_and_question()
         example = terminal.Question("example", card.id, card.date, "example", "날씨가 좋아요.", "天氣很好。", card)

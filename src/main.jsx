@@ -4174,7 +4174,11 @@ function itemMatchesSearch(item, query, scope = 'all') {
   const normalizedQuery = normalizeKoreanKey(query).toLocaleLowerCase();
   if (!normalizedQuery) return true;
   if (scope === 'word') {
-    return normalizeKoreanKey(item.ko).toLocaleLowerCase().includes(normalizedQuery);
+    const wordAndMeanings = [
+      item.ko,
+      ...(item.meanings || []).map((meaning) => meaning.zh),
+    ].filter(Boolean).join(' ').normalize('NFC').toLocaleLowerCase();
+    return wordAndMeanings.includes(normalizedQuery);
   }
   return itemSearchText(item).normalize('NFC').includes(normalizedQuery);
 }

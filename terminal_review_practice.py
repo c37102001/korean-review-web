@@ -1487,6 +1487,11 @@ def card_search_text(card: Card) -> str:
     return unicodedata.normalize("NFC", " ".join(details)).casefold()
 
 
+def card_word_search_text(card: Card) -> str:
+    meanings = [str(meaning.get("zh") or "") for meaning in card.meanings]
+    return unicodedata.normalize("NFC", " ".join([card.ko, *meanings])).casefold()
+
+
 def filtered_notebook_cards(
     cards: List[Card],
     questions: List[Question],
@@ -1518,7 +1523,7 @@ def filtered_notebook_cards(
         if levels and familiarity_filter_value(level, score) not in levels and level not in levels:
             continue
         if query:
-            search_value = unicodedata.normalize("NFC", card.ko).casefold() if scope == "word" else card_search_text(card)
+            search_value = card_word_search_text(card) if scope == "word" else card_search_text(card)
             if query not in search_value:
                 continue
         result.append((card, score))

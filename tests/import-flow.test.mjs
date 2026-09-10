@@ -857,7 +857,7 @@ test('Korean-to-Chinese questions auto-pronounce when each prompt appears', () =
   }), true);
 });
 
-test('word-only search ignores matches that appear only inside card details', () => {
+test('word-only search includes Korean and Chinese meanings but ignores card details', () => {
   const weather = {
     ko: '날씨',
     zh: '天氣',
@@ -877,6 +877,9 @@ test('word-only search ignores matches that appear only inside card details', ()
 
   assert.equal(helpers.itemMatchesSearch(weather, '장', 'all'), true);
   assert.equal(helpers.itemMatchesSearch(weather, '장', 'word'), false);
+  assert.equal(helpers.itemMatchesSearch(weather, '天氣', 'word'), true);
+  assert.equal(helpers.itemMatchesSearch({ ...weather, zh: '' }, '天氣', 'word'), true);
+  assert.equal(helpers.itemMatchesSearch(weather, '市場', 'word'), false);
   assert.equal(helpers.itemMatchesSearch(market, '장', 'word'), true);
   assert.equal(helpers.itemMatchesSearch(market, '장'.normalize('NFD'), 'word'), true);
 });
