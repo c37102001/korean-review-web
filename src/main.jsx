@@ -47,19 +47,24 @@ import {
   Trophy,
   Volume2,
   VolumeX,
+  Wifi,
+  WifiOff,
   X,
 } from 'lucide-react';
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { arrayRemove, arrayUnion, collection, deleteDoc, deleteField, doc, FieldPath, onSnapshot, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
-import { auth, db, prepareOfflineFirestoreData, waitForFirestoreSync } from './firebase.js';
+import { auth, db, prepareOfflineFirestoreData, setFirestoreNetworkEnabled, waitForFirestoreSync } from './firebase.js';
 import {
   clearOfflinePendingWrites,
   isBrowserOffline,
+  manualOfflineEnabled,
   markOfflineReady,
+  MANUAL_OFFLINE_STORAGE_KEY,
   offlinePendingWrites,
   offlineReadyState,
   OFFLINE_STATUS_EVENT,
   queueOfflineWrite,
+  setManualOfflineEnabled,
 } from './offlineSupport.js';
 import './styles.css';
 
@@ -193,59 +198,88 @@ function useAuthUser() {
 function useOfflineMode(user) {
   const [state, setState] = useState(() => ({
     online: typeof navigator === 'undefined' || navigator.onLine !== false,
+    manual: manualOfflineEnabled(),
     pendingWrites: offlinePendingWrites(),
     ready: offlineReadyState(user?.uid),
     preparing: false,
+    switching: false,
     progress: '',
     error: '',
   }));
 
   useEffect(() => {
-    setState((current) => ({ ...current, ready: offlineReadyState(user?.uid), pendingWrites: offlinePendingWrites() }));
+    setState((current) => ({
+      ...current,
+      manual: manualOfflineEnabled(),
+      ready: offlineReadyState(user?.uid),
+      pendingWrites: offlinePendingWrites(),
+    }));
   }, [user?.uid]);
+
+  const syncPendingWrites = useCallback(async () => {
+    if (!user || navigator.onLine === false || manualOfflineEnabled()) return;
+    const pending = offlinePendingWrites();
+    setState((current) => ({
+      ...current,
+      progress: pending ? `正在同步 ${pending} 筆離線操作...` : current.progress,
+    }));
+    try {
+      await waitForFirestoreSync();
+      clearOfflinePendingWrites();
+      setState((current) => ({
+        ...current,
+        pendingWrites: 0,
+        progress: pending ? '離線操作已同步' : current.progress,
+        error: '',
+      }));
+    } catch (error) {
+      setState((current) => ({ ...current, error: error.message || '離線操作同步失敗' }));
+    }
+  }, [user]);
 
   useEffect(() => {
     const updateConnection = async () => {
       const online = navigator.onLine !== false;
+      const manual = manualOfflineEnabled();
       setState((current) => ({
         ...current,
         online,
-        progress: online && current.pendingWrites ? '正在同步離線操作...' : current.progress,
+        manual,
+        progress: online && !manual && current.pendingWrites ? '正在同步離線操作...' : current.progress,
       }));
-      if (!online || !user) return;
-      try {
-        await waitForFirestoreSync();
-        clearOfflinePendingWrites();
-        setState((current) => ({
-          ...current,
-          pendingWrites: 0,
-          progress: current.pendingWrites ? '離線操作已同步' : current.progress,
-          error: '',
-        }));
-      } catch (error) {
-        setState((current) => ({ ...current, error: error.message || '離線操作同步失敗' }));
-      }
+      if (!online || manual || !user) return;
+      await syncPendingWrites();
     };
     const updateStatus = (event) => setState((current) => ({
       ...current,
+      manual: event.detail?.manualOffline ?? current.manual,
       pendingWrites: event.detail?.pendingWrites ?? offlinePendingWrites(),
       ready: event.detail?.offlineReady || current.ready,
       error: event.detail?.syncError ?? current.error,
     }));
+    const updateStoredMode = async (event) => {
+      if (event.key !== MANUAL_OFFLINE_STORAGE_KEY) return;
+      const manual = manualOfflineEnabled();
+      await setFirestoreNetworkEnabled(!manual);
+      setState((current) => ({ ...current, manual }));
+      if (!manual) await syncPendingWrites();
+    };
     window.addEventListener('online', updateConnection);
     window.addEventListener('offline', updateConnection);
+    window.addEventListener('storage', updateStoredMode);
     window.addEventListener(OFFLINE_STATUS_EVENT, updateStatus);
     updateConnection();
     return () => {
       window.removeEventListener('online', updateConnection);
       window.removeEventListener('offline', updateConnection);
+      window.removeEventListener('storage', updateStoredMode);
       window.removeEventListener(OFFLINE_STATUS_EVENT, updateStatus);
     };
-  }, [user]);
+  }, [syncPendingWrites, user]);
 
   const prepare = useCallback(async () => {
     if (!user) throw new Error('請先登入');
-    if (isBrowserOffline()) throw new Error('目前沒有網路，無法更新離線資料');
+    if (navigator.onLine === false || manualOfflineEnabled()) throw new Error('請先連線並關閉主動離線模式，才能更新離線資料');
     setState((current) => ({ ...current, preparing: true, progress: '正在準備離線程式...', error: '' }));
     try {
       if ('serviceWorker' in navigator) {
@@ -286,7 +320,45 @@ function useOfflineMode(user) {
     }
   }, [user]);
 
-  return { ...state, prepare };
+  const toggleManual = useCallback(async (enabled) => {
+    if (!user) throw new Error('請先登入');
+    const next = enabled === true;
+    setState((current) => ({ ...current, switching: true, error: '', progress: next ? '正在切換為主動離線...' : '正在恢復資料同步...' }));
+    try {
+      if (next) {
+        if (!offlineReadyState(user.uid)) await prepare();
+        await setFirestoreNetworkEnabled(false);
+        setManualOfflineEnabled(true);
+        setState((current) => ({
+          ...current,
+          manual: true,
+          switching: false,
+          progress: '主動離線已開啟，接下來只使用此裝置資料',
+        }));
+        return;
+      }
+      setManualOfflineEnabled(false);
+      await setFirestoreNetworkEnabled(true);
+      setState((current) => ({
+        ...current,
+        manual: false,
+        switching: false,
+        progress: navigator.onLine === false ? '已關閉主動離線，等待網路恢復後同步' : '正在同步本機修改...',
+      }));
+      await syncPendingWrites();
+    } catch (error) {
+      if (next) setManualOfflineEnabled(false);
+      setState((current) => ({
+        ...current,
+        manual: manualOfflineEnabled(),
+        switching: false,
+        error: error.message || '切換離線模式失敗',
+      }));
+      throw error;
+    }
+  }, [prepare, syncPendingWrites, user]);
+
+  return { ...state, active: !state.online || state.manual, prepare, toggleManual };
 }
 
 function normalizeGrammarNote(note, fallbackId = '') {
@@ -3061,14 +3133,15 @@ function App() {
 }
 
 function OfflineStatusBar({ offlineMode }) {
-  const { online, pendingWrites, preparing, progress, error } = offlineMode;
-  if (online && !pendingWrites && !preparing && !error) return null;
-  const label = !online
-    ? `${offlineMode.ready ? '離線模式' : '離線模式 · 此裝置尚未完成離線資料準備'}${pendingWrites ? ` · ${pendingWrites} 筆操作等待同步` : ''}`
+  const { online, manual, pendingWrites, preparing, progress, error } = offlineMode;
+  const offline = !online || manual;
+  if (!offline && !pendingWrites && !preparing && !error) return null;
+  const label = offline
+    ? `${manual ? '主動離線模式' : '離線模式'}${offlineMode.ready ? '' : ' · 此裝置尚未完成離線資料準備'}${pendingWrites ? ` · ${pendingWrites} 筆操作等待同步` : ''}`
     : error || progress || `正在同步 ${pendingWrites} 筆離線操作`;
   return (
-    <div className={`offline-status-bar ${!online ? 'offline' : ''} ${error ? 'error' : ''}`} role="status">
-      {!online ? <CloudOff size={18} /> : <CloudDownload size={18} />}
+    <div className={`offline-status-bar ${offline ? 'offline' : ''} ${error ? 'error' : ''}`} role="status">
+      {offline ? <CloudOff size={18} /> : <CloudDownload size={18} />}
       <span>{label}</span>
     </div>
   );
@@ -3372,9 +3445,21 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
             <button onClick={() => setAddOpen(true)}><Plus size={18} /> 快速新增單字</button>
             <button onClick={() => setPracticeCreatorOpen(true)} disabled={optionalPractice.loading}><Plus size={18} /> 新增練習</button>
             <button onClick={() => setVoiceSettingsOpen(true)}><Volume2 size={18} /> 語音設定</button>
+            <label className={`manual-offline-toggle ${offlineMode.manual ? 'active' : ''}`} title="開啟後只使用本機快取，所有修改會在關閉時同步">
+              <span>{offlineMode.manual ? <WifiOff size={18} /> : <Wifi size={18} />} 主動離線</span>
+              <input
+                type="checkbox"
+                role="switch"
+                checked={offlineMode.manual}
+                disabled={offlineMode.switching || offlineMode.preparing}
+                onChange={(event) => offlineMode.toggleManual(event.target.checked).catch(() => {})}
+                aria-label="主動離線模式"
+              />
+              <i aria-hidden="true" />
+            </label>
             <button
               onClick={() => offlineMode.prepare().catch(() => {})}
-              disabled={offlineMode.preparing || !offlineMode.online}
+              disabled={offlineMode.preparing || offlineMode.switching || !offlineMode.online || offlineMode.manual}
               title={offlineMode.ready?.completedAt ? `上次更新：${new Date(offlineMode.ready.completedAt).toLocaleString('zh-TW')}` : '下載所有文字資料供離線使用'}
             >
               <CloudDownload size={18} /> {offlineMode.preparing ? '準備中...' : offlineMode.ready ? '更新離線資料' : '準備離線使用'}

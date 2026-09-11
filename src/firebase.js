@@ -2,7 +2,9 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import {
   collection,
+  disableNetwork,
   doc,
+  enableNetwork,
   getDocFromServer,
   getDocsFromServer,
   getFirestore,
@@ -11,6 +13,7 @@ import {
   persistentMultipleTabManager,
   waitForPendingWrites,
 } from 'firebase/firestore';
+import { manualOfflineEnabled } from './offlineSupport.js';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCfy63R72H6LDCb-bR7L7RwkKNnGCTHPgU',
@@ -35,6 +38,14 @@ try {
   db = getFirestore(app);
 }
 export { db };
+
+// Apply the saved manual mode before page listeners are attached. Firestore then
+// serves snapshots from IndexedDB and keeps writes pending until network resumes.
+if (manualOfflineEnabled()) disableNetwork(db).catch(() => {});
+
+export function setFirestoreNetworkEnabled(enabled) {
+  return enabled ? enableNetwork(db) : disableNetwork(db);
+}
 
 export async function prepareOfflineFirestoreData(uid, today, onProgress) {
   const targets = [

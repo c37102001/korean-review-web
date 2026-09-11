@@ -1,5 +1,6 @@
 const PENDING_WRITES_KEY = 'korean-review-offline-pending-writes-v1';
 const OFFLINE_READY_KEY = 'korean-review-offline-ready-v1';
+export const MANUAL_OFFLINE_STORAGE_KEY = 'korean-review-manual-offline-v1';
 export const OFFLINE_STATUS_EVENT = 'korean-review-offline-status';
 
 function storage() {
@@ -23,7 +24,18 @@ function emitStatus(detail = {}) {
 }
 
 export function isBrowserOffline() {
-  return typeof navigator !== 'undefined' && navigator.onLine === false;
+  return (typeof navigator !== 'undefined' && navigator.onLine === false) || manualOfflineEnabled();
+}
+
+export function manualOfflineEnabled() {
+  return storage()?.getItem(MANUAL_OFFLINE_STORAGE_KEY) === 'true';
+}
+
+export function setManualOfflineEnabled(enabled) {
+  const active = enabled === true;
+  storage()?.setItem(MANUAL_OFFLINE_STORAGE_KEY, String(active));
+  emitStatus({ manualOffline: active });
+  return active;
 }
 
 export function offlinePendingWrites() {
