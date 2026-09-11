@@ -9,6 +9,7 @@ import {
   offlineReadyState,
   queueOfflineWrite,
   setManualOfflineEnabled,
+  trackOfflineWrite,
 } from '../src/offlineSupport.js';
 
 function installBrowserStorage() {
@@ -39,6 +40,22 @@ test('offline writes return immediately and remain pending until Firestore confi
   const remoteWrite = new Promise((resolve) => { confirmWrite = resolve; });
 
   const result = await queueOfflineWrite(() => remoteWrite, '測驗結果');
+  assert.deepEqual(result, { queuedOffline: true });
+  assert.equal(offlinePendingWrites(), 1);
+
+  confirmWrite();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(offlinePendingWrites(), 0);
+  cleanup();
+});
+
+test('an already-started Firestore write can be released to finish in the background', async () => {
+  const cleanup = installBrowserStorage();
+  clearOfflinePendingWrites();
+  let confirmWrite;
+  const remoteWrite = new Promise((resolve) => { confirmWrite = resolve; });
+
+  const result = await trackOfflineWrite(remoteWrite, '新增單字');
   assert.deepEqual(result, { queuedOffline: true });
   assert.equal(offlinePendingWrites(), 1);
 
