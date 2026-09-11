@@ -1051,3 +1051,86 @@ test('daily grammar review stays completed for the day and skips incomplete exam
   assert.equal(completed.note, null);
   assert.deepEqual(completed.questions, []);
 });
+
+test('reading test JSON imports multiple bilingual questions and preserves their order', () => {
+  const parsed = helpers.parseReadingTestsJson(JSON.stringify({
+    schemaVersion: 1,
+    data: [
+      {
+        passage: { ko: '첫 번째 글입니다.', zh: '這是第一篇文章。' },
+        question: { ko: '맞는 것을 고르십시오.', zh: '請選出正確選項。' },
+        options: [
+          { id: '1', ko: '첫째', zh: '第一' },
+          { id: '2', ko: '둘째', zh: '第二' },
+        ],
+        answer: '2',
+      },
+      {
+        passage: { ko: '두 번째 글입니다.', zh: '這是第二篇文章。' },
+        question: { ko: '다른 것을 고르십시오.', zh: '請選出不同選項。' },
+        options: [
+          { id: 'a', ko: '하나', zh: '一' },
+          { id: 'b', ko: '둘', zh: '二' },
+        ],
+        answer: 'a',
+        learned: true,
+      },
+    ],
+  }));
+
+  assert.equal(parsed.length, 2);
+  assert.deepEqual(parsed.map((test) => test.order), [0, 1]);
+  assert.equal(parsed[0].answer, '2');
+  assert.equal(parsed[1].learned, true);
+  assert.notEqual(parsed[0].id, parsed[1].id);
+});
+
+test('reading test JSON rejects an answer that is not one of the option ids', () => {
+  assert.throws(() => helpers.parseReadingTestsJson(JSON.stringify({
+    data: [{
+      passage: { ko: '글', zh: '文章' },
+      question: { ko: '질문', zh: '問題' },
+      options: [
+        { id: '1', ko: '하나', zh: '一' },
+        { id: '2', ko: '둘', zh: '二' },
+      ],
+      answer: '4',
+    }],
+  })), /answer 必須是其中一個選項 id/);
+});
+
+test('reading test JSON editing keeps a stable id and round-trips bilingual content', () => {
+  const existing = helpers.normalizeReadingTest({
+    id: 'reading-1',
+    passage: { ko: '한국어', zh: '韓文' },
+    question: { ko: '고르세요.', zh: '請選擇。' },
+    options: [
+      { id: '1', ko: '맞다', zh: '正確' },
+      { id: '2', ko: '아니다', zh: '不對' },
+    ],
+    answer: '1',
+    order: 7,
+  }, 'reading-1');
+  const reparsed = helpers.parseReadingTestsJson(helpers.formatReadingTestsJson([existing]), [existing]);
+  assert.equal(reparsed[0].id, 'reading-1');
+  assert.equal(reparsed[0].passage.zh, '韓文');
+  assert.equal(reparsed[0].order, 7);
+});
+
+test('reading tests ignore legacy title fields and never export a title', () => {
+  const [parsed] = helpers.parseReadingTestsJson(JSON.stringify({
+    data: [{
+      title: '不應保留的標題',
+      passage: { ko: '제목이 없는 글', zh: '沒有標題的文章' },
+      question: { ko: '고르세요.', zh: '請選擇。' },
+      options: [
+        { id: '1', ko: '하나', zh: '一' },
+        { id: '2', ko: '둘', zh: '二' },
+      ],
+      answer: '1',
+    }],
+  }));
+
+  assert.equal(Object.hasOwn(parsed, 'title'), false);
+  assert.equal(JSON.parse(helpers.formatReadingTestsJson([parsed])).data[0].title, undefined);
+});

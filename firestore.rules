@@ -14,6 +14,9 @@ service cloud.firestore {
     match /users/{uid}/ytSubtitles/{subtitleId} {
       allow read, write: if isOwner(uid);
     }
+    match /users/{uid}/readingTests/{testId} {
+      allow read, write: if isOwner(uid);
+    }
     match /users/{uid}/folders/{folderId} {
       allow read, write: if isOwner(uid);
     }

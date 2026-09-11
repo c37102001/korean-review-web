@@ -43,6 +43,7 @@ export async function prepareOfflineFirestoreData(uid, today, onProgress) {
     ['資料夾', () => getDocsFromServer(collection(db, 'users', uid, 'folders'))],
     ['筆記', () => getDocsFromServer(collection(db, 'users', uid, 'grammarNotes'))],
     ['YT 字幕文字', () => getDocsFromServer(collection(db, 'users', uid, 'ytSubtitles'))],
+    ['閱讀測驗', () => getDocsFromServer(collection(db, 'users', uid, 'readingTests'))],
     ['測驗設定', () => getDocFromServer(doc(db, 'users', uid, 'settings', 'review'))],
     ['自選練習', () => getDocFromServer(doc(db, 'users', uid, 'settings', 'grammarReview'))],
     ['今日作答紀錄', () => getDocFromServer(doc(db, 'users', uid, 'reviewDays', today))],

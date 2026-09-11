@@ -77,6 +77,10 @@ const SYSTEM_LEARNED_FOLDER_ID = 'system-learned';
 const SYSTEM_LEARNED_FOLDER_NAME = '已學習';
 const SYSTEM_UNFAMILIAR_FOLDER_ID = 'system-unfamiliar';
 const SYSTEM_UNFAMILIAR_FOLDER_NAME = '不熟悉';
+const YT_SOURCE_FOLDER_ID = 'source-yt-subtitles';
+const YT_SOURCE_FOLDER_NAME = 'YT字幕';
+const READING_SOURCE_FOLDER_ID = 'source-reading-tests';
+const READING_SOURCE_FOLDER_NAME = '閱讀測驗';
 const UNTAGGED_FOLDER_LABEL = '無標籤';
 const CONTENT_SCHEMA_VERSION = 2;
 const FIRESTORE_SCHEMA_VERSION = 3;
@@ -105,6 +109,23 @@ function createId() {
   }
   localIdSequence += 1;
   return `${Date.now().toString(36)}-${localIdSequence}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('瀏覽器不支援複製');
 }
 
 function loadYoutubeIframeApi() {
@@ -414,6 +435,87 @@ function normalizeYoutubeSubtitle(note, fallbackId = '') {
   };
 }
 
+function normalizeReadingTest(input, fallbackId = '') {
+  const options = Array.isArray(input?.options)
+    ? input.options.map((option, index) => ({
+      id: String(option?.id || index + 1),
+      ko: String(option?.ko || '').trim(),
+      zh: String(option?.zh || '').trim(),
+    }))
+    : [];
+  return {
+    id: String(input?.id || fallbackId),
+    passage: {
+      ko: String(input?.passage?.ko || '').trim(),
+      zh: String(input?.passage?.zh || '').trim(),
+    },
+    question: {
+      ko: String(input?.question?.ko || '').trim(),
+      zh: String(input?.question?.zh || '').trim(),
+    },
+    options,
+    answer: String(input?.answer || '').trim(),
+    learned: input?.learned === true,
+    order: Number.isSafeInteger(input?.order) ? input.order : 0,
+    createdAt: String(input?.createdAt || ''),
+    updatedAt: String(input?.updatedAt || ''),
+  };
+}
+
+function validateReadingTest(test, index = 0) {
+  const label = `第 ${index + 1} 題`;
+  if (!test.passage.ko || !test.passage.zh) throw new Error(`${label}的 passage 必須包含 ko 與 zh`);
+  if (!test.question.ko || !test.question.zh) throw new Error(`${label}的 question 必須包含 ko 與 zh`);
+  if (test.options.length < 2) throw new Error(`${label}至少需要兩個選項`);
+  const optionIds = test.options.map((option) => option.id);
+  if (new Set(optionIds).size !== optionIds.length) throw new Error(`${label}的選項 id 不可重複`);
+  const incompleteOption = test.options.findIndex((option) => !option.ko || !option.zh);
+  if (incompleteOption >= 0) throw new Error(`${label}的第 ${incompleteOption + 1} 個選項必須包含 id、ko 與 zh`);
+  if (!optionIds.includes(test.answer)) throw new Error(`${label}的 answer 必須是其中一個選項 id`);
+  return test;
+}
+
+function parseReadingTestsJson(text, existingTests = []) {
+  let parsed;
+  try {
+    parsed = JSON.parse(String(text || ''));
+  } catch {
+    throw new Error('閱讀測驗 JSON 格式無法解析');
+  }
+  if (!parsed || !Array.isArray(parsed.data)) throw new Error('閱讀測驗 JSON 必須是包含 data 陣列的物件');
+  if (!parsed.data.length) throw new Error('data 至少需要一題閱讀測驗');
+  const existingById = new Map(existingTests.map((test) => [test.id, test]));
+  const tests = parsed.data.map((entry, index) => {
+    const existing = entry?.id ? existingById.get(String(entry.id)) : null;
+    const id = String(entry?.id || createId());
+    return validateReadingTest(normalizeReadingTest({
+      ...existing,
+      ...entry,
+      id,
+      order: Number.isSafeInteger(entry?.order) ? entry.order : index,
+      createdAt: entry?.createdAt || existing?.createdAt || '',
+    }, id), index);
+  });
+  const ids = tests.map((test) => test.id);
+  if (new Set(ids).size !== ids.length) throw new Error('同一份 JSON 中的閱讀題目 id 不可重複');
+  return tests;
+}
+
+function formatReadingTestsJson(tests = []) {
+  return JSON.stringify({
+    schemaVersion: 1,
+    data: tests.map((test) => ({
+      ...(test.id ? { id: test.id } : {}),
+      passage: test.passage,
+      question: test.question,
+      options: test.options,
+      answer: test.answer,
+      learned: test.learned === true,
+      ...(Number.isSafeInteger(test.order) ? { order: test.order } : {}),
+    })),
+  }, null, 2);
+}
+
 function youtubeVideoId(value) {
   const input = String(value || '').trim();
   if (!input) return '';
@@ -670,7 +772,7 @@ function useYoutubeSubtitles(user, enabled = true) {
     );
   }, [user, enabled]);
 
-  const save = useCallback(async (input, linkedFolderPatch = null) => {
+  const save = useCallback(async (input) => {
     if (!user) throw new Error('尚未登入');
     const id = input.id || createId();
     const now = new Date().toISOString();
@@ -683,20 +785,7 @@ function useYoutubeSubtitles(user, enabled = true) {
     if (!note.title) throw new Error('請輸入字幕筆記標題');
     if (!note.entries.length) throw new Error('請至少加入一個字幕句子');
     if (note.youtubeUrl && !note.videoId) throw new Error('YouTube 連結格式無法辨識，請使用 youtube.com 或 youtu.be 連結');
-    await retryFirestoreWrite(async () => {
-      if (!linkedFolderPatch?.id) {
-        await setDoc(doc(db, 'users', user.uid, 'ytSubtitles', id), note);
-        return;
-      }
-      const batch = writeBatch(db);
-      batch.set(doc(db, 'users', user.uid, 'ytSubtitles', id), note);
-      batch.set(doc(db, 'users', user.uid, 'folders', linkedFolderPatch.id), {
-        name: String(linkedFolderPatch.name || '').trim(),
-        tag: 'YT字幕',
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
-      await batch.commit();
-    });
+    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'ytSubtitles', id), note));
     return note;
   }, [user]);
 
@@ -706,6 +795,58 @@ function useYoutubeSubtitles(user, enabled = true) {
   }, [user]);
 
   return { ...state, save, remove };
+}
+
+function useReadingTests(user, enabled = true) {
+  const [state, setState] = useState({ tests: [], loading: false, error: '' });
+
+  useEffect(() => {
+    if (!user || !enabled) {
+      setState({ tests: [], loading: false, error: '' });
+      return undefined;
+    }
+    setState((current) => ({ ...current, loading: true, error: '' }));
+    return onSnapshot(
+      collection(db, 'users', user.uid, 'readingTests'),
+      { includeMetadataChanges: true },
+      (snapshot) => {
+        const tests = snapshot.docs
+          .map((documentSnap) => normalizeReadingTest(documentSnap.data(), documentSnap.id))
+          .sort((left, right) => (right.createdAt || '').localeCompare(left.createdAt || '') || left.order - right.order || left.id.localeCompare(right.id));
+        setState({ tests, loading: false, error: '' });
+      },
+      (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
+    );
+  }, [user, enabled]);
+
+  const saveMany = useCallback(async (inputs) => {
+    if (!user) throw new Error('尚未登入');
+    if (!inputs.length) throw new Error('沒有可儲存的閱讀題目');
+    if (inputs.length > MAX_ATOMIC_RECORD_WRITES) throw new Error(`一次最多可以匯入 ${MAX_ATOMIC_RECORD_WRITES} 題`);
+    const now = new Date().toISOString();
+    const tests = inputs.map((input, index) => validateReadingTest(normalizeReadingTest({
+      ...input,
+      id: input.id || createId(),
+      order: Number.isSafeInteger(input.order) ? input.order : index,
+      createdAt: input.createdAt || now,
+      updatedAt: now,
+    }, input.id), index));
+    await retryFirestoreWrite(async () => {
+      const batch = writeBatch(db);
+      tests.forEach((test) => batch.set(doc(db, 'users', user.uid, 'readingTests', test.id), test));
+      await batch.commit();
+    });
+    return tests;
+  }, [user]);
+
+  const save = useCallback(async (input) => (await saveMany([input]))[0], [saveMany]);
+
+  const remove = useCallback(async (id) => {
+    if (!user) throw new Error('尚未登入');
+    await retryFirestoreWrite(() => deleteDoc(doc(db, 'users', user.uid, 'readingTests', id)));
+  }, [user]);
+
+  return { ...state, save, saveMany, remove };
 }
 
 function normalizeFolder(folder, fallbackId = '') {
@@ -1966,28 +2107,42 @@ async function writeLearningRecords(uid, records, onProgress, folderIds = [], ad
   });
 }
 
-async function writeYoutubeSubtitleLearningRecords(uid, records, subtitle, folders = [], { markLearned = false } = {}) {
-  const name = String(subtitle?.title || '').trim();
-  if (!name) throw new Error('字幕筆記缺少標題，無法建立對應資料夾');
+async function writeSourceLearningRecords(uid, records, folders, { folderId, folderName, tag }, { markLearned = false } = {}) {
   const learnedFolderId = folders.find(isLearnedFolder)?.id || SYSTEM_LEARNED_FOLDER_ID;
   const targetFolderIds = markLearned ? [learnedFolderId] : [];
-  const matchingFolder = folders.find((folder) => !isSystemFolder(folder) && folder.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+  const matchingFolder = folders.find((folder) => !isSystemFolder(folder) && folder.name.toLocaleLowerCase() === folderName.toLocaleLowerCase());
   if (matchingFolder) {
     return writeLearningRecords(uid, records, undefined, targetFolderIds, [], [], [{
       id: matchingFolder.id,
-      data: { tag: 'YT字幕' },
+      data: { tag },
     }]);
   }
   const now = new Date().toISOString();
   const folder = normalizeFolder({
-    id: `yt-subtitle-${String(subtitle?.id || createId())}`,
-    name,
-    tag: 'YT字幕',
+    id: folderId,
+    name: folderName,
+    tag,
     wordIds: records.map((record) => record.id),
     createdAt: now,
     updatedAt: now,
   });
   return writeLearningRecords(uid, records, undefined, targetFolderIds, [], [folder]);
+}
+
+async function writeYoutubeSubtitleLearningRecords(uid, records, folders = [], options = {}) {
+  return writeSourceLearningRecords(uid, records, folders, {
+    folderId: YT_SOURCE_FOLDER_ID,
+    folderName: YT_SOURCE_FOLDER_NAME,
+    tag: YT_SOURCE_FOLDER_NAME,
+  }, options);
+}
+
+async function writeReadingTestLearningRecords(uid, records, folders = [], options = {}) {
+  return writeSourceLearningRecords(uid, records, folders, {
+    folderId: READING_SOURCE_FOLDER_ID,
+    folderName: READING_SOURCE_FOLDER_NAME,
+    tag: READING_SOURCE_FOLDER_NAME,
+  }, options);
 }
 
 async function writeLearningRecord(uid, record, onProgress, folderIds = []) {
@@ -2724,9 +2879,11 @@ function App() {
     || page === 'notes'
     || (page === 'practice' && practiceSet?.mode === DAILY_GRAMMAR_MODE);
   const ytEnabled = page === 'ytSubtitles' || page === 'ytSubtitle';
-  const foldersEnabled = !['calendar', 'notes', 'ytSubtitles'].includes(page);
+  const readingEnabled = page === 'readingTests' || page === 'readingTest';
+  const foldersEnabled = !['calendar', 'notes', 'ytSubtitles', 'readingTests'].includes(page);
   const grammar = useGrammarNotes(user, grammarEnabled);
   const ytSubtitles = useYoutubeSubtitles(user, ytEnabled);
+  const readingTests = useReadingTests(user, readingEnabled);
   const folders = useWordFolders(user, foldersEnabled);
   const optionalPractice = useOptionalPractice(user);
   const [pageStack, setPageStack] = useState([]);
@@ -2734,10 +2891,10 @@ function App() {
   const [studySet, setStudySet] = useState(null);
   const [selectedFolderId, setSelectedFolderId] = useState(null);
   const [selectedYoutubeSubtitleId, setSelectedYoutubeSubtitleId] = useState(null);
+  const [selectedReadingTestId, setSelectedReadingTestId] = useState(null);
   const selectedYoutubeSubtitle = ytSubtitles.notes.find((note) => note.id === selectedYoutubeSubtitleId);
   const selectedSubtitleHasFolder = page === 'ytSubtitle' && !!selectedYoutubeSubtitle && folders.folders.some((folder) => (
-    folder.tag === 'YT字幕'
-      && folder.name.toLocaleLowerCase() === selectedYoutubeSubtitle.title.toLocaleLowerCase()
+    folder.name.toLocaleLowerCase() === YT_SOURCE_FOLDER_NAME.toLocaleLowerCase()
   ));
   const allRecords = useMemo(() => {
     const byId = new Map();
@@ -2823,21 +2980,11 @@ function App() {
   const updateLearningRecords = async (updatedRecords, onProgress, folderIds = [], additionalFolderWordIds = []) => {
     await writeLearningRecords(user.uid, updatedRecords, onProgress, folderIds, additionalFolderWordIds);
   };
-  const addYoutubeSubtitleRecords = async (subtitle, records, options) => {
-    await writeYoutubeSubtitleLearningRecords(user.uid, records, subtitle, folders.folders, options);
+  const addYoutubeSubtitleRecords = async (_subtitle, records, options) => {
+    await writeYoutubeSubtitleLearningRecords(user.uid, records, folders.folders, options);
   };
-  const saveYoutubeSubtitle = async (input) => {
-    const existingNote = input.id ? ytSubtitles.notes.find((note) => note.id === input.id) : null;
-    const oldName = String(existingNote?.title || '').trim();
-    const newName = String(input.title || '').trim();
-    const nameChanged = !!oldName && oldName.toLocaleLowerCase() !== newName.toLocaleLowerCase();
-    const linkedFolder = nameChanged
-      ? folders.folders.find((folder) => !isSystemFolder(folder) && folder.name.toLocaleLowerCase() === oldName.toLocaleLowerCase())
-      : null;
-    if (!linkedFolder) return ytSubtitles.save(input);
-    const nameConflict = folders.folders.find((folder) => folder.id !== linkedFolder.id && folder.name.toLocaleLowerCase() === newName.toLocaleLowerCase());
-    if (nameConflict) throw new Error(`已有名為「${nameConflict.name}」的資料夾，請先處理同名資料夾後再修改字幕名稱。`);
-    return ytSubtitles.save(input, { id: linkedFolder.id, name: newName });
+  const addReadingTestRecords = async (_test, records, options) => {
+    await writeReadingTestLearningRecords(user.uid, records, folders.folders, options);
   };
   const deleteLearningRecordsFromStore = async (recordIds) => {
     const ids = [...new Set(recordIds.filter(Boolean))];
@@ -2861,10 +3008,14 @@ function App() {
     setSelectedYoutubeSubtitleId(subtitleId);
     navChild('ytSubtitle');
   };
+  const openReadingTest = (testId) => {
+    setSelectedReadingTestId(testId);
+    navChild('readingTest');
+  };
 
   if (authLoading) return <LoadingScreen text="正在確認登入狀態" />;
   if (!user) return <LoginPage />;
-  if (storeLoading || (foldersEnabled && folders.loading) || (grammarEnabled && grammar.loading) || (ytEnabled && ytSubtitles.loading)) {
+  if (storeLoading || (foldersEnabled && folders.loading) || (grammarEnabled && grammar.loading) || (ytEnabled && ytSubtitles.loading) || (readingEnabled && readingTests.loading)) {
     return <LoadingScreen text="載入資料中" />;
   }
 
@@ -2878,8 +3029,10 @@ function App() {
     folders: <FoldersPage folders={folders.folders} items={items} loading={folders.loading} error={folders.error} onSave={folders.save} onDelete={folders.remove} onOpen={openFolder} />,
     folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
     notes: <NotesNotebookPage notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} onPractice={startPractice} />,
-    ytSubtitles: <YoutubeSubtitlesPage notes={ytSubtitles.notes} error={ytSubtitles.error} onSave={saveYoutubeSubtitle} onDelete={ytSubtitles.remove} onOpen={openYoutubeSubtitle} />,
-    ytSubtitle: <YoutubeSubtitleReader note={selectedYoutubeSubtitle} allItems={items} folders={folders.folders} onAddRecords={addYoutubeSubtitleRecords} onBack={goUp} onOpenFolder={openFolder} onSave={saveYoutubeSubtitle} onDelete={ytSubtitles.remove} />,
+    ytSubtitles: <YoutubeSubtitlesPage notes={ytSubtitles.notes} error={ytSubtitles.error} onSave={ytSubtitles.save} onDelete={ytSubtitles.remove} onOpen={openYoutubeSubtitle} />,
+    ytSubtitle: <YoutubeSubtitleReader note={selectedYoutubeSubtitle} allItems={items} folders={folders.folders} onAddRecords={addYoutubeSubtitleRecords} onBack={goUp} onOpenFolder={openFolder} onSave={ytSubtitles.save} onDelete={ytSubtitles.remove} />,
+    readingTests: <ReadingTestsPage tests={readingTests.tests} error={readingTests.error} onSave={readingTests.save} onSaveMany={readingTests.saveMany} onDelete={readingTests.remove} onOpen={openReadingTest} />,
+    readingTest: <ReadingTestPage test={readingTests.tests.find((test) => test.id === selectedReadingTestId)} allItems={items} folders={folders.folders} onAddRecords={addReadingTestRecords} onSave={readingTests.save} onDelete={readingTests.remove} onBack={goUp} />,
   };
 
   return (
@@ -2891,6 +3044,7 @@ function App() {
         <button className={page === 'folders' || page === 'folder' ? 'active' : ''} onClick={() => navTop('folders')}><Folder size={18} /> 資料夾</button>
         <button className={page === 'notes' ? 'active' : ''} onClick={() => navTop('notes')}><NotebookPen size={18} /> 筆記</button>
         <button className={page === 'ytSubtitles' || page === 'ytSubtitle' ? 'active' : ''} onClick={() => navTop('ytSubtitles')}><Captions size={18} /> YT 字幕</button>
+        <button className={page === 'readingTests' || page === 'readingTest' ? 'active' : ''} onClick={() => navTop('readingTests')}><BookOpen size={18} /> 閱讀測驗</button>
         <button className="logout-button" onClick={() => signOut(auth)}><LogOut size={18} /> 登出</button>
       </aside>
       <main>
@@ -2898,6 +3052,7 @@ function App() {
         {storeError && <div className="sync-error">Firebase 同步失敗：{storeError}</div>}
         {folders.error && <div className="sync-error">資料夾同步失敗：{folders.error}</div>}
         {ytSubtitles.error && <div className="sync-error">YT 字幕同步失敗：{ytSubtitles.error}</div>}
+        {readingTests.error && <div className="sync-error">閱讀測驗同步失敗：{readingTests.error}</div>}
         {views[page]}
       </main>
       {page !== 'home' && <button type="button" className={`global-back-button ${page === 'ytSubtitle' ? `with-yt-controls ${selectedYoutubeSubtitle?.videoId ? 'with-yt-video' : ''} ${selectedSubtitleHasFolder ? 'with-yt-folder' : ''}` : ''}`} onClick={goUp} title="回到上一層" aria-label="回到上一層"><ChevronLeft size={24} /></button>}
@@ -6016,7 +6171,7 @@ function ExportJsonModal({ items, title = '匯出 JSON', onClose }) {
   const [copied, setCopied] = useState(false);
   const jsonText = useMemo(() => buildNotebookExport(items), [items]);
   const copyJson = async () => {
-    await navigator.clipboard.writeText(jsonText);
+    await copyText(jsonText);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1600);
   };
@@ -6050,7 +6205,7 @@ function EditJsonModal({ items, allItems, date, onSave, onClose }) {
   const [pendingReview, setPendingReview] = useState(null);
   const [saving, setSaving] = useState(false);
   const copyJson = async () => {
-    await navigator.clipboard.writeText(jsonText);
+    await copyText(jsonText);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1600);
   };
@@ -6515,6 +6670,333 @@ function subtitleTimeLabel(milliseconds) {
   return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}` : `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
+function readingTestTitle(test, index = 0) {
+  return `閱讀題 ${index + 1}`;
+}
+
+function ReadingTestCard({ test, index, onOpen, onEdit, onDelete }) {
+  return (
+    <article className="reading-test-card clickable-card" onClick={() => onOpen(test.id)}>
+      <div className="card-head">
+        <div><span className="eyebrow">Reading · {test.options.length} choices</span><h2>{readingTestTitle(test, index)}</h2></div>
+        <div className="card-actions">
+          <EditIconButton label="編輯閱讀題" onClick={() => onEdit(test)} />
+          <button type="button" className="edit-icon-button delete-icon-button" title="刪除閱讀題" aria-label="刪除閱讀題" onClick={(event) => { event.stopPropagation(); onDelete(test); }}><Trash2 size={15} /></button>
+        </div>
+      </div>
+      <p>{test.passage.ko}</p>
+      <div className="yt-subtitle-note-meta">
+        {test.learned && <span className="yt-subtitle-learned-chip"><Check size={13} /> 已學習</span>}
+        <span>{test.options.length} 個選項</span>
+        <span>{grammarTimestamp(test.updatedAt || test.createdAt)}</span>
+      </div>
+    </article>
+  );
+}
+
+function ReadingTestsPage({ tests, error, onSave, onSaveMany, onDelete, onOpen }) {
+  const [query, setQuery] = useState('');
+  const [editing, setEditing] = useState(null);
+  const [hideLearned, setHideLearned] = useState(true);
+  const [formatCopied, setFormatCopied] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const learnedCount = tests.filter((test) => test.learned).length;
+  const filtered = useMemo(() => {
+    const keyword = query.trim().toLocaleLowerCase('zh-TW');
+    return tests.filter((test) => (!hideLearned || !test.learned) && (!keyword || [
+      test.passage.ko,
+      test.passage.zh,
+      test.question.ko,
+      test.question.zh,
+      ...test.options.flatMap((option) => [option.ko, option.zh]),
+    ].filter(Boolean).join(' ').toLocaleLowerCase('zh-TW').includes(keyword)));
+  }, [hideLearned, query, tests]);
+  const deleteTest = async (test) => {
+    if (!window.confirm('確定要刪除這題閱讀題嗎？')) return;
+    setActionError('');
+    try { await onDelete(test.id); } catch (deleteError) { setActionError(deleteError.message || '刪除閱讀題失敗'); }
+  };
+  const copyJsonFormat = async () => {
+    setActionError('');
+    try {
+      await copyText(READING_TEST_JSON_SAMPLE);
+      setFormatCopied(true);
+      window.setTimeout(() => setFormatCopied(false), 1600);
+    } catch {
+      setActionError('無法複製 JSON 格式，請在匯入視窗中手動選取。');
+    }
+  };
+  return (
+    <section className="page reading-tests-page">
+      <div className="topbar">
+        <div><span className="eyebrow">Reading Practice</span><h1>閱讀測驗</h1></div>
+        <div className="actions notebook-actions">
+          <button type="button" className={`learned-visibility-button ${hideLearned ? 'active' : ''}`} aria-pressed={hideLearned} title={`${hideLearned ? '目前隱藏' : '目前顯示'} ${learnedCount} 個已學習題目`} onClick={() => setHideLearned((current) => !current)}>
+            {hideLearned ? <EyeOff size={18} /> : <Eye size={18} />}{hideLearned ? '隱藏已學習' : '顯示已學習'}
+          </button>
+          <button type="button" onClick={copyJsonFormat}><Copy size={18} /> {formatCopied ? '已複製格式' : '複製 JSON 格式'}</button>
+          <button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 匯入閱讀題</button>
+        </div>
+      </div>
+      <label className="search grammar-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋韓文文章、題目、選項或中文翻譯" /></label>
+      {actionError && <div className="form-error">{actionError}</div>}
+      {error && <div className="sync-error">Firebase 同步失敗：{error}</div>}
+      {filtered.length ? <div className="reading-test-grid">{filtered.map((test, index) => <ReadingTestCard key={test.id} test={test} index={index} onOpen={onOpen} onEdit={setEditing} onDelete={deleteTest} />)}</div>
+        : <div className="panel grammar-empty">{query ? '找不到符合的閱讀題。' : hideLearned && tests.length ? '目前沒有未學習的閱讀題。取消隱藏即可查看全部題目。' : '還沒有閱讀題，請用 JSON 一次匯入一題或多題。'}</div>}
+      {editing && <ReadingTestsEditorModal
+        test={editing.id ? editing : null}
+        existingTests={tests}
+        onSave={async (nextTests) => {
+          if (editing.id) await onSave(nextTests[0]);
+          else await onSaveMany(nextTests);
+          setEditing(null);
+        }}
+        onClose={() => setEditing(null)}
+      />}
+    </section>
+  );
+}
+
+const READING_TEST_JSON_SAMPLE = `{
+  "schemaVersion": 1,
+  "data": [
+    {
+      "passage": {
+        "ko": "최근에는 필요한 물건을 직접 사기보다 빌려 쓰는 사람들이 많아지고 있다.",
+        "zh": "最近，比起直接購買所需物品，租借使用的人愈來愈多。"
+      },
+      "question": {
+        "ko": "이 글의 내용과 같은 것을 고르십시오.",
+        "zh": "請選出與文章內容相符的選項。"
+      },
+      "options": [
+        { "id": "1", "ko": "캠핑 용품은 직접 사는 것이 더 싸다.", "zh": "露營用品直接購買比較便宜。" },
+        { "id": "2", "ko": "물건을 빌려 쓰는 사람은 점점 줄고 있다.", "zh": "租借物品使用的人正在逐漸減少。" },
+        { "id": "3", "ko": "자주 사용하지 않는 물건은 보관하기 편리하다.", "zh": "不常使用的物品很方便保管。" },
+        { "id": "4", "ko": "물건을 빌려 쓰면 비용과 자원을 아낄 수 있다.", "zh": "租借物品可以節省費用與資源。" }
+      ],
+      "answer": "4",
+      "learned": false
+    }
+  ]
+}`;
+
+function ReadingTestsEditorModal({ test, existingTests, onSave, onClose }) {
+  const [source, setSource] = useState(() => test ? formatReadingTestsJson([test]) : READING_TEST_JSON_SAMPLE);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const preview = useMemo(() => {
+    try {
+      const parsed = parseReadingTestsJson(source, existingTests);
+      if (test && parsed.length !== 1) throw new Error('編輯時 JSON 只能包含一題');
+      return { tests: parsed, error: '' };
+    } catch (parseError) {
+      return { tests: [], error: parseError.message || '格式無法解析' };
+    }
+  }, [existingTests, source, test]);
+  const submit = async (event) => {
+    event.preventDefault();
+    if (preview.error) { setError(preview.error); return; }
+    setSaving(true);
+    setError('');
+    try { await onSave(preview.tests); } catch (saveError) { setError(saveError.message || '儲存閱讀題失敗'); } finally { setSaving(false); }
+  };
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={test ? '編輯閱讀題' : '匯入閱讀題'}>
+      <form className="modal-panel reading-test-editor" onSubmit={submit}>
+        <button type="button" className="modal-close" disabled={saving} onClick={onClose} aria-label="關閉"><X size={18} /></button>
+        <div className="grammar-modal-head"><span className="eyebrow">Reading Practice JSON</span><h2>{test ? '編輯閱讀題' : '批次匯入閱讀題'}</h2></div>
+        <label className="grammar-field tagged-note-field">
+          <span>JSON 內容</span>
+          <textarea className="yt-subtitle-source" value={source} onChange={(event) => setSource(event.target.value)} rows={24} spellCheck={false} />
+          <small>`data` 可放多題；`passage` 是文章、`question` 是提問、`options` 是中韓選項，`answer` 必須填正確選項的 id，`learned` 預設 false。</small>
+          <small className={preview.error ? 'subtitle-parse-error' : 'subtitle-parse-success'}>{preview.error || `格式正確，可儲存 ${preview.tests.length} 題`}</small>
+        </label>
+        {error && <div className="json-edit-error">{error}</div>}
+        <div className="actions grammar-editor-actions"><button type="button" disabled={saving} onClick={onClose}>取消</button><button type="submit" className="primary" disabled={saving || !!preview.error}><Check size={17} /> {saving ? '儲存中' : test ? '儲存修改' : `匯入 ${preview.tests.length || ''} 題`}</button></div>
+      </form>
+    </div>
+  );
+}
+
+function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onSave, onDelete, onBack }) {
+  const [selected, setSelected] = useState('');
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [quickAdd, setQuickAdd] = useState(null);
+  const [selectionAction, setSelectionAction] = useState(null);
+  const [definitionBubble, setDefinitionBubble] = useState(null);
+  const selectionUpdateFrameRef = useRef(null);
+  const selectionClearTimerRef = useRef(null);
+  useEffect(() => { setSelected(''); setSubmitted(false); setError(''); }, [test?.id]);
+  const entries = useMemo(() => test ? [
+    { id: `${test.id}-passage`, ko: test.passage.ko, zh: test.passage.zh },
+    { id: `${test.id}-question`, ko: test.question.ko, zh: test.question.zh },
+    ...test.options.map((option) => ({ id: `${test.id}-option-${option.id}`, ko: option.ko, zh: option.zh })),
+  ] : [], [test]);
+  const readingFolder = useMemo(() => folders.find((folder) => (
+    !isSystemFolder(folder) && folder.name.toLocaleLowerCase() === READING_SOURCE_FOLDER_NAME.toLocaleLowerCase()
+  )) || null, [folders]);
+  const readingWords = useMemo(() => {
+    const wordIds = new Set(readingFolder?.wordIds || []);
+    return allItems.filter((item) => wordIds.has(item.id));
+  }, [allItems, readingFolder]);
+  const updateSelectionAction = useCallback(() => {
+    if (selectionUpdateFrameRef.current !== null) window.cancelAnimationFrame(selectionUpdateFrameRef.current);
+    selectionUpdateFrameRef.current = window.requestAnimationFrame(() => {
+      selectionUpdateFrameRef.current = null;
+      const selection = window.getSelection();
+      const clearLater = () => {
+        if (selectionClearTimerRef.current !== null) window.clearTimeout(selectionClearTimerRef.current);
+        selectionClearTimerRef.current = window.setTimeout(() => {
+          selectionClearTimerRef.current = null;
+          setSelectionAction(null);
+        }, 120);
+      };
+      if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) {
+        clearLater();
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      const selectionElement = (node) => (node?.nodeType === 1 ? node : node?.parentElement);
+      const startSource = selectionElement(range.startContainer)?.closest?.('[data-reading-entry-id]');
+      const endSource = selectionElement(range.endContainer)?.closest?.('[data-reading-entry-id]');
+      const entryId = startSource?.dataset.readingEntryId;
+      const selectedKo = selection.toString().replace(/\s+/g, ' ').trim();
+      const entry = entries.find((candidate) => candidate.id === entryId);
+      const entryKo = String(entry?.ko || '').replace(/\s+/g, ' ').trim();
+      const rect = range.getBoundingClientRect();
+      if (!entryId || startSource !== endSource || !selectedKo || !entryKo.includes(selectedKo) || (!rect.width && !rect.height)) {
+        clearLater();
+        return;
+      }
+      if (selectionClearTimerRef.current !== null) {
+        window.clearTimeout(selectionClearTimerRef.current);
+        selectionClearTimerRef.current = null;
+      }
+      setSelectionAction({
+        ko: selectedKo,
+        entry,
+        top: rect.bottom + 8,
+        left: Math.min(Math.max(10, rect.left + (rect.width / 2) - 41), window.innerWidth - 92),
+      });
+    });
+  }, [entries]);
+  useEffect(() => {
+    document.addEventListener('selectionchange', updateSelectionAction);
+    window.addEventListener('scroll', updateSelectionAction, true);
+    window.addEventListener('resize', updateSelectionAction);
+    return () => {
+      document.removeEventListener('selectionchange', updateSelectionAction);
+      window.removeEventListener('scroll', updateSelectionAction, true);
+      window.removeEventListener('resize', updateSelectionAction);
+      if (selectionUpdateFrameRef.current !== null) window.cancelAnimationFrame(selectionUpdateFrameRef.current);
+      if (selectionClearTimerRef.current !== null) window.clearTimeout(selectionClearTimerRef.current);
+    };
+  }, [updateSelectionAction]);
+  useEffect(() => {
+    const dismissDefinition = (event) => {
+      if (!event.target?.closest?.('.subtitle-known-word, .subtitle-word-definition')) setDefinitionBubble(null);
+    };
+    const dismissOnScroll = () => setDefinitionBubble(null);
+    document.addEventListener('pointerdown', dismissDefinition);
+    window.addEventListener('scroll', dismissOnScroll, true);
+    return () => {
+      document.removeEventListener('pointerdown', dismissDefinition);
+      window.removeEventListener('scroll', dismissOnScroll, true);
+    };
+  }, []);
+  if (!test) return <section className="page"><div className="empty">找不到這題閱讀測驗。<button onClick={onBack}>返回上一層</button></div></section>;
+  const selectedCorrectly = selected === test.answer;
+  const toggleLearned = async () => {
+    setError('');
+    try { await onSave({ ...test, learned: !test.learned }); } catch (saveError) { setError(saveError.message || '更新已學習狀態失敗'); }
+  };
+  const deleteTest = async () => {
+    if (!window.confirm('確定要刪除這題閱讀題嗎？')) return;
+    try { await onDelete(test.id); onBack(); } catch (deleteError) { setError(deleteError.message || '刪除閱讀題失敗'); }
+  };
+  const showDefinition = (event, word) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setDefinitionBubble({
+      zh: word.zh,
+      top: Math.max(10, rect.top - 8),
+      left: Math.min(Math.max(10, rect.left + (rect.width / 2)), window.innerWidth - 18),
+    });
+  };
+  const selectableKorean = (entry) => (
+    <span className="reading-korean-source" data-reading-entry-id={entry.id} lang="ko">
+      <SubtitleKoreanText text={entry.ko} words={readingWords} onSelectWord={showDefinition} />
+    </span>
+  );
+  return (
+    <section className="page reading-test-reader">
+      <div className="topbar">
+        <div><span className="eyebrow">Reading Practice</span><h1>閱讀題</h1></div>
+        <div className="actions notebook-actions">
+          <button type="button" className={`learned-visibility-button ${test.learned ? 'active' : ''}`} aria-pressed={test.learned} onClick={toggleLearned}>{test.learned ? <Check size={18} /> : <BookOpen size={18} />}{test.learned ? '已學習' : '標記已學習'}</button>
+          <button type="button" onClick={() => setEditing(true)}><Pencil size={17} /> 編輯</button>
+          <button type="button" className="delete-icon-button" onClick={deleteTest}><Trash2 size={17} /> 刪除</button>
+        </div>
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      {selectionAction && <div className="subtitle-selection-actions" style={{ top: selectionAction.top, left: selectionAction.left }}>
+        <button
+          type="button"
+          className="subtitle-selection-add"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            setQuickAdd(selectionAction);
+            setSelectionAction(null);
+            window.getSelection()?.removeAllRanges();
+          }}
+          title="新增單字"
+          aria-label="將選取的韓文新增為單字"
+        ><Plus size={18} /></button>
+        <a
+          className="subtitle-selection-dictionary"
+          href={naverDictionaryUrl(selectionAction.ko)}
+          target="_blank"
+          rel="noopener noreferrer"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            setSelectionAction(null);
+            window.getSelection()?.removeAllRanges();
+          }}
+          title="使用 Naver 字典查詢"
+          aria-label={`使用 Naver 字典查詢「${selectionAction.ko}」`}
+        ><BookMarked size={18} /></a>
+      </div>}
+      {definitionBubble && <div className="subtitle-word-definition" style={{ top: definitionBubble.top, left: definitionBubble.left }} role="status">{definitionBubble.zh}</div>}
+      <article className="reading-passage">
+        <p>{selectableKorean(entries[0])}</p>
+        {submitted && <p className="reading-translation">{test.passage.zh}</p>}
+      </article>
+      <div className="reading-question"><h2>{selectableKorean(entries[1])}</h2>{submitted && <p>{test.question.zh}</p>}</div>
+      <div className="reading-options" role="radiogroup" aria-label="閱讀題選項">
+        {test.options.map((option, index) => {
+          const correct = submitted && option.id === test.answer;
+          const incorrect = submitted && option.id === selected && !correct;
+          return <label className={`reading-option ${selected === option.id ? 'selected' : ''} ${correct ? 'correct' : ''} ${incorrect ? 'incorrect' : ''}`} key={option.id}>
+            <input type="radio" name="reading-answer" value={option.id} checked={selected === option.id} disabled={submitted} onChange={() => setSelected(option.id)} />
+            <span className="reading-option-number">{['①', '②', '③', '④', '⑤', '⑥'][index] || option.id}</span>
+            <span><strong>{selectableKorean(entries[index + 2])}</strong>{submitted && <small>{option.zh}</small>}</span>
+            {correct && <Check size={20} />}
+            {incorrect && <X size={20} />}
+          </label>;
+        })}
+      </div>
+      {!submitted ? <button type="button" className="primary reading-submit" disabled={!selected} onClick={() => setSubmitted(true)}><Check size={18} /> 確認答案</button>
+        : <div className={`reading-result ${selectedCorrectly ? 'correct' : 'incorrect'}`}><strong>{selectedCorrectly ? '答對了' : '答錯了'}</strong><span>正確答案是選項 {test.answer}</span><button type="button" onClick={() => { setSelected(''); setSubmitted(false); }}>再做一次</button></div>}
+      {editing && <ReadingTestsEditorModal test={test} existingTests={[test]} onSave={async (tests) => { await onSave(tests[0]); setEditing(false); }} onClose={() => setEditing(false)} />}
+      {quickAdd && <SubtitleQuickAddModal selection={quickAdd} entries={entries} allItems={allItems} sourceLabel="閱讀題" onAddRecords={(records, options) => onAddRecords(test, records, options)} onClose={() => setQuickAdd(null)} />}
+    </section>
+  );
+}
+
 function YoutubeSubtitleCard({ note, onOpen, onEdit, onDelete }) {
   return (
     <article className="yt-subtitle-note-card clickable-card" onClick={() => onOpen(note.id)}>
@@ -6836,10 +7318,9 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
       if (selectionClearTimerRef.current !== null) window.clearTimeout(selectionClearTimerRef.current);
     };
   }, [updateSelectionAction]);
-  const subtitleFolder = useMemo(() => {
-    const title = String(note?.title || '').trim().toLocaleLowerCase();
-    return folders.find((folder) => folder.tag === 'YT字幕' && folder.name.toLocaleLowerCase() === title) || null;
-  }, [folders, note?.title]);
+  const subtitleFolder = useMemo(() => folders.find((folder) => (
+    !isSystemFolder(folder) && folder.name.toLocaleLowerCase() === YT_SOURCE_FOLDER_NAME.toLocaleLowerCase()
+  )) || null, [folders]);
   const subtitleWords = useMemo(() => {
     const wordIds = new Set(subtitleFolder?.wordIds || []);
     return allItems.filter((item) => wordIds.has(item.id));
@@ -7081,7 +7562,7 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
   );
 }
 
-function SubtitleQuickAddModal({ selection, entries = [], allItems, onAddRecords, onClose }) {
+function SubtitleQuickAddModal({ selection, entries = [], allItems, sourceLabel = '字幕', onAddRecords, onClose }) {
   const [ko, setKo] = useState(selection.ko);
   const [zh, setZh] = useState(selection.zh || '');
   const [examples, setExamples] = useState(() => formatPairLines([selection.entry]));
@@ -7160,10 +7641,10 @@ function SubtitleQuickAddModal({ selection, entries = [], allItems, onAddRecords
     }
   };
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="從字幕新增單字">
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`從${sourceLabel}新增單字`}>
       <form className="modal-panel subtitle-quick-add-modal" onSubmit={submit}>
         <button type="button" className="modal-close" onClick={onClose} disabled={saving} aria-label="關閉"><X size={18} /></button>
-        <div className="panel-title"><div><span className="eyebrow">Subtitle word</span><h2>新增單字</h2><span>例句已自動帶入目前字幕。</span></div></div>
+        <div className="panel-title"><div><span className="eyebrow">Selected word</span><h2>新增單字</h2><span>例句已自動帶入目前{sourceLabel}。</span></div></div>
         <div className="form-grid subtitle-quick-add-fields">
           <label>韓文<input value={ko} onChange={(event) => setKo(event.target.value)} required autoFocus /></label>
           <label>中文<input value={zh} onChange={(event) => setZh(event.target.value)} required placeholder="請填寫中文意思" /></label>
@@ -8040,10 +8521,13 @@ export {
   normalizeKoreanKey,
   normalizeRecords,
   parseGrammarExamplesText,
+  parseReadingTestsJson,
   parseTaggedNoteText,
   parseYoutubeSubtitleJson,
   parseYoutubeSubtitleSrt,
   parsePairLines,
+  formatReadingTestsJson,
+  normalizeReadingTest,
   nextRecognitionRevealState,
   recordOrder,
   recordAnswer,
