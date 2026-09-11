@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
-import { doc, onSnapshot, runTransaction } from 'firebase/firestore';
+import { useEffect, useRef, useState } from 'react';
+import { doc, onSnapshot, runTransaction, setDoc } from 'firebase/firestore';
 import { db } from './firebase.js';
+import { isBrowserOffline, queueOfflineWrite } from './offlineSupport.js';
 
 export function drawPracticeIds(poolIds, seenIds = [], reservedIds = [], count = 10, random = Math.random) {
   if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error('題數須為 1 至 500 的整數');
@@ -64,17 +65,22 @@ export function removePracticeTask(current, taskId) {
   };
 }
 
-// A transaction updates only this field, preserving the existing grammar cursor.
+// Online updates use a transaction; offline updates queue the same field in Firestore's local cache.
 export function useOptionalPractice(user) {
   const [state, setState] = useState({ tasks: [], pools: {} });
+  const stateRef = useRef(state);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   useEffect(() => {
-    setState({ tasks: [], pools: {} });
+    const empty = { tasks: [], pools: {} };
+    stateRef.current = empty;
+    setState(empty);
     if (!user) { setLoading(false); return undefined; }
     setLoading(true);
     return onSnapshot(doc(db, 'users', user.uid, 'settings', 'grammarReview'), (snapshot) => {
-      setState(snapshot.data()?.optionalPractice || { tasks: [], pools: {} });
+      const next = snapshot.data()?.optionalPractice || { tasks: [], pools: {} };
+      stateRef.current = next;
+      setState(next);
       setLoading(false);
       setError('');
     }, (failure) => { setError(failure.message); setLoading(false); });
@@ -82,6 +88,18 @@ export function useOptionalPractice(user) {
   const update = async (change) => {
     if (!user) throw new Error('請先登入');
     const ref = doc(db, 'users', user.uid, 'settings', 'grammarReview');
+    if (isBrowserOffline()) {
+      const current = stateRef.current;
+      const next = change(current);
+      if (next === current) return;
+      stateRef.current = next;
+      setState(next);
+      await queueOfflineWrite(
+        () => setDoc(ref, { optionalPractice: next }, { merge: true }),
+        '自選練習',
+      );
+      return;
+    }
     await runTransaction(db, async (transaction) => {
       const snapshot = await transaction.get(ref);
       const current = snapshot.data()?.optionalPractice || { tasks: [], pools: {} };

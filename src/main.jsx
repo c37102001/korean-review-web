@@ -15,6 +15,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CloudDownload,
+  CloudOff,
   Copy,
   Download,
   Dumbbell,
@@ -49,7 +51,16 @@ import {
 } from 'lucide-react';
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { arrayRemove, arrayUnion, collection, deleteDoc, deleteField, doc, FieldPath, onSnapshot, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
-import { auth, db } from './firebase.js';
+import { auth, db, prepareOfflineFirestoreData, waitForFirestoreSync } from './firebase.js';
+import {
+  clearOfflinePendingWrites,
+  isBrowserOffline,
+  markOfflineReady,
+  offlinePendingWrites,
+  offlineReadyState,
+  OFFLINE_STATUS_EVENT,
+  queueOfflineWrite,
+} from './offlineSupport.js';
 import './styles.css';
 
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
@@ -156,6 +167,105 @@ function useAuthUser() {
   const [authState, setAuthState] = useState({ loading: true, user: null });
   useEffect(() => onAuthStateChanged(auth, (user) => setAuthState({ loading: false, user })), []);
   return authState;
+}
+
+function useOfflineMode(user) {
+  const [state, setState] = useState(() => ({
+    online: typeof navigator === 'undefined' || navigator.onLine !== false,
+    pendingWrites: offlinePendingWrites(),
+    ready: offlineReadyState(user?.uid),
+    preparing: false,
+    progress: '',
+    error: '',
+  }));
+
+  useEffect(() => {
+    setState((current) => ({ ...current, ready: offlineReadyState(user?.uid), pendingWrites: offlinePendingWrites() }));
+  }, [user?.uid]);
+
+  useEffect(() => {
+    const updateConnection = async () => {
+      const online = navigator.onLine !== false;
+      setState((current) => ({
+        ...current,
+        online,
+        progress: online && current.pendingWrites ? '正在同步離線操作...' : current.progress,
+      }));
+      if (!online || !user) return;
+      try {
+        await waitForFirestoreSync();
+        clearOfflinePendingWrites();
+        setState((current) => ({
+          ...current,
+          pendingWrites: 0,
+          progress: current.pendingWrites ? '離線操作已同步' : current.progress,
+          error: '',
+        }));
+      } catch (error) {
+        setState((current) => ({ ...current, error: error.message || '離線操作同步失敗' }));
+      }
+    };
+    const updateStatus = (event) => setState((current) => ({
+      ...current,
+      pendingWrites: event.detail?.pendingWrites ?? offlinePendingWrites(),
+      ready: event.detail?.offlineReady || current.ready,
+      error: event.detail?.syncError ?? current.error,
+    }));
+    window.addEventListener('online', updateConnection);
+    window.addEventListener('offline', updateConnection);
+    window.addEventListener(OFFLINE_STATUS_EVENT, updateStatus);
+    updateConnection();
+    return () => {
+      window.removeEventListener('online', updateConnection);
+      window.removeEventListener('offline', updateConnection);
+      window.removeEventListener(OFFLINE_STATUS_EVENT, updateStatus);
+    };
+  }, [user]);
+
+  const prepare = useCallback(async () => {
+    if (!user) throw new Error('請先登入');
+    if (isBrowserOffline()) throw new Error('目前沒有網路，無法更新離線資料');
+    setState((current) => ({ ...current, preparing: true, progress: '正在準備離線程式...', error: '' }));
+    try {
+      if ('serviceWorker' in navigator) {
+        let registration = await navigator.serviceWorker.getRegistration(import.meta.env.BASE_URL);
+        if (!registration && import.meta.env.PROD) {
+          registration = await navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, {
+            scope: import.meta.env.BASE_URL,
+          });
+        }
+        if (registration) await navigator.serviceWorker.ready;
+      } else if (import.meta.env.PROD) {
+        throw new Error('此瀏覽器不支援離線網頁');
+      }
+      const result = await prepareOfflineFirestoreData(user.uid, todayString(), ({ current, total, label }) => {
+        setState((value) => ({ ...value, progress: `下載文字資料 ${current}/${total}：${label}` }));
+      });
+      try {
+        await navigator.storage?.persist?.();
+      } catch {
+        // Persistent storage permission is optional; IndexedDB remains available without it.
+      }
+      const ready = markOfflineReady(user.uid, result);
+      setState((current) => ({
+        ...current,
+        ready,
+        preparing: false,
+        progress: `離線資料已就緒，共 ${result.documentCount} 筆文件`,
+      }));
+      return result;
+    } catch (error) {
+      setState((current) => ({
+        ...current,
+        preparing: false,
+        error: error.message || '準備離線資料失敗',
+        progress: '',
+      }));
+      throw error;
+    }
+  }, [user]);
+
+  return { ...state, prepare };
 }
 
 function normalizeGrammarNote(note, fallbackId = '') {
@@ -472,7 +582,6 @@ function useGrammarNotes(user, enabled = true) {
       collection(db, 'users', user.uid, 'grammarNotes'),
       { includeMetadataChanges: true },
       (snapshot) => {
-        if (snapshot.metadata.hasPendingWrites) return;
         const notes = snapshot.docs
           .map((documentSnap) => normalizeGrammarNote(documentSnap.data(), documentSnap.id))
           .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '') || a.title.localeCompare(b.title));
@@ -489,7 +598,6 @@ function useGrammarNotes(user, enabled = true) {
       doc(db, 'users', user.uid, 'settings', 'grammarReview'),
       { includeMetadataChanges: true },
       (snapshot) => {
-        if (snapshot.metadata.hasPendingWrites) return;
         setState((current) => ({
           ...current,
           review: snapshot.exists() ? snapshot.data() : null,
@@ -552,7 +660,6 @@ function useYoutubeSubtitles(user, enabled = true) {
       collection(db, 'users', user.uid, 'ytSubtitles'),
       { includeMetadataChanges: true },
       (snapshot) => {
-        if (snapshot.metadata.hasPendingWrites) return;
         const notes = snapshot.docs
           .map((documentSnap) => normalizeYoutubeSubtitle(documentSnap.data(), documentSnap.id))
           .filter((note) => note.title)
@@ -721,7 +828,6 @@ function useWordFolders(user, enabled = true) {
       collection(db, 'users', user.uid, 'folders'),
       { includeMetadataChanges: true },
       (snapshot) => {
-        if (snapshot.metadata.hasPendingWrites) return;
         let folders = snapshot.docs
           .map((documentSnap) => normalizeFolder(documentSnap.data(), documentSnap.id))
           .filter((folder) => folder.name)
@@ -881,6 +987,7 @@ function isTransientFirestoreError(error) {
 }
 
 async function retryFirestoreWrite(operation, maxAttempts = 4) {
+  if (isBrowserOffline()) return queueOfflineWrite(operation, 'Firebase 資料');
   if (Date.now() < firestoreWritesBlockedUntil && firestoreQuotaError) throw firestoreQuotaError;
   let lastError;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -1050,7 +1157,6 @@ function useFirestoreStore(user) {
         };
         const listen = (key, reference, parseSnapshot, applyRemote) => {
           unsubscribers.push(onSnapshot(reference, { includeMetadataChanges: true }, (snap) => {
-            if (snap.metadata.hasPendingWrites) return;
             const value = parseSnapshot(snap);
             if (!initialized) {
               applySnapshot(key, value);
@@ -1769,6 +1875,7 @@ function resolveImportConflictDraft(draft, choice, allItems = []) {
 }
 
 async function writeLearningRecords(uid, records, onProgress, folderIds = [], additionalFolderWordIds = [], foldersToCreate = [], folderPatches = []) {
+  const queuedOffline = isBrowserOffline();
   const uniqueFolderIds = [...new Set(folderIds)].filter(Boolean);
   const extraWordIds = [...new Set(additionalFolderWordIds)].filter(Boolean);
   const newFolders = foldersToCreate.filter((folder) => folder?.id && folder?.name);
@@ -1776,9 +1883,6 @@ async function writeLearningRecords(uid, records, onProgress, folderIds = [], ad
     .filter((patch) => patch?.id)
     .map((patch) => ({ id: String(patch.id), data: patch.data || {} }));
   if (!records.length && (!uniqueFolderIds.length || !extraWordIds.length) && !newFolders.length && !normalizedFolderPatches.length) return;
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-    throw new Error('目前網路離線，尚未送出任何資料');
-  }
   if (records.length > MAX_ATOMIC_RECORD_WRITES) {
     throw new Error(`一次最多可以寫入 ${MAX_ATOMIC_RECORD_WRITES} 筆單字，請縮小匯入範圍`);
   }
@@ -1856,7 +1960,9 @@ async function writeLearningRecords(uid, records, onProgress, folderIds = [], ad
     phase: 'success',
     current: records.length,
     total: records.length,
-    detail: `Firebase 已確認完成 ${records.length} 筆寫入`,
+    detail: queuedOffline
+      ? `已將 ${records.length} 筆變更儲存在此裝置，恢復連線後會自動同步`
+      : `Firebase 已確認完成 ${records.length} 筆寫入`,
   });
 }
 
@@ -2611,6 +2717,7 @@ function shuffleReviewQuestionsByKind(questions, seed = Date.now()) {
 function App() {
   const { loading: authLoading, user } = useAuthUser();
   const [store, updateStore, storeLoading, storeError, markDateComplete] = useFirestoreStore(user);
+  const offlineMode = useOfflineMode(user);
   const [page, setPage] = useState('home');
   const [practiceSet, setPracticeSet] = useState(null);
   const grammarEnabled = page === 'home'
@@ -2762,7 +2869,7 @@ function App() {
   }
 
   const views = {
-    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} optionalPractice={optionalPractice} grammarNotes={grammar.notes} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} />,
+    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} optionalPractice={optionalPractice} grammarNotes={grammar.notes} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} offlineMode={offlineMode} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('dateNotes')} />,
     dateNotes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
@@ -2787,12 +2894,27 @@ function App() {
         <button className="logout-button" onClick={() => signOut(auth)}><LogOut size={18} /> 登出</button>
       </aside>
       <main>
+        <OfflineStatusBar offlineMode={offlineMode} />
         {storeError && <div className="sync-error">Firebase 同步失敗：{storeError}</div>}
         {folders.error && <div className="sync-error">資料夾同步失敗：{folders.error}</div>}
         {ytSubtitles.error && <div className="sync-error">YT 字幕同步失敗：{ytSubtitles.error}</div>}
         {views[page]}
       </main>
       {page !== 'home' && <button type="button" className={`global-back-button ${page === 'ytSubtitle' ? `with-yt-controls ${selectedYoutubeSubtitle?.videoId ? 'with-yt-video' : ''} ${selectedSubtitleHasFolder ? 'with-yt-folder' : ''}` : ''}`} onClick={goUp} title="回到上一層" aria-label="回到上一層"><ChevronLeft size={24} /></button>}
+    </div>
+  );
+}
+
+function OfflineStatusBar({ offlineMode }) {
+  const { online, pendingWrites, preparing, progress, error } = offlineMode;
+  if (online && !pendingWrites && !preparing && !error) return null;
+  const label = !online
+    ? `${offlineMode.ready ? '離線模式' : '離線模式 · 此裝置尚未完成離線資料準備'}${pendingWrites ? ` · ${pendingWrites} 筆操作等待同步` : ''}`
+    : error || progress || `正在同步 ${pendingWrites} 筆離線操作`;
+  return (
+    <div className={`offline-status-bar ${!online ? 'offline' : ''} ${error ? 'error' : ''}`} role="status">
+      {!online ? <CloudOff size={18} /> : <CloudDownload size={18} />}
+      <span>{label}</span>
     </div>
   );
 }
@@ -3055,7 +3177,7 @@ export function OptionalPracticeModal({ store, questions, grammarQuestions, fold
   </div>;
 }
 
-function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestionsForToday, optionalPractice, grammarNotes, onPractice, onAddRecords, onUpdateRecord, onWriteRecords, folders = [] }) {
+function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestionsForToday, optionalPractice, grammarNotes, onPractice, onAddRecords, onUpdateRecord, onWriteRecords, folders = [], offlineMode }) {
   const [addOpen, setAddOpen] = useState(false);
   const [practiceCreatorOpen, setPracticeCreatorOpen] = useState(false);
   const [practiceError, setPracticeError] = useState('');
@@ -3095,6 +3217,13 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
             <button onClick={() => setAddOpen(true)}><Plus size={18} /> 快速新增單字</button>
             <button onClick={() => setPracticeCreatorOpen(true)} disabled={optionalPractice.loading}><Plus size={18} /> 新增練習</button>
             <button onClick={() => setVoiceSettingsOpen(true)}><Volume2 size={18} /> 語音設定</button>
+            <button
+              onClick={() => offlineMode.prepare().catch(() => {})}
+              disabled={offlineMode.preparing || !offlineMode.online}
+              title={offlineMode.ready?.completedAt ? `上次更新：${new Date(offlineMode.ready.completedAt).toLocaleString('zh-TW')}` : '下載所有文字資料供離線使用'}
+            >
+              <CloudDownload size={18} /> {offlineMode.preparing ? '準備中...' : offlineMode.ready ? '更新離線資料' : '準備離線使用'}
+            </button>
           </div>
         </div>
         <div className="hero-meter">

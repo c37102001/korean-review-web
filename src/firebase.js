@@ -1,6 +1,16 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDocFromServer,
+  getDocsFromServer,
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  waitForPendingWrites,
+} from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCfy63R72H6LDCb-bR7L7RwkKNnGCTHPgU',
@@ -25,3 +35,28 @@ try {
   db = getFirestore(app);
 }
 export { db };
+
+export async function prepareOfflineFirestoreData(uid, today, onProgress) {
+  const targets = [
+    ['單字', () => getDocsFromServer(collection(db, 'users', uid, 'records'))],
+    ['熟悉度與複習排程', () => getDocsFromServer(collection(db, 'users', uid, 'progressShards'))],
+    ['資料夾', () => getDocsFromServer(collection(db, 'users', uid, 'folders'))],
+    ['筆記', () => getDocsFromServer(collection(db, 'users', uid, 'grammarNotes'))],
+    ['YT 字幕文字', () => getDocsFromServer(collection(db, 'users', uid, 'ytSubtitles'))],
+    ['測驗設定', () => getDocFromServer(doc(db, 'users', uid, 'settings', 'review'))],
+    ['自選練習', () => getDocFromServer(doc(db, 'users', uid, 'settings', 'grammarReview'))],
+    ['今日作答紀錄', () => getDocFromServer(doc(db, 'users', uid, 'reviewDays', today))],
+  ];
+  let documentCount = 0;
+  for (let index = 0; index < targets.length; index += 1) {
+    const [label, load] = targets[index];
+    onProgress?.({ current: index + 1, total: targets.length, label });
+    const snapshot = await load();
+    documentCount += 'size' in snapshot ? snapshot.size : Number(snapshot.exists());
+  }
+  return { documentCount, sectionCount: targets.length };
+}
+
+export function waitForFirestoreSync() {
+  return waitForPendingWrites(db);
+}

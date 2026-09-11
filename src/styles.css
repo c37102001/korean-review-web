@@ -4943,6 +4943,33 @@ textarea:focus {
   margin: 18px auto 0;
 }
 
+.offline-status-bar {
+  width: min(1112px, calc(100% - 36px));
+  min-height: 42px;
+  margin: 18px auto 0;
+  padding: 9px 14px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #b7e6db;
+  border-radius: 8px;
+  color: #176c61;
+  background: #eaf8f4;
+  font-weight: 800;
+}
+
+.offline-status-bar.offline {
+  border-color: #f4c67c;
+  color: #8a4d10;
+  background: #fff4df;
+}
+
+.offline-status-bar.error {
+  border-color: #f0aab2;
+  color: #9f2936;
+  background: #ffe1e5;
+}
+
 @media (max-width: 920px) {
   html.yt-reader-scroll-snap,
   body.yt-reader-scroll-snap {
@@ -4953,6 +4980,11 @@ textarea:focus {
 
   .app {
     display: block;
+  }
+
+  .offline-status-bar {
+    width: calc(100% - 24px);
+    margin-top: 12px;
   }
 
   .sidebar {

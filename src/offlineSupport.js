@@ -1,0 +1,70 @@
+const PENDING_WRITES_KEY = 'korean-review-offline-pending-writes-v1';
+const OFFLINE_READY_KEY = 'korean-review-offline-ready-v1';
+export const OFFLINE_STATUS_EVENT = 'korean-review-offline-status';
+
+function storage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readJson(key, fallback) {
+  try {
+    return JSON.parse(storage()?.getItem(key) || '') || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function emitStatus(detail = {}) {
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(OFFLINE_STATUS_EVENT, { detail }));
+}
+
+export function isBrowserOffline() {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
+}
+
+export function offlinePendingWrites() {
+  return Math.max(0, Number(readJson(PENDING_WRITES_KEY, { count: 0 }).count) || 0);
+}
+
+function setPendingWrites(count, detail = {}) {
+  const next = Math.max(0, Number(count) || 0);
+  storage()?.setItem(PENDING_WRITES_KEY, JSON.stringify({ count: next, updatedAt: new Date().toISOString() }));
+  emitStatus({ pendingWrites: next, ...detail });
+}
+
+export function clearOfflinePendingWrites() {
+  setPendingWrites(0, { syncError: '' });
+}
+
+export function queueOfflineWrite(operation, label = '離線操作') {
+  let pending;
+  try {
+    pending = operation();
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  setPendingWrites(offlinePendingWrites() + 1, { queuedLabel: label });
+  Promise.resolve(pending).then(
+    () => setPendingWrites(offlinePendingWrites() - 1, { syncedLabel: label, syncError: '' }),
+    (error) => setPendingWrites(offlinePendingWrites() - 1, {
+      syncError: `${label}同步失敗：${error?.message || '未知錯誤'}`,
+    }),
+  );
+  return Promise.resolve({ queuedOffline: true });
+}
+
+export function offlineReadyState(uid = '') {
+  const value = readJson(OFFLINE_READY_KEY, null);
+  return value?.uid === uid ? value : null;
+}
+
+export function markOfflineReady(uid, details = {}) {
+  const value = { uid, completedAt: new Date().toISOString(), ...details };
+  storage()?.setItem(OFFLINE_READY_KEY, JSON.stringify(value));
+  emitStatus({ offlineReady: value });
+  return value;
+}
