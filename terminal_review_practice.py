@@ -24,6 +24,7 @@ import json
 import os
 import random
 import re
+import signal
 import shutil
 import subprocess
 import textwrap
@@ -1663,6 +1664,182 @@ def speak_korean(text: str) -> bool:
     return False
 
 
+def youtube_audio_cache_path(subtitle: YoutubeSubtitle) -> Path:
+    url_hash = hashlib.sha256(subtitle.youtube_url.encode("utf-8")).hexdigest()[:16]
+    safe_id = re.sub(r"[^A-Za-z0-9._-]+", "-", subtitle.id).strip("-.") or "subtitle"
+    return CACHE_DIR / "youtube-audio" / f"{safe_id}-{url_hash}.mp3"
+
+
+def youtube_audio_download_profiles() -> List[List[str]]:
+    return [
+        [],
+        ["--format", "bestaudio[ext=m4a]/bestaudio/best"],
+        [
+            "--format", "bestaudio[ext=m4a]/bestaudio/best",
+            "--extractor-args", "youtube:player_client=android_vr",
+        ],
+    ]
+
+
+def download_youtube_audio(subtitle: YoutubeSubtitle) -> Tuple[Optional[Path], str]:
+    if not subtitle.youtube_url:
+        return None, "這篇字幕沒有 YouTube 連結。"
+    audio_path = youtube_audio_cache_path(subtitle)
+    if audio_path.exists() and audio_path.stat().st_size > 0:
+        return audio_path, "已載入快取的 YouTube 原音。"
+    yt_dlp = shutil.which("yt-dlp")
+    if not yt_dlp:
+        return None, "缺少 yt-dlp，請執行 python3 -m pip install -r requirements-terminal.txt。"
+    if not shutil.which("ffmpeg"):
+        return None, "缺少 ffmpeg，無法將 YouTube 音訊轉成 MP3。"
+
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_dir = audio_path.parent / f".{audio_path.stem}-{uuid.uuid4().hex}"
+    temporary_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        errors: List[str] = []
+        for attempt_index, profile in enumerate(youtube_audio_download_profiles(), start=1):
+            attempt_dir = temporary_dir / f"attempt-{attempt_index}"
+            attempt_dir.mkdir(parents=True, exist_ok=True)
+            result = subprocess.run(
+                [
+                    yt_dlp,
+                    "--no-playlist",
+                    "--no-progress",
+                    "--retries", "3",
+                    "--fragment-retries", "3",
+                    "--extract-audio",
+                    "--audio-format", "mp3",
+                    "--audio-quality", "5",
+                    "--output", str(attempt_dir / "audio.%(ext)s"),
+                    *profile,
+                    subtitle.youtube_url,
+                ],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=300,
+            )
+            generated = attempt_dir / "audio.mp3"
+            if result.returncode == 0 and generated.exists() and generated.stat().st_size > 0:
+                os.replace(generated, audio_path)
+                strategy = "" if attempt_index == 1 else f"（使用備援策略 {attempt_index}）"
+                return audio_path, f"YouTube 原音已下載並快取{strategy}。"
+            error_lines = [line.strip() for line in (result.stderr or "").splitlines() if line.strip()]
+            errors.append(error_lines[-1] if error_lines else f"策略 {attempt_index} 未產生音訊檔案")
+        detail = errors[-1] if errors else "yt-dlp 未產生音訊檔案"
+        return None, f"YouTube 音訊下載失敗：{detail}。請先更新 yt-dlp。"
+    except subprocess.TimeoutExpired:
+        return None, "YouTube 音訊下載逾時，請稍後再試。"
+    except OSError as exc:
+        return None, f"YouTube 音訊下載失敗：{exc}"
+    finally:
+        shutil.rmtree(temporary_dir, ignore_errors=True)
+
+
+class TerminalYoutubeAudioPlayer:
+    def __init__(self, audio_path: Path) -> None:
+        self.audio_path = audio_path
+        self.process: Optional[subprocess.Popen[Any]] = None
+        self.base_position = 0.0
+        self.started_at: Optional[float] = None
+        self.paused = True
+
+    @staticmethod
+    def available() -> bool:
+        return bool(shutil.which("ffplay") or shutil.which("cvlc"))
+
+    def _command(self, position: float) -> Optional[List[str]]:
+        if shutil.which("ffplay"):
+            return [
+                "ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet",
+                "-ss", f"{position:.3f}", str(self.audio_path),
+            ]
+        if shutil.which("cvlc"):
+            return [
+                "cvlc", "--intf", "dummy", "--no-video", "--play-and-exit", "--quiet",
+                f"--start-time={position:.3f}", str(self.audio_path),
+            ]
+        return None
+
+    def position(self) -> float:
+        if self.started_at is None or self.paused:
+            return self.base_position
+        current = self.base_position + max(0.0, time.monotonic() - self.started_at)
+        if self.process and self.process.poll() is not None:
+            self.base_position = current
+            self.started_at = None
+            self.process = None
+            self.paused = True
+        return current
+
+    def play_from(self, position: float) -> bool:
+        self.stop()
+        self.base_position = max(0.0, float(position))
+        command = self._command(self.base_position)
+        if not command:
+            return False
+        try:
+            self.process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            self.process = None
+            return False
+        self.started_at = time.monotonic()
+        self.paused = False
+        return True
+
+    def pause(self) -> bool:
+        if not self.process or self.process.poll() is not None or self.paused:
+            return False
+        self.base_position = self.position()
+        try:
+            self.process.send_signal(signal.SIGSTOP)
+        except OSError:
+            return False
+        self.started_at = None
+        self.paused = True
+        return True
+
+    def resume(self) -> bool:
+        if self.process and self.process.poll() is None and self.paused:
+            try:
+                self.process.send_signal(signal.SIGCONT)
+            except OSError:
+                return False
+            self.started_at = time.monotonic()
+            self.paused = False
+            return True
+        return self.play_from(self.base_position)
+
+    def toggle(self) -> bool:
+        return self.resume() if self.paused else self.pause()
+
+    def stop(self) -> None:
+        process = self.process
+        if not process:
+            return
+        if process.poll() is None:
+            try:
+                if self.paused:
+                    process.send_signal(signal.SIGCONT)
+                process.terminate()
+                process.wait(timeout=1)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+        self.process = None
+        self.started_at = None
+        self.paused = True
+
+
 def next_recognition_reveal_state(
     listening_mode: bool,
     word_visible: bool,
@@ -2437,6 +2614,22 @@ def subtitle_time_label(milliseconds: Any) -> str:
     return f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
 
 
+def subtitle_entry_index_at_time(entries: List[Dict[str, Any]], milliseconds: float) -> Optional[int]:
+    timed_entries = [
+        (index, float(entry["startMs"]))
+        for index, entry in enumerate(entries)
+        if isinstance(entry.get("startMs"), (int, float))
+    ]
+    if not timed_entries:
+        return None
+    active_index = timed_entries[0][0]
+    for index, start_ms in timed_entries:
+        if start_ms > milliseconds:
+            break
+        active_index = index
+    return active_index
+
+
 def run_youtube_subtitle_detail(
     stdscr: curses.window,
     subtitles: List[YoutubeSubtitle],
@@ -2447,111 +2640,168 @@ def run_youtube_subtitle_detail(
     scroll_offset = 0
     show_chinese = True
     message = ""
+    audio_player: Optional[TerminalYoutubeAudioPlayer] = None
     set_cursor_visibility(0)
     stdscr.keypad(True)
-    while True:
-        subtitle = subtitles[subtitle_index]
-        entries = subtitle.entries
-        if entries:
-            entry_index %= len(entries)
-        else:
-            entry_index = 0
 
+    def prepare_audio(subtitle: YoutubeSubtitle, start_ms: float = 0) -> str:
+        nonlocal audio_player
+        if audio_player:
+            audio_player.stop()
+            audio_player = None
+        if not subtitle.youtube_url:
+            return "這篇字幕沒有 YouTube 連結，7 仍可播放 TTS。"
+        if not TerminalYoutubeAudioPlayer.available():
+            return "缺少 ffplay 或 cvlc，無法播放 YouTube 原音。"
         stdscr.erase()
-        height, width = stdscr.getmaxyx()
-        draw_line(
-            stdscr,
-            1,
-            2,
-            (
-                f"YT字幕 | {subtitle_index + 1}/{len(subtitles)} | {subtitle.title}  "
-                "Esc=列表 5=中文 4/6=上下篇 7=播放 ↑↓=上下句"
-            ),
-            curses.A_BOLD,
-        )
-        detail_lines: List[Tuple[str, int, int]] = []
-        entry_line_offsets: List[int] = []
-
-        def append_detail(text: str, indent: int = 0, attr: int = 0) -> None:
-            line_width = max(1, width - 4 - indent)
-            for line in _split_by_cell_width(text, line_width):
-                detail_lines.append((line, indent, attr))
-
-        append_detail(subtitle.title, attr=curses.A_BOLD)
-        mode_label = "SRT 時間字幕" if subtitle.mode == YT_SUBTITLE_MODE_SRT else "JSON 逐句字幕"
-        append_detail(f"{mode_label} · {len(entries)} 句", attr=curses.A_DIM)
-        if subtitle.youtube_url:
-            append_detail(f"YouTube: {subtitle.youtube_url}", attr=curses.A_DIM)
-        if not entries:
-            append_detail("目前沒有可顯示的字幕。", attr=curses.A_DIM)
-        for index, entry in enumerate(entries):
-            entry_line_offsets.append(len(detail_lines))
-            marker = "▶" if index == entry_index else " "
-            timestamp = f" [{subtitle_time_label(entry['startMs'])}]" if entry.get("startMs") is not None else ""
-            append_detail(f"{marker} {index + 1}.{timestamp} {entry['ko']}", attr=curses.A_BOLD if index == entry_index else 0)
-            if show_chinese:
-                append_detail(entry["zh"], indent=4, attr=curses.A_DIM)
-
-        visible_rows = max(1, height - 4)
-        scroll_offset = min(scroll_offset, max(0, len(detail_lines) - visible_rows))
-        if entry_line_offsets:
-            entry_start = entry_line_offsets[entry_index]
-            entry_end = entry_line_offsets[entry_index + 1] if entry_index + 1 < len(entry_line_offsets) else len(detail_lines)
-            if entry_start < scroll_offset:
-                scroll_offset = entry_start
-            elif entry_end > scroll_offset + visible_rows:
-                scroll_offset = max(0, entry_end - visible_rows)
-        for row, (line, indent, attr) in enumerate(
-            detail_lines[scroll_offset:scroll_offset + visible_rows],
-            2,
-        ):
-            draw_line(stdscr, row, 2 + indent, line, attr)
-        footer = message
-        if len(detail_lines) > visible_rows:
-            range_text = (
-                f"內容 {scroll_offset + 1}-"
-                f"{min(len(detail_lines), scroll_offset + visible_rows)}/{len(detail_lines)}"
-            )
-            footer = f"{footer}  {range_text}".strip()
-        if footer:
-            draw_line(stdscr, height - 1, 2, footer, curses.A_BOLD)
+        draw_line(stdscr, 1, 2, f"YT字幕 | {subtitle.title}", curses.A_BOLD)
+        draw_line(stdscr, 3, 2, "正在準備 YouTube 音訊；第一次開啟需要下載，請稍候...", curses.A_DIM)
         update_curses_screen(stdscr)
+        audio_path, status = download_youtube_audio(subtitle)
+        if not audio_path:
+            return status
+        audio_player = TerminalYoutubeAudioPlayer(audio_path)
+        if not audio_player.play_from(max(0.0, start_ms / 1000)):
+            audio_player = None
+            return "音訊已下載，但 ffplay／cvlc 無法啟動。"
+        return status
 
-        key = read_terminal_key(stdscr, wide=True)
-        if isinstance(key, int) and 0 <= key <= 255:
-            key = chr(key)
-        if key in ("\x1b", 27):
-            return
-        if key == curses.KEY_UP:
+    first_entries = subtitles[subtitle_index].entries
+    first_start = first_entries[0].get("startMs") if first_entries else 0
+    message = prepare_audio(subtitles[subtitle_index], float(first_start or 0))
+    try:
+        while True:
+            subtitle = subtitles[subtitle_index]
+            entries = subtitle.entries
             if entries:
-                entry_index = (entry_index - 1) % len(entries)
-            continue
-        if key == curses.KEY_DOWN:
-            if entries:
-                entry_index = (entry_index + 1) % len(entries)
-            continue
-        if not isinstance(key, str):
-            continue
-        if key == "5":
-            show_chinese = not show_chinese
-            message = f"中文：{'顯示' if show_chinese else '隱藏'}"
-        elif key == "4":
-            subtitle_index = (subtitle_index - 1) % len(subtitles)
-            entry_index = 0
-            scroll_offset = 0
-            message = ""
-        elif key == "6":
-            subtitle_index = (subtitle_index + 1) % len(subtitles)
-            entry_index = 0
-            scroll_offset = 0
-            message = ""
-        elif key == "7":
-            if not entries:
-                message = "這篇字幕沒有可播放的韓文。"
-            elif speak_korean(entries[entry_index]["ko"]):
-                message = f"已播放第 {entry_index + 1} 句。"
+                entry_index %= len(entries)
             else:
-                message = "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+                entry_index = 0
+
+            if audio_player and not audio_player.paused and subtitle.mode == YT_SUBTITLE_MODE_SRT:
+                synced_index = subtitle_entry_index_at_time(entries, audio_player.position() * 1000)
+                if synced_index is not None:
+                    entry_index = synced_index
+
+            stdscr.erase()
+            height, width = stdscr.getmaxyx()
+            draw_line(
+                stdscr,
+                1,
+                2,
+                (
+                    f"YT字幕 | {subtitle_index + 1}/{len(subtitles)} | {subtitle.title}  "
+                    "Esc=列表 5=中文 4/6=上下篇 7/Space=播放暫停 Enter=跳至此句 ↑↓=上下句"
+                ),
+                curses.A_BOLD,
+            )
+            detail_lines: List[Tuple[str, int, int]] = []
+            entry_line_offsets: List[int] = []
+
+            def append_detail(text: str, indent: int = 0, attr: int = 0) -> None:
+                line_width = max(1, width - 4 - indent)
+                for line in _split_by_cell_width(text, line_width):
+                    detail_lines.append((line, indent, attr))
+
+            append_detail(subtitle.title, attr=curses.A_BOLD)
+            mode_label = "SRT 時間字幕" if subtitle.mode == YT_SUBTITLE_MODE_SRT else "JSON 逐句字幕"
+            append_detail(f"{mode_label} · {len(entries)} 句", attr=curses.A_DIM)
+            if subtitle.youtube_url:
+                append_detail(f"YouTube: {subtitle.youtube_url}", attr=curses.A_DIM)
+            if not entries:
+                append_detail("目前沒有可顯示的字幕。", attr=curses.A_DIM)
+            for index, entry in enumerate(entries):
+                entry_line_offsets.append(len(detail_lines))
+                marker = "▶" if index == entry_index else " "
+                timestamp = f" [{subtitle_time_label(entry['startMs'])}]" if entry.get("startMs") is not None else ""
+                append_detail(f"{marker} {index + 1}.{timestamp} {entry['ko']}", attr=curses.A_BOLD if index == entry_index else 0)
+                if show_chinese:
+                    append_detail(entry["zh"], indent=4, attr=curses.A_DIM)
+
+            visible_rows = max(1, height - 4)
+            scroll_offset = min(scroll_offset, max(0, len(detail_lines) - visible_rows))
+            if entry_line_offsets:
+                entry_start = entry_line_offsets[entry_index]
+                scroll_offset = max(0, min(
+                    entry_start - visible_rows // 2,
+                    max(0, len(detail_lines) - visible_rows),
+                ))
+            for row, (line, indent, attr) in enumerate(
+                detail_lines[scroll_offset:scroll_offset + visible_rows],
+                2,
+            ):
+                draw_line(stdscr, row, 2 + indent, line, attr)
+            footer_parts = [message] if message else []
+            if audio_player:
+                state_label = "暫停" if audio_player.paused else "播放中"
+                footer_parts.append(f"原音 {subtitle_time_label(audio_player.position() * 1000)} · {state_label}")
+            if len(detail_lines) > visible_rows:
+                footer_parts.append(
+                    f"內容 {scroll_offset + 1}-{min(len(detail_lines), scroll_offset + visible_rows)}/{len(detail_lines)}"
+                )
+            if footer_parts:
+                draw_line(stdscr, height - 1, 2, "  ".join(footer_parts), curses.A_BOLD)
+            update_curses_screen(stdscr)
+
+            if audio_player and not audio_player.paused:
+                key = read_terminal_key_with_timeout(stdscr, 200, wide=True)
+            else:
+                key = read_terminal_key(stdscr, wide=True)
+            if key is None:
+                continue
+            if isinstance(key, int) and 0 <= key <= 255:
+                key = chr(key)
+            elif key == curses.KEY_ENTER:
+                key = "\n"
+            if key in ("\x1b", 27):
+                return
+            if key in (curses.KEY_UP, curses.KEY_DOWN):
+                if entries:
+                    step = -1 if key == curses.KEY_UP else 1
+                    entry_index = (entry_index + step) % len(entries)
+                    start_ms = entries[entry_index].get("startMs")
+                    if audio_player and start_ms is not None:
+                        audio_player.play_from(float(start_ms) / 1000)
+                        message = f"已跳至第 {entry_index + 1} 句。"
+                continue
+            if not isinstance(key, str):
+                continue
+            if key == "5":
+                show_chinese = not show_chinese
+                message = f"中文：{'顯示' if show_chinese else '隱藏'}"
+            elif key == "4" or key == "6":
+                subtitle_index = (subtitle_index + (-1 if key == "4" else 1)) % len(subtitles)
+                entry_index = 0
+                scroll_offset = 0
+                next_subtitle = subtitles[subtitle_index]
+                next_entries = next_subtitle.entries
+                next_start = next_entries[0].get("startMs") if next_entries else 0
+                message = prepare_audio(next_subtitle, float(next_start or 0))
+            elif key in ("7", " "):
+                if audio_player:
+                    if audio_player.paused and not audio_player.process and entries and entries[entry_index].get("startMs") is not None:
+                        changed = audio_player.play_from(float(entries[entry_index]["startMs"]) / 1000)
+                    else:
+                        changed = audio_player.toggle()
+                    if changed:
+                        message = "原音已暫停。" if audio_player.paused else "原音繼續播放。"
+                    else:
+                        message = "無法切換原音播放狀態。"
+                elif not entries:
+                    message = "這篇字幕沒有可播放的韓文。"
+                elif speak_korean(entries[entry_index]["ko"]):
+                    message = f"已用 TTS 播放第 {entry_index + 1} 句。"
+                else:
+                    message = "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+            elif key in ("\n", "\r"):
+                if audio_player and entries and entries[entry_index].get("startMs") is not None:
+                    audio_player.play_from(float(entries[entry_index]["startMs"]) / 1000)
+                    message = f"已跳至第 {entry_index + 1} 句並播放。"
+                elif subtitle.mode != YT_SUBTITLE_MODE_SRT:
+                    message = "JSON 字幕沒有時間戳，無法跳轉音訊。"
+    finally:
+        if audio_player:
+            audio_player.stop()
 
 
 def run_youtube_subtitles(

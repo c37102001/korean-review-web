@@ -103,6 +103,12 @@ Terminal 單字例句聽力使用 Microsoft Neural 韓文語音，並將產生�
 `~/.cache/korean-review-web/tts`。系統需要 `cvlc` 或 `ffplay` 播放音檔；
 無網路或 Neural 語音不可用時，程式會退回 `spd-say`／`espeak-ng`。
 
+Terminal 的「YT字幕」會使用 `yt-dlp` 與 `ffmpeg` 將影片原音下載為 MP3，並快取在
+`~/.cache/korean-review-web-terminal/youtube-audio`。開啟有 YouTube 連結的字幕時會
+自動播放；SRT 字幕會跟隨原音進度切換目前句，`↑/↓` 可跳至上一句或下一句，`Enter`
+會從目前句起點重播，`7` 或空白鍵可暫停／繼續。JSON 字幕沒有時間戳，因此只能播放
+原音，無法自動同步或逐句跳轉。離開字幕頁面時播放器會自動停止。
+
 單字例句聽力快捷鍵：`7` 重播目前例句、`8` 公佈完整單字卡，之後以
 `1`（答錯）或 `2`（答對）自評。
 

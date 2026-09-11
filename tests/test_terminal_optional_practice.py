@@ -133,6 +133,33 @@ class OptionalPracticeTests(unittest.TestCase):
         self.assertEqual(review["optionalPractice"]["tasks"], [])
         self.assertEqual(review["optionalPractice"]["pools"]["words"], [question.id])
 
+    def test_srt_audio_time_selects_the_latest_started_subtitle(self):
+        entries = [
+            {"startMs": 0},
+            {"startMs": 2500},
+            {"startMs": 7000},
+        ]
+        self.assertEqual(terminal.subtitle_entry_index_at_time(entries, 0), 0)
+        self.assertEqual(terminal.subtitle_entry_index_at_time(entries, 6999), 1)
+        self.assertEqual(terminal.subtitle_entry_index_at_time(entries, 7000), 2)
+        self.assertIsNone(terminal.subtitle_entry_index_at_time([{"startMs": None}], 1000))
+
+    def test_youtube_audio_cache_changes_when_the_source_url_changes(self):
+        first = terminal.YoutubeSubtitle("id", "Title", "https://youtu.be/one", "srt", [])
+        same = terminal.YoutubeSubtitle("id", "Renamed", "https://youtu.be/one", "srt", [])
+        changed = terminal.YoutubeSubtitle("id", "Title", "https://youtu.be/two", "srt", [])
+        self.assertEqual(terminal.youtube_audio_cache_path(first), terminal.youtube_audio_cache_path(same))
+        self.assertNotEqual(terminal.youtube_audio_cache_path(first), terminal.youtube_audio_cache_path(changed))
+
+    def test_youtube_audio_download_has_format_and_client_fallbacks(self):
+        profiles = terminal.youtube_audio_download_profiles()
+        self.assertEqual(profiles[0], [])
+        self.assertTrue(any(
+            any("bestaudio[ext=m4a]" in argument for argument in profile)
+            for profile in profiles
+        ))
+        self.assertTrue(any("youtube:player_client=android_vr" in profile for profile in profiles))
+
 
 if __name__ == "__main__":
     unittest.main()
