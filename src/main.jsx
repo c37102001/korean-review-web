@@ -2868,6 +2868,32 @@ function speakAnswer(question) {
   speakText(question?.ko, 'ko-KR');
 }
 
+function practiceAnswerSpeech(question, useChinese = false) {
+  return useChinese
+    ? { text: question?.zh || '', lang: 'zh-TW' }
+    : { text: question?.ko || '', lang: 'ko-KR' };
+}
+
+function speakPracticeAnswer(question, useChinese = false, onError = () => {}) {
+  const speech = practiceAnswerSpeech(question, useChinese);
+  if (!speech.text.trim()) { onError('這題沒有可朗讀的答案文字。'); return; }
+  if (!window.speechSynthesis) { onError('此瀏覽器不支援語音播放。'); return; }
+  const synth = window.speechSynthesis;
+  const voices = synth.getVoices();
+  const preferred = findPreferredSpeechVoice(voices, readSpeechVoicePreferences()[speechLanguageKey(speech.lang)], speech.lang);
+  const voice = preferred
+    || voices.find((candidate) => normalizeSpeechLanguage(candidate.lang) === normalizeSpeechLanguage(speech.lang))
+    || voices.find((candidate) => normalizeSpeechLanguage(candidate.lang).startsWith(useChinese ? 'zh' : 'ko'));
+  const utterance = configureSpeechUtterance(new SpeechSynthesisUtterance(speech.text), speech.lang, voice);
+  utterance.onerror = (event) => {
+    if (['canceled', 'interrupted'].includes(event.error)) return;
+    onError(`${useChinese ? '中文' : '韓文'}語音播放失敗（${event.error || 'unknown'}）。請在首頁「語音設定」試聽並選擇可用聲音。`);
+  };
+  synth.cancel();
+  synth.resume();
+  synth.speak(utterance);
+}
+
 function shouldShowStudyChinese(hideChineseInitially, cardChineseRevealed) {
   return !hideChineseInitially || cardChineseRevealed;
 }
@@ -5582,8 +5608,8 @@ function isSelfGradeAnswerMode(direction, answerMode = 'typing') {
   return direction === 'ko-zh' || answerMode === 'self-grade';
 }
 
-function shouldAutoPronouncePracticePrompt({ started, recognitionMode, grammarMode, activeDirection, autoPronounce, recognitionWordVisible, question }) {
-  if (!started || !question) return false;
+function shouldAutoPronouncePracticePrompt({ started, recognitionMode, grammarMode, activeDirection, autoPronounce, recognitionWordVisible, revealed, graded, question }) {
+  if (!started || !question || revealed || graded) return false;
   if (recognitionMode || grammarMode) return !recognitionWordVisible;
   return activeDirection === 'ko-zh' && autoPronounce;
 }
@@ -5632,6 +5658,8 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const completionStartedRef = useRef(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [autoPronounce, setAutoPronounce] = useState(!readingMode);
+  const [chinesePronunciation, setChinesePronunciation] = useState(false);
+  const [answerSpeechError, setAnswerSpeechError] = useState('');
   const [optionalSaving, setOptionalSaving] = useState(false);
   const optionalSavingRef = useRef(false);
   const sourceQuestions = useMemo(() => {
@@ -5649,6 +5677,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   }, [set.questions, source, direction, set.termOnly, set.dueOnly, set.allowAlphabeticalOrder, optionalMode, recognitionMode, grammarMode, grammarPracticeMode, store, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
+  const useChineseAnswerSpeech = dailyWordMode && chinesePronunciation;
   const canClassifyCurrentWord = Boolean(question && !grammarMode && !grammarPracticeMode && question.kind !== 'grammar-example');
   const isCurrentWordLearned = Boolean(
     question
@@ -5737,11 +5766,13 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
       activeDirection,
       autoPronounce,
       recognitionWordVisible,
+      revealed,
+      graded,
       question,
     })) return undefined;
     const timer = window.setTimeout(() => speakAnswer(question), 180);
     return () => window.clearTimeout(timer);
-  }, [started, recognitionMode, grammarMode, activeDirection, autoPronounce, recognitionWordVisible, question?.id]);
+  }, [started, recognitionMode, grammarMode, activeDirection, autoPronounce, recognitionWordVisible, revealed, graded, question?.id]);
 
   useEffect(() => {
     if (direction === 'ko-zh') setSource('term');
@@ -5875,7 +5906,8 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     setGraded(true);
     setLastCorrect(correct);
     if (soundEnabled) playResultSound(correct);
-    if (autoPronounce) window.setTimeout(() => speakAnswer(question), soundEnabled ? 320 : 0);
+    setAnswerSpeechError('');
+    if (autoPronounce) speakPracticeAnswer(question, useChineseAnswerSpeech, setAnswerSpeechError);
   };
   const gradeAndRecord = (correct) => {
     finalizeTypedGrade(correct);
@@ -5908,7 +5940,14 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   };
   const revealAnswerForSelfGrade = () => {
     setRevealed(true);
-    if (autoPronounce) speakAnswer(question);
+    setAnswerSpeechError('');
+    if (autoPronounce) speakPracticeAnswer(question, useChineseAnswerSpeech, setAnswerSpeechError);
+  };
+  const replayCurrentSpeech = () => {
+    const answerVisible = revealed || graded || recognitionWordVisible;
+    setAnswerSpeechError('');
+    if (answerVisible) speakPracticeAnswer(question, useChineseAnswerSpeech, setAnswerSpeechError);
+    else speakAnswer(question);
   };
   const advanceRecognitionStage = () => {
     if (recognitionMode) {
@@ -5929,12 +5968,12 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     const onKeyDown = (event) => {
       if (event.key === ' ' && (recognitionMode || grammarMode) && !event.isComposing) {
         event.preventDefault();
-        speakAnswer(question);
+        replayCurrentSpeech();
         return;
       }
       if (event.key === ' ' && (revealed || graded) && !event.isComposing) {
         event.preventDefault();
-        speakAnswer(question);
+        replayCurrentSpeech();
         return;
       }
       if (event.key === 'Enter' && graded && !event.isComposing) {
@@ -5944,7 +5983,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [started, revealed, graded, question, index, queue.length, recognitionMode, grammarMode]);
+  }, [started, revealed, graded, question, index, queue.length, recognitionMode, grammarMode, recognitionWordVisible, useChineseAnswerSpeech]);
 
   if (!started && (!set.dueOnly || configurableWordMode)) {
     return (
@@ -6049,10 +6088,20 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
             <div className="quiz-options">
               <button className={soundEnabled ? 'selected-soft' : ''} onClick={() => setSoundEnabled((enabled) => !enabled)}>{soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />} 音效</button>
               {!recognitionMode && !grammarMode && <button className={autoPronounce ? 'selected-soft' : ''} onClick={() => setAutoPronounce((enabled) => !enabled)}>{autoPronounce ? <Volume2 size={16} /> : <VolumeX size={16} />} 自動發音</button>}
-              <button disabled={!recognitionMode && !grammarMode && activeDirection !== 'ko-zh' && !revealed && !graded} onClick={() => speakAnswer(question)}><Volume2 size={16} /> {recognitionMode || grammarMode || activeDirection === 'ko-zh' ? '重播' : '發音'}</button>
+              {dailyWordMode && <button
+                className={chinesePronunciation ? 'selected-soft' : ''}
+                aria-pressed={chinesePronunciation}
+                onClick={() => {
+                  if (!chinesePronunciation) setAutoPronounce(true);
+                  setChinesePronunciation(!chinesePronunciation);
+                  setAnswerSpeechError('');
+                }}
+              >{chinesePronunciation ? <Volume2 size={16} /> : <VolumeX size={16} />} 中文發音</button>}
+              <button disabled={!recognitionMode && !grammarMode && activeDirection !== 'ko-zh' && !revealed && !graded} onClick={replayCurrentSpeech}><Volume2 size={16} /> {recognitionMode || grammarMode || activeDirection === 'ko-zh' ? '重播' : '發音'}</button>
             </div>
           </div>
           {optionalSaving && <p role="status">儲存練習進度中…</p>}
+          {answerSpeechError && <p className="form-error" role="alert">{answerSpeechError}</p>}
           {completionError && <p className="form-error" role="alert">{completionError}</p>}
           {!selfGradeMode ? (
             <>
@@ -8767,6 +8816,7 @@ export {
   parseYoutubeSubtitleJson,
   parseYoutubeSubtitleSrt,
   parsePairLines,
+  practiceAnswerSpeech,
   formatReadingTestsJson,
   normalizeReadingTest,
   nextRecognitionRevealState,
