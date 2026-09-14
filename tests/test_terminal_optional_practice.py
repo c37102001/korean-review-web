@@ -75,6 +75,42 @@ class OptionalPracticeTests(unittest.TestCase):
         self.assertEqual(terminal.familiarity_filter_value("不熟悉", -8), "score-negative-4-or-less")
         self.assertEqual(terminal.familiarity_filter_value("熟悉", 4), "熟悉")
 
+    def test_familiarity_score_has_no_initial_offset(self):
+        self.assertEqual(terminal.familiarity_score({}), 0)
+        self.assertEqual(terminal.familiarity_score({"correct": 3, "wrong": 1}), 2)
+        self.assertEqual(terminal.familiarity_score({"correct": 1, "wrong": 3}), -2)
+
+    def test_negative_score_schedule_matches_the_web(self):
+        _, question = self.card_and_question()
+        with patch.object(terminal, "today_string", return_value="2026-09-14"):
+            wrong_state = {
+                "stats": {question.id: {"total": 2, "correct": 1, "wrong": 1}},
+                "progress": {question.id: {"stage": 3}},
+                "attempts": [],
+            }
+            terminal.record_answer(wrong_state, question, False)
+            self.assertEqual(terminal.familiarity_score(wrong_state["stats"][question.id]), -1)
+            self.assertEqual(wrong_state["progress"][question.id]["nextDue"], "2026-09-15")
+
+            correct_state = {
+                "stats": {question.id: {"total": 2, "correct": 0, "wrong": 2}},
+                "progress": {question.id: {"stage": 3}},
+                "attempts": [],
+            }
+            terminal.record_answer(correct_state, question, True)
+            self.assertEqual(terminal.familiarity_score(correct_state["stats"][question.id]), -1)
+            self.assertEqual(correct_state["progress"][question.id]["nextDue"], "2026-09-16")
+
+            recovered_state = {
+                "stats": {question.id: {"total": 3, "correct": 1, "wrong": 2}},
+                "progress": {question.id: {"stage": 4}},
+                "attempts": [],
+            }
+            terminal.record_answer(recovered_state, question, True)
+            self.assertEqual(terminal.familiarity_score(recovered_state["stats"][question.id]), 0)
+            self.assertEqual(recovered_state["progress"][question.id]["stage"], 1)
+            self.assertEqual(recovered_state["progress"][question.id]["nextDue"], "2026-09-17")
+
     def test_word_search_text_contains_korean_and_chinese_meanings_only(self):
         card = terminal.Card(
             "word", "2026-09-10", "날씨", "天氣", meanings=[{

@@ -40,6 +40,41 @@ test('Naver dictionary links use the current Korean dictionary search route', ()
   );
 });
 
+test('word folder memberships are derived from folder references', () => {
+  const folders = [
+    { id: 'a', wordIds: ['word-1', 'word-2'] },
+    { id: 'b', wordIds: [] },
+    { id: 'c', wordIds: ['word-1'] },
+  ];
+  assert.deepEqual(helpers.wordFolderIds(folders, 'word-1'), ['a', 'c']);
+  assert.deepEqual(helpers.wordFolderIds(folders, 'missing'), []);
+});
+
+test('folder picker lists checked folders first while preserving group order', () => {
+  const folders = [
+    { id: 'a', name: 'A' },
+    { id: 'b', name: 'B' },
+    { id: 'c', name: 'C' },
+    { id: 'd', name: 'D' },
+  ];
+  assert.deepEqual(
+    helpers.selectedFoldersFirst(folders, ['c', 'a']).map((folder) => folder.id),
+    ['a', 'c', 'b', 'd'],
+  );
+});
+
+test('editing a word computes both folder additions and removals', () => {
+  const folders = [
+    { id: 'a', wordIds: ['word-1'] },
+    { id: 'b', wordIds: ['word-1'] },
+    { id: 'c', wordIds: [] },
+  ];
+  assert.deepEqual(
+    helpers.folderMembershipChanges(folders, 'word-1', ['b', 'c']),
+    { add: ['c'], remove: ['a'] },
+  );
+});
+
 function item(ko, zh, extra = {}) {
   return {
     ko,
@@ -310,7 +345,7 @@ test('daily correct answers count for both translation directions', () => {
     assert.equal(next.stats[question.id].total, 7);
     assert.equal(next.stats[question.id].correct, 5);
     assert.equal(next.stats[question.id].wrong, 2);
-    assert.equal(next.progress[question.id].stage, 1);
+    assert.equal(next.progress[question.id].stage, 3);
     assert.equal(next.attempts[0].correct, true);
   }
 });
@@ -407,7 +442,7 @@ test('negative familiarity cards return tomorrow after a wrong answer', () => {
   };
   const next = helpers.recordAnswer(store, question, false);
   const millisecondsPerDay = 24 * 60 * 60 * 1000;
-  assert.equal(helpers.familiarityScore(next.stats[question.id]), -4);
+  assert.equal(helpers.familiarityScore(next.stats[question.id]), -1);
   assert.equal(next.progress[question.id].stage, 0);
   assert.equal(
     (Date.parse(next.progress[question.id].nextDue) - Date.parse(next.attempts[0].date)) / millisecondsPerDay,
@@ -419,12 +454,12 @@ test('negative familiarity cards rest one day after a correct answer', () => {
   const question = { id: 'term-negative-correct', kind: 'term' };
   const store = {
     attempts: [],
-    stats: { [question.id]: { total: 3, correct: 1, wrong: 2 } },
+    stats: { [question.id]: { total: 2, correct: 0, wrong: 2 } },
     progress: { [question.id]: { stage: 4, nextDue: '2026-09-20' } },
   };
   const next = helpers.recordAnswer(store, question, true);
   const millisecondsPerDay = 24 * 60 * 60 * 1000;
-  assert.equal(helpers.familiarityScore(next.stats[question.id]), -3);
+  assert.equal(helpers.familiarityScore(next.stats[question.id]), -1);
   assert.equal(next.progress[question.id].stage, 0);
   assert.equal(
     (Date.parse(next.progress[question.id].nextDue) - Date.parse(next.attempts[0].date)) / millisecondsPerDay,
@@ -436,7 +471,7 @@ test('a negative card re-enters the forgetting curve after reaching zero', () =>
   const question = { id: 'term-recovered', kind: 'term' };
   const store = {
     attempts: [],
-    stats: { [question.id]: { total: 6, correct: 4, wrong: 2 } },
+    stats: { [question.id]: { total: 3, correct: 1, wrong: 2 } },
     progress: { [question.id]: { stage: 4, nextDue: '2026-09-20' } },
   };
   const next = helpers.recordAnswer(store, question, true);
@@ -915,11 +950,11 @@ test('Korean alphabetical sorting applies to the current filtered word set', () 
   assert.deepEqual(filtered.map((entry) => entry.ko), ['가다', '가르치다', '나타나다']);
 });
 
-test('familiarity score starts at negative three and subtracts one per wrong answer', () => {
-  assert.equal(helpers.familiarityScore({}), -3);
-  assert.equal(helpers.familiarityScore({ correct: 3, wrong: 1, total: 4 }), -1);
-  assert.equal(helpers.familiarityScore({ correct: 1, wrong: 3, total: 4 }), -5);
-  assert.equal(helpers.familiarityScore({ correct: 4, total: 5 }), 0);
+test('familiarity score is correct answers minus wrong answers', () => {
+  assert.equal(helpers.familiarityScore({}), 0);
+  assert.equal(helpers.familiarityScore({ correct: 3, wrong: 1, total: 4 }), 2);
+  assert.equal(helpers.familiarityScore({ correct: 1, wrong: 3, total: 4 }), -2);
+  assert.equal(helpers.familiarityScore({ correct: 4, total: 5 }), 3);
 
   assert.equal(helpers.familiarityLevel(-1), '不熟悉');
   assert.equal(helpers.familiarityLevel(0), '學習中');

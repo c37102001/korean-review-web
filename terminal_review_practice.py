@@ -44,7 +44,6 @@ PROJECT_ID = "korean-review-web"
 FIRESTORE_SCHEMA_VERSION = 3
 PROGRESS_SHARD_COUNT = 16
 REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90]
-INITIAL_FAMILIARITY_SCORE = -3
 DAILY_RECOGNITION_LIMIT = 50
 DAILY_RECOGNITION_MODE = "daily-recognition"
 DAILY_GRAMMAR_MODE = "daily-grammar"
@@ -963,7 +962,12 @@ def get_progress(state: Dict[str, Any], question: Question) -> Dict[str, Any]:
     saved = (state.get("progress") or {}).get(question.id)
     if saved:
         return saved
-    return {"stage": 0, "nextDue": add_days(question.date, REVIEW_INTERVALS[0]), "lastResult": None, "lastAnsweredAt": None}
+    return {
+        "stage": 0,
+        "nextDue": add_days(question.date, REVIEW_INTERVALS[0]),
+        "lastResult": None,
+        "lastAnsweredAt": None,
+    }
 
 
 def due_questions(state: Dict[str, Any], questions: List[Question], date_key: Optional[str] = None) -> List[Question]:
@@ -1440,7 +1444,7 @@ def familiarity_score(stats: Dict[str, Any]) -> int:
     correct = int(stats.get("correct") or 0)
     wrong_value = stats.get("wrong")
     wrong = int(wrong_value) if wrong_value is not None else max(0, int(stats.get("total") or 0) - correct)
-    return correct - wrong + INITIAL_FAMILIARITY_SCORE
+    return correct - wrong
 
 
 def familiarity_level(score: int) -> str:

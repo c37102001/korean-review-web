@@ -69,7 +69,6 @@ import {
 import './styles.css';
 
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
-const INITIAL_FAMILIARITY_SCORE = -3;
 const DAILY_RECOGNITION_LIMIT = 50;
 const DAILY_RECOGNITION_MODE = 'daily-recognition';
 const DAILY_GRAMMAR_MODE = 'daily-grammar';
@@ -2087,7 +2086,7 @@ function resolveImportConflictDraft(draft, choice, allItems = []) {
   };
 }
 
-async function writeLearningRecords(uid, records, onProgress, folderIds = [], additionalFolderWordIds = [], foldersToCreate = [], folderPatches = []) {
+async function writeLearningRecords(uid, records, onProgress, folderIds = [], additionalFolderWordIds = [], foldersToCreate = [], folderPatches = [], removeFolderIds = []) {
   const queuedOffline = isBrowserOffline();
   const uniqueFolderIds = [...new Set(folderIds)].filter(Boolean);
   const extraWordIds = [...new Set(additionalFolderWordIds)].filter(Boolean);
@@ -2095,16 +2094,20 @@ async function writeLearningRecords(uid, records, onProgress, folderIds = [], ad
   const normalizedFolderPatches = folderPatches
     .filter((patch) => patch?.id)
     .map((patch) => ({ id: String(patch.id), data: patch.data || {} }));
-  if (!records.length && (!uniqueFolderIds.length || !extraWordIds.length) && !newFolders.length && !normalizedFolderPatches.length) return;
+  const uniqueRemoveFolderIds = [...new Set(removeFolderIds)].filter(Boolean);
+  if (!records.length && (!uniqueFolderIds.length || !extraWordIds.length) && !newFolders.length && !normalizedFolderPatches.length && !uniqueRemoveFolderIds.length) return;
   if (records.length > MAX_ATOMIC_RECORD_WRITES) {
     throw new Error(`一次最多可以寫入 ${MAX_ATOMIC_RECORD_WRITES} 筆單字，請縮小匯入範圍`);
   }
-  if (records.length + uniqueFolderIds.length + newFolders.length + normalizedFolderPatches.length > 500) throw new Error('單字與資料夾更新超過 Firebase 單次批次上限');
+  if (records.length + uniqueFolderIds.length + newFolders.length + normalizedFolderPatches.length + uniqueRemoveFolderIds.length > 500) throw new Error('單字與資料夾更新超過 Firebase 單次批次上限');
   const newFolderIds = newFolders.map((folder) => folder.id);
   const patchedFolderIds = normalizedFolderPatches.map((patch) => patch.id);
   const allFolderIds = [...uniqueFolderIds, ...newFolderIds, ...patchedFolderIds];
   if (new Set(newFolderIds).size !== newFolderIds.length || new Set(patchedFolderIds).size !== patchedFolderIds.length || new Set(allFolderIds).size !== allFolderIds.length) {
     throw new Error('資料夾寫入資料有重複 ID');
+  }
+  if (uniqueRemoveFolderIds.some((folderId) => allFolderIds.includes(folderId))) {
+    throw new Error('同一個資料夾不能同時加入及移除單字');
   }
   const lookup = buildRecordLookup(records);
   const normalizedRecords = [];
@@ -2153,6 +2156,11 @@ async function writeLearningRecords(uid, records, onProgress, folderIds = [], ad
       uniqueFolderIds.forEach((folderId) => batch.set(
         doc(db, 'users', uid, 'folders', folderId),
         { wordIds: arrayUnion(...recordIds), updatedAt: serverTimestamp() },
+        { merge: true },
+      ));
+      uniqueRemoveFolderIds.forEach((folderId) => batch.set(
+        doc(db, 'users', uid, 'folders', folderId),
+        { wordIds: arrayRemove(...recordIds), updatedAt: serverTimestamp() },
         { merge: true },
       ));
       normalizedNewFolders.forEach((folder) => batch.set(
@@ -2253,7 +2261,7 @@ function familiarityScore(stats = {}) {
   const wrong = Number.isFinite(Number(stats.wrong))
     ? Number(stats.wrong)
     : Math.max(0, (Number(stats.total) || 0) - correct);
-  return correct - wrong + INITIAL_FAMILIARITY_SCORE;
+  return correct - wrong;
 }
 
 function familiarityLevel(score) {
@@ -2295,6 +2303,33 @@ function folderFilterWordIds(folders = [], selectedFolderIds = []) {
   );
 }
 
+function wordFolderIds(folders = [], wordId) {
+  if (!wordId) return [];
+  return folders
+    .filter((folder) => (folder.wordIds || []).includes(wordId))
+    .map((folder) => folder.id);
+}
+
+function selectedFoldersFirst(folders = [], selectedFolderIds = []) {
+  const selected = new Set(selectedFolderIds);
+  return folders
+    .map((folder, index) => ({ folder, index }))
+    .sort((left, right) => (
+      Number(selected.has(right.folder.id)) - Number(selected.has(left.folder.id))
+      || left.index - right.index
+    ))
+    .map(({ folder }) => folder);
+}
+
+function folderMembershipChanges(folders = [], wordId, desiredFolderIds = []) {
+  const currentSet = new Set(wordFolderIds(folders, wordId));
+  const desiredSet = new Set(desiredFolderIds);
+  return {
+    add: [...desiredSet].filter((folderId) => !currentSet.has(folderId)),
+    remove: [...currentSet].filter((folderId) => !desiredSet.has(folderId)),
+  };
+}
+
 function aggregateItemStats(store, questionIds) {
   const stats = questionIds.map((id) => getStats(store, id));
   const total = stats.reduce((sum, current) => sum + (current.total || 0), 0);
@@ -2302,7 +2337,7 @@ function aggregateItemStats(store, questionIds) {
   const wrong = stats.reduce((sum, current) => (
     sum + (Number.isFinite(Number(current.wrong)) ? Number(current.wrong) : Math.max(0, (current.total || 0) - (current.correct || 0)))
   ), 0);
-  const score = correct - wrong + INITIAL_FAMILIARITY_SCORE;
+  const score = correct - wrong;
   return { total, correct, wrong, score, level: familiarityLevel(score) };
 }
 
@@ -3046,8 +3081,17 @@ function App() {
   const addLearningRecords = async (records, onProgress, folderIds = []) => {
     await writeLearningRecords(user.uid, records, onProgress, folderIds);
   };
-  const updateLearningRecord = async (record, onProgress) => {
-    await writeLearningRecord(user.uid, record, onProgress);
+  const updateLearningRecord = async (record, onProgress, desiredFolderIds) => {
+    if (!Array.isArray(desiredFolderIds)) {
+      await writeLearningRecord(user.uid, record, onProgress);
+      return;
+    }
+    const { add: folderIdsToAdd, remove: folderIdsToRemove } = folderMembershipChanges(
+      folders.folders,
+      record.id,
+      desiredFolderIds,
+    );
+    await writeLearningRecords(user.uid, [record], onProgress, folderIdsToAdd, [], [], [], folderIdsToRemove);
   };
   const updateLearningRecords = async (updatedRecords, onProgress, folderIds = [], additionalFolderWordIds = []) => {
     await writeLearningRecords(user.uid, updatedRecords, onProgress, folderIds, additionalFolderWordIds);
@@ -3095,7 +3139,7 @@ function App() {
     home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} optionalPractice={optionalPractice} grammarNotes={grammar.notes} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} offlineMode={offlineMode} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('dateNotes')} />,
     dateNotes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
-    study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
+    study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} folders={folders.folders} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
     practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
     notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     folders: <FoldersPage folders={folders.folders} items={items} loading={folders.loading} error={folders.error} onSave={folders.save} onDelete={folders.remove} onOpen={openFolder} />,
@@ -3503,6 +3547,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
           lockedDate
           editItem={editingItem}
           allItems={items}
+          folders={folders}
           onUpdateRecord={onUpdateRecord}
           onClose={() => setEditingItem(null)}
         />
@@ -3726,6 +3771,7 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, folde
           lockedDate
           editItem={editingItem}
           allItems={allItems}
+          folders={folders}
           onUpdateRecord={onUpdateRecord}
           onDeleteRecord={onDeleteRecord}
           onClose={() => setEditingItem(null)}
@@ -3820,6 +3866,10 @@ function AddItemsModal({ title, date, lockedDate = false, onAddRecords, onUpdate
 
 function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], folders = [], initialFolderIds = [], requiredFolderIds = [], onSaved, onBusyChange, compactPanel = false }) {
   const isEditing = Boolean(editItem);
+  const editFolderIds = wordFolderIds(folders, editItem?.id);
+  const initialSelectedFolderIds = isEditing
+    ? editFolderIds
+    : [...new Set([...initialFolderIds, ...requiredFolderIds])];
   const [mode, setMode] = useState('manual');
   const [formDate, setFormDate] = useState(date);
   const [jsonText, setJsonText] = useState('');
@@ -3832,7 +3882,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
   const [importProgress, setImportProgress] = useState(null);
   const [importLog, setImportLog] = useState([]);
   const [importCompleted, setImportCompleted] = useState(null);
-  const [selectedFolderIds, setSelectedFolderIds] = useState(() => [...new Set([...initialFolderIds, ...requiredFolderIds])]);
+  const [selectedFolderIds, setSelectedFolderIds] = useState(() => initialSelectedFolderIds);
   const submissionLockRef = useRef(false);
 
   useEffect(() => {
@@ -3863,9 +3913,9 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
     setImportProgress(null);
     setImportLog([]);
     setImportCompleted(null);
-    setSelectedFolderIds([...new Set([...initialFolderIds, ...requiredFolderIds])]);
+    setSelectedFolderIds(initialSelectedFolderIds);
     submissionLockRef.current = false;
-  }, [date, editItem, initialFolderIds.join('|'), requiredFolderIds.join('|')]);
+  }, [date, editItem, initialFolderIds.join('|'), requiredFolderIds.join('|'), editFolderIds.join('|')]);
 
   const commitImportEntries = async (entries, targetDate, keptExistingIds = []) => {
     const activeEntries = entries.filter(Boolean);
@@ -4022,7 +4072,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
   };
 
   const toggleFolder = (folderId) => {
-    if (requiredFolderIds.includes(folderId)) return;
+    if (!isEditing && requiredFolderIds.includes(folderId)) return;
     setSelectedFolderIds((current) => (
       current.includes(folderId)
         ? current.filter((id) => id !== folderId)
@@ -4050,7 +4100,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
           createdAt: editItem.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
-        await onUpdateRecord(record, reportImportProgress);
+        await onUpdateRecord(record, reportImportProgress, selectedFolderIds);
         setMessage('已更新單字');
       } else {
         if (mode === 'json') {
@@ -4137,12 +4187,13 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
           日期
           <input type="date" value={isEditing ? formDate : lockedDate ? date : formDate} onChange={(event) => setFormDate(event.target.value)} disabled={lockedDate && !isEditing} required />
         </label>
-        {!isEditing && !!folders.length && (
+        {!!folders.length && (
           <FolderPickerDropdown
             folders={folders}
             selectedFolderIds={selectedFolderIds}
-            requiredFolderIds={requiredFolderIds}
+            requiredFolderIds={isEditing ? [] : requiredFolderIds}
             onToggle={toggleFolder}
+            title={isEditing ? '所屬資料夾' : '加入資料夾'}
           />
         )}
         {mode === 'manual' ? (
@@ -5065,7 +5116,7 @@ function RelatedPreviewCard({ item, position }) {
   );
 }
 
-function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onBack, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onToggleLearned, onToggleUnfamiliar }) {
+function StudyPage({ store, updateStore, set, allItems = [], folders = [], onUpdateRecord, onBack, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onToggleLearned, onToggleUnfamiliar }) {
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [filter, setFilter] = useState('全部');
@@ -5511,6 +5562,7 @@ function StudyPage({ store, updateStore, set, allItems = [], onUpdateRecord, onB
           lockedDate
           editItem={editingItem}
           allItems={allItems}
+          folders={folders}
           onUpdateRecord={onUpdateRecord}
           onClose={() => setEditingItem(null)}
         />
@@ -7809,9 +7861,10 @@ function WordFolderTags({ itemId, folders = [] }) {
   );
 }
 
-function FolderPickerDropdown({ folders, selectedFolderIds, requiredFolderIds = [], onToggle, showCounts = false }) {
+function FolderPickerDropdown({ folders, selectedFolderIds, requiredFolderIds = [], onToggle, showCounts = false, title = '加入資料夾' }) {
   const selectedSet = new Set(selectedFolderIds);
   const requiredSet = new Set(requiredFolderIds);
+  const orderedFolders = selectedFoldersFirst(folders, selectedFolderIds);
   const selectedNames = folders
     .filter((folder) => selectedSet.has(folder.id))
     .map((folder) => folder.name);
@@ -7822,12 +7875,12 @@ function FolderPickerDropdown({ folders, selectedFolderIds, requiredFolderIds = 
   return (
     <details className="wide-field folder-picker-dropdown">
       <summary>
-        <span className="folder-picker-dropdown-title"><Folder size={17} /><strong>加入資料夾</strong><small>選填</small></span>
+        <span className="folder-picker-dropdown-title"><Folder size={17} /><strong>{title}</strong><small>選填</small></span>
         <span className="folder-picker-dropdown-summary">{summary}</span>
         <ChevronDown size={17} className="folder-picker-chevron" />
       </summary>
       <div className="folder-picker-dropdown-menu">
-        {folders.map((folder) => {
+        {orderedFolders.map((folder) => {
           const required = requiredSet.has(folder.id);
           return (
             <label className={selectedSet.has(folder.id) ? 'selected' : ''} key={folder.id}>
@@ -8291,7 +8344,7 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
           onClose={() => setAddOpen(false)}
         />
       )}
-      {editingItem && <AddItemsModal title="編輯單字" date={editingItem.date} lockedDate editItem={editingItem} allItems={items} onUpdateRecord={onUpdateRecord} onClose={() => setEditingItem(null)} />}
+      {editingItem && <AddItemsModal title="編輯單字" date={editingItem.date} lockedDate editItem={editingItem} allItems={items} folders={folders} onUpdateRecord={onUpdateRecord} onClose={() => setEditingItem(null)} />}
       {viewingItem && (
         <ItemDetailModal
           item={viewingItem}
@@ -8487,6 +8540,7 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
           lockedDate
           editItem={editingItem}
           allItems={items}
+          folders={folders}
           onUpdateRecord={onUpdateRecord}
           onClose={() => setEditingItem(null)}
         />
@@ -8583,6 +8637,9 @@ export {
   familiarityScore,
   matchesFamiliarityLevels,
   folderFilterWordIds,
+  folderMembershipChanges,
+  selectedFoldersFirst,
+  wordFolderIds,
   folderTagLabel,
   groupFoldersByTag,
   groupYoutubeSubtitlesByTag,
