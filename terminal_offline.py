@@ -129,10 +129,30 @@ def synchronize(client, session, payload, api):
                ['entries.`' + qid.replace('`', '\\`') + '`' for qid in entries], document)
     base_ids = {a['id'] for a in pending['baseState'].get('attempts', [])}
     attempts = list(pending['attempts'].values()) if 'attempts' in pending else [a for a in payload['state'].get('attempts', []) if a['id'] not in base_ids]
+    base_attempt_dates = {api.attempt_date(attempt) for attempt in pending['baseState'].get('attempts', [])}
+    initialized_dates = set()
     for day, entries in api._attempts_by_date(attempts).items():
-        writes.append({'update': {'name': f'{prefix}/reviewDays/{day}', 'fields': {'date': api._to_firestore_value(day)}},
-                       'updateMask': {'fieldPaths': ['date']},
-                       'updateTransforms': [{'fieldPath': 'attempts', 'appendMissingElements': {'values': [api._to_firestore_value(a) for a in entries]}}]})
+        if day not in base_attempt_dates and day not in initialized_dates:
+            initialized_dates.add(day)
+            writes.append({
+                'update': {'name': f'{prefix}/reviewDays/{day}', 'fields': {
+                    'date': api._to_firestore_value(day),
+                    'attemptStorageVersion': api._to_firestore_value(api.REVIEW_DAY_STORAGE_VERSION),
+                }},
+                'updateMask': {'fieldPaths': ['date', 'attemptStorageVersion']},
+            })
+        for segment_id, segment_entries in api._attempts_by_segment(entries).items():
+            writes.append({
+                'update': {'name': f'{prefix}/reviewDays/{day}/attemptSegments/{segment_id}', 'fields': {
+                    'date': api._to_firestore_value(day),
+                    'segmentId': api._to_firestore_value(segment_id),
+                }},
+                'updateMask': {'fieldPaths': ['date', 'segmentId']},
+                'updateTransforms': [
+                    {'fieldPath': 'attempts', 'appendMissingElements': {'values': [api._to_firestore_value(a) for a in segment_entries]}},
+                    {'fieldPath': 'updatedAt', 'setToServerValue': 'REQUEST_TIME'},
+                ],
+            })
     settings_doc = read(client._document_url(['users', uid, 'settings', 'review']))
     settings = api._parse_firestore_fields(settings_doc.get('fields', {}))
     if settings.get('starred', []) != remote.get('starred', []) or settings.get('completedReviewDates', []) != remote.get('completedReviewDates', []):

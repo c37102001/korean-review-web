@@ -47,6 +47,8 @@ API_KEY = "AIzaSyCfy63R72H6LDCb-bR7L7RwkKNnGCTHPgU"
 PROJECT_ID = "korean-review-web"
 FIRESTORE_SCHEMA_VERSION = 3
 PROGRESS_SHARD_COUNT = 16
+REVIEW_ATTEMPT_SEGMENT_COUNT = 16
+REVIEW_DAY_STORAGE_VERSION = 2
 REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90]
 DAILY_RECOGNITION_LIMIT = 50
 DAILY_RECOGNITION_MODE = "daily-recognition"
@@ -470,7 +472,9 @@ class FirebaseClient:
                 raise
         else:
             attempts.extend((_parse_firestore_fields(document.get("fields", {})).get("attempts") or []))
-        state["attempts"] = sorted(attempts, key=lambda attempt: attempt.get("time", ""), reverse=True)[:5000]
+        for segment in self._list_documents(["users", session.uid, "reviewDays", today_string(), "attemptSegments"], session):
+            attempts.extend((_parse_firestore_fields(segment.get("fields", {})).get("attempts") or []))
+        state["attempts"] = merge_review_attempts(attempts)
         state["completedReviewDates"] = settings.get("completedReviewDates") or []
         state["starred"] = settings.get("starred") or []
         state["recognition"] = settings.get("recognition")
@@ -543,16 +547,32 @@ class FirebaseClient:
         previous_attempt_ids = {attempt.get("id") for attempt in (previous.get("attempts") or [])}
         added_attempts = [attempt for attempt in (state.get("attempts") or []) if attempt.get("id") not in previous_attempt_ids]
         writes = []
+        previous_attempt_dates = {attempt_date(attempt) for attempt in (previous.get("attempts") or [])}
+        initialized_dates = set()
         for date_key, attempts in _attempts_by_date(added_attempts).items():
-            document_name = f"projects/{self.project_id}/databases/(default)/documents/users/{session.uid}/reviewDays/{date_key}"
-            writes.append({
-                "update": {"name": document_name, "fields": {"date": _to_firestore_value(date_key)}},
-                "updateMask": {"fieldPaths": ["date"]},
-                "updateTransforms": [
-                    {"fieldPath": "attempts", "appendMissingElements": {"values": [_to_firestore_value(attempt) for attempt in attempts]}},
-                    {"fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"},
-                ],
-            })
+            if date_key not in previous_attempt_dates and date_key not in initialized_dates:
+                initialized_dates.add(date_key)
+                document_name = f"projects/{self.project_id}/databases/(default)/documents/users/{session.uid}/reviewDays/{date_key}"
+                writes.append({
+                    "update": {"name": document_name, "fields": {
+                        "date": _to_firestore_value(date_key),
+                        "attemptStorageVersion": _to_firestore_value(REVIEW_DAY_STORAGE_VERSION),
+                    }},
+                    "updateMask": {"fieldPaths": ["date", "attemptStorageVersion"]},
+                })
+            for segment_id, segment_attempts in _attempts_by_segment(attempts).items():
+                segment_name = f"projects/{self.project_id}/databases/(default)/documents/users/{session.uid}/reviewDays/{date_key}/attemptSegments/{segment_id}"
+                writes.append({
+                    "update": {"name": segment_name, "fields": {
+                        "date": _to_firestore_value(date_key),
+                        "segmentId": _to_firestore_value(segment_id),
+                    }},
+                    "updateMask": {"fieldPaths": ["date", "segmentId"]},
+                    "updateTransforms": [
+                        {"fieldPath": "attempts", "appendMissingElements": {"values": [_to_firestore_value(attempt) for attempt in segment_attempts]}},
+                        {"fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"},
+                    ],
+                })
         if writes:
             commit_url = f"https://firestore.googleapis.com/v1/projects/{self.project_id}/databases/(default)/documents:commit"
             self._request_json("POST", commit_url, payload={"writes": writes}, session=session)
@@ -774,12 +794,34 @@ def _attempts_by_date(attempts: List[Dict[str, Any]]) -> Dict[str, List[Dict[str
     return groups
 
 
+def _attempts_by_segment(attempts: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for attempt in attempts:
+        attempt_id = str(attempt.get("id") or "")
+        if attempt_id:
+            groups.setdefault(_review_attempt_segment_id(attempt_id), []).append(attempt)
+    return groups
+
+
+def merge_review_attempts(attempts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    by_id = {str(attempt.get("id")): attempt for attempt in attempts if attempt.get("id")}
+    return sorted(by_id.values(), key=lambda attempt: attempt.get("time", ""), reverse=True)[:5000]
+
+
 def attempt_date(attempt: Dict[str, Any]) -> str:
     return str(attempt.get("date") or str(attempt.get("time") or "")[:10])
 
 
 def _progress_shard_id(question_id: str) -> str:
     return str(sum(ord(character) for character in question_id) % PROGRESS_SHARD_COUNT).zfill(2)
+
+
+def _review_attempt_segment_id(attempt_id: str) -> str:
+    hash_value = 2166136261
+    for character in str(attempt_id):
+        hash_value ^= ord(character)
+        hash_value = (hash_value * 16777619) & 0xFFFFFFFF
+    return str(hash_value % REVIEW_ATTEMPT_SEGMENT_COUNT).zfill(2)
 
 
 def _extract_http_error_message(body: str) -> str:

@@ -22,6 +22,7 @@ import {
   offlineDataCoverage,
 } from './offlineSupport.js';
 import { clearRecordSyncCheckpoint, updateRecordSyncCheckpoint } from './firestoreSync.js';
+import { reviewAttemptSegmentsRef } from './repositories/reviewDaysRepository.js';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCfy63R72H6LDCb-bR7L7RwkKNnGCTHPgU',
@@ -66,6 +67,7 @@ export async function prepareOfflineFirestoreData(uid, today, onProgress, { forc
     ['reviewSettings', '測驗設定', doc(db, 'users', uid, 'settings', 'review')],
     ['grammarReview', '自選練習', doc(db, 'users', uid, 'settings', 'grammarReview')],
     [`reviewDay:${today}`, '今日作答紀錄', doc(db, 'users', uid, 'reviewDays', today)],
+    [`reviewAttemptSegments:${today}`, '今日分段作答紀錄', reviewAttemptSegmentsRef(db, uid, today)],
   ];
   if (forceFull) {
     clearOfflineDataCoverage(uid);

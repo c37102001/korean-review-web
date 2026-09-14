@@ -128,10 +128,13 @@ class OfflineTests(unittest.TestCase):
         commits = [call for call in network.call_args_list if call.args[0] == 'POST']
         self.assertEqual(len(commits), 1)
         writes = commits[0].kwargs['payload']['writes']
-        self.assertEqual(len(writes), 4)
+        self.assertEqual(len(writes), 5)
         shard = next(write for write in writes if '/progressShards/' in write.get('update', {}).get('name', ''))
         self.assertEqual(shard['currentDocument'], {'exists': False})
         self.assertEqual(shard['updateMask']['fieldPaths'], ['entries.`q`'])
+        attempt_write = next(write for write in writes if '/attemptSegments/' in write.get('update', {}).get('name', ''))
+        self.assertEqual(attempt_write['updateMask']['fieldPaths'], ['date', 'segmentId'])
+        self.assertEqual(attempt_write['updateTransforms'][0]['fieldPath'], 'attempts')
 
     def test_offline_attempt_journal_survives_display_history_truncation(self):
         self.client.start_offline(self.session)

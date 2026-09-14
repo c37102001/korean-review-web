@@ -55,16 +55,60 @@ IndexedDB 佇列；恢復網路後自動依序同步。畫面頂端會顯示離�
 學習內容直接讀寫 Firestore（schema v3）：
 
 - `users/{uid}/records/{recordId}`：單字卡唯一資料來源
-- `users/{uid}/progressShards/{00..15}`：分成 16 份的答題統計與 SRS 進度
-- `users/{uid}/reviewDays/{date}`：按日期分組的作答紀錄
+- `users/{uid}/progressShards/{00..15}`：固定 16 份的答題統計與 SRS 進度
+- `users/{uid}/reviewDays/{date}`：每日摘要；不再持續累積大型作答陣列
+- `users/{uid}/reviewDays/{date}/attemptSegments/{00..15}`：固定 16 段的當日作答紀錄
 - `users/{uid}/settings/review`：星號、完成日期與 DB schema 版本
 - `users/{uid}/settings/grammarReview`：網頁與 Terminal 共用的自選練習題組與抽題輪次
 
-progress shard 只會原子更新變動題目；作答紀錄使用原子追加，避免網頁、手機與 terminal 同時使用時互相覆寫。
+progress shard 只會原子更新變動題目；新作答依 attempt id 分散到固定 16 個 segment，
+使用原子追加避免網頁、手機與 Terminal 同時使用時互相覆寫。程式仍可讀取尚未遷移的
+`reviewDays.attempts`，但不會再寫入該舊欄位。
 單字同步採用 `updatedAt` checkpoint。第一次在裝置載入會建立完整基準，之後先顯示
 IndexedDB／Terminal 快取，再只下載 checkpoint 之後異動的單字。刪除單字會保留帶有
 `deletedAt` 的同步 tombstone；資料夾、筆記及 YT 字幕也使用相同方式傳播刪除，避免其他
 離線裝置重新顯示已刪除內容。
+
+舊版每日作答資料可先預覽、再遷移：
+
+```bash
+npm run db:migrate-review-days
+npm run db:migrate-review-days -- --apply
+```
+
+`--apply` 會先建立 segments 並保留舊欄位，避免尚未更新的網頁版本看不到作答。
+新版網頁部署後，再移除相容副本：
+
+```bash
+npm run db:migrate-review-days -- --cleanup-legacy
+```
+
+Firestore Rules 與單欄索引豁免需一起部署：
+
+```bash
+npx firebase deploy --only firestore:rules,firestore:indexes --project korean-review-web
+```
+
+大型 map/array（單字內容、folder word ids、progress entries、字幕、閱讀題與作答 segments）
+都已關閉不需要的單欄索引，減少索引儲存與寫入放大。
+
+## 程式架構與測試
+
+領域邏輯逐步由 `main.jsx` 分離至 `words/`、`folders/`、`notes/`、`subtitles/`、
+`review-engine/`、`practice/`，Firestore 路徑與每日作答分段集中於 `repositories/`。
+
+一般測試：
+
+```bash
+npm test
+```
+
+Firestore Emulator 整合測試涵蓋使用者隔離、shard 上限、tombstone 增量同步及多客戶端
+同時追加作答。執行前需要 Java 21 或更新版本：
+
+```bash
+npm run test:emulator
+```
 
 內容 schema v2：
 

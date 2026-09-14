@@ -1,0 +1,23 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    { "collectionGroup": "records", "fieldPath": "item", "indexes": [] },
+    { "collectionGroup": "records", "fieldPath": "meanings", "indexes": [] },
+    { "collectionGroup": "records", "fieldPath": "notes", "indexes": [] },
+    { "collectionGroup": "records", "fieldPath": "related", "indexes": [] },
+    { "collectionGroup": "folders", "fieldPath": "wordIds", "indexes": [] },
+    { "collectionGroup": "progressShards", "fieldPath": "entries", "indexes": [] },
+    { "collectionGroup": "reviewDays", "fieldPath": "attempts", "indexes": [] },
+    { "collectionGroup": "attemptSegments", "fieldPath": "attempts", "indexes": [] },
+    { "collectionGroup": "grammarNotes", "fieldPath": "examples", "indexes": [] },
+    { "collectionGroup": "ytSubtitles", "fieldPath": "entries", "indexes": [] },
+    { "collectionGroup": "readingTests", "fieldPath": "passage", "indexes": [] },
+    { "collectionGroup": "readingTests", "fieldPath": "question", "indexes": [] },
+    { "collectionGroup": "readingTests", "fieldPath": "options", "indexes": [] },
+    { "collectionGroup": "settings", "fieldPath": "completedReviewDates", "indexes": [] },
+    { "collectionGroup": "settings", "fieldPath": "starred", "indexes": [] },
+    { "collectionGroup": "settings", "fieldPath": "recognition", "indexes": [] },
+    { "collectionGroup": "settings", "fieldPath": "optionalPractice", "indexes": [] },
+    { "collectionGroup": "settings", "fieldPath": "terminalOfflineReceipts", "indexes": [] }
+  ]
+}

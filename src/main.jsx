@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useOptionalPractice } from './optionalPractice.js';
+import { useOptionalPractice } from './practice/optionalPractice.js';
 import {
   ArrowDown,
   ArrowUp,
@@ -57,6 +57,27 @@ import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndP
 import { arrayRemove, arrayUnion, collection, deleteDoc, deleteField, doc, FieldPath, getDocsFromCache, onSnapshot, query, serverTimestamp, setDoc, Timestamp, where, writeBatch } from 'firebase/firestore';
 import { auth, db, prepareOfflineFirestoreData, setFirestoreNetworkEnabled, waitForFirestoreSync } from './firebase.js';
 import {
+  defaultLearnedFolder,
+  defaultUnfamiliarFolder,
+  folderTagLabel,
+  groupFoldersByTag,
+  isLearnedFolder,
+  isSystemFolder,
+  isUnfamiliarFolder,
+  normalizeFolder,
+  READING_SOURCE_FOLDER_ID,
+  READING_SOURCE_FOLDER_NAME,
+  SYSTEM_LEARNED_FOLDER_ID,
+  SYSTEM_LEARNED_FOLDER_NAME,
+  SYSTEM_UNFAMILIAR_FOLDER_ID,
+  SYSTEM_UNFAMILIAR_FOLDER_NAME,
+  systemFolderRank,
+  toggleFolderGroupSelection,
+  UNTAGGED_FOLDER_LABEL,
+  YT_SOURCE_FOLDER_ID,
+  YT_SOURCE_FOLDER_NAME,
+} from './folders/model.js';
+import {
   activeRecordDocuments,
   mergeRecordDocuments,
   recordSyncCheckpoint,
@@ -76,29 +97,44 @@ import {
   setManualOfflineEnabled,
   trackOfflineWrite,
 } from './offlineSupport.js';
+import {
+  formatGrammarExamplesText,
+  formatTaggedNoteText,
+  normalizeGrammarNote,
+  NOTE_CATEGORY_GRAMMAR,
+  NOTE_CATEGORY_VOCABULARY,
+  parseGrammarExamplesText,
+  parseTaggedNoteText,
+} from './notes/model.js';
+import {
+  createReviewAttemptWriteOperations,
+  attemptsFromSegmentsSnapshot,
+  mergeReviewAttempts,
+  reviewAttemptSegmentsRef,
+  reviewDayRef,
+} from './repositories/reviewDaysRepository.js';
+import { attemptDate, emptyStore, progressShardId } from './review-engine/store.js';
+import { createId } from './shared/id.js';
+import {
+  groupYoutubeSubtitlesByTag,
+  naverDictionaryUrl,
+  normalizeYoutubeSubtitle,
+  subtitleEntryAtTime,
+  subtitleTagLabel as youtubeSubtitleTagLabel,
+  YOUTUBE_EMBED_ORIGIN,
+  youtubeVideoId,
+  YT_SUBTITLE_MODE_JSON,
+  YT_SUBTITLE_MODE_SRT,
+} from './subtitles/model.js';
+import { recordOrder, sortRecords } from './words/records.js';
 import './styles.css';
 
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
 const DAILY_RECOGNITION_LIMIT = 50;
 const DAILY_RECOGNITION_MODE = 'daily-recognition';
 const DAILY_GRAMMAR_MODE = 'daily-grammar';
-const NOTE_CATEGORY_GRAMMAR = 'grammar';
-const NOTE_CATEGORY_VOCABULARY = 'vocabulary';
-const YT_SUBTITLE_MODE_JSON = 'json';
-const YT_SUBTITLE_MODE_SRT = 'srt';
-const YOUTUBE_EMBED_ORIGIN = 'https://www.youtube-nocookie.com';
-const SYSTEM_LEARNED_FOLDER_ID = 'system-learned';
-const SYSTEM_LEARNED_FOLDER_NAME = '已學習';
-const SYSTEM_UNFAMILIAR_FOLDER_ID = 'system-unfamiliar';
-const SYSTEM_UNFAMILIAR_FOLDER_NAME = '不熟悉';
-const YT_SOURCE_FOLDER_ID = 'source-yt-subtitles';
-const YT_SOURCE_FOLDER_NAME = 'YT字幕';
-const READING_SOURCE_FOLDER_ID = 'source-reading-tests';
-const READING_SOURCE_FOLDER_NAME = '閱讀測驗';
-const UNTAGGED_FOLDER_LABEL = '無標籤';
 const CONTENT_SCHEMA_VERSION = 2;
 const FIRESTORE_SCHEMA_VERSION = 3;
-const PROGRESS_SHARD_COUNT = 16;
 const MAX_ATOMIC_RECORD_WRITES = 450;
 const PUNCTUATION_RE = /[^\p{L}\p{N}\s]/gu;
 const SPEECH_VOICE_STORAGE_KEY = 'korean-review-speech-voices-v1';
@@ -111,22 +147,7 @@ const SPEECH_SAMPLE_TEXT = {
 };
 const MARKDOWN_PLUGINS = [remarkGfm];
 
-let localIdSequence = 0;
 let youtubeIframeApiPromise = null;
-
-function createId() {
-  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  if (typeof globalThis.crypto?.getRandomValues === 'function') {
-    globalThis.crypto.getRandomValues(bytes);
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-  }
-  localIdSequence += 1;
-  return `${Date.now().toString(36)}-${localIdSequence}-${Math.random().toString(36).slice(2, 12)}`;
-}
 
 async function copyText(text) {
   if (navigator.clipboard?.writeText) {
@@ -188,18 +209,6 @@ const addDays = (date, days) => {
 };
 const dateLabel = (date) => new Intl.DateTimeFormat('zh-TW', { month: 'long', day: 'numeric', weekday: 'short' }).format(new Date(`${date}T00:00:00`));
 const monthTitle = (date) => new Intl.DateTimeFormat('zh-TW', { year: 'numeric', month: 'long' }).format(date);
-
-function emptyStore() {
-  return {
-    stats: {},
-    progress: {},
-    attempts: [],
-    customRecords: [],
-    completedReviewDates: [],
-    starred: [],
-    recognition: null,
-  };
-}
 
 function useAuthUser() {
   const [authState, setAuthState] = useState({ loading: true, user: null });
@@ -375,152 +384,6 @@ function useOfflineMode(user) {
   return { ...state, active: !state.online || state.manual, prepare, toggleManual };
 }
 
-function normalizeGrammarNote(note, fallbackId = '') {
-  const examples = Array.isArray(note?.examples)
-    ? note.examples.map((example, index) => ({
-      id: String(example?.id || `${fallbackId || 'grammar'}-example-${index}`),
-      ko: String(example?.ko || '').trim(),
-      zh: String(example?.zh || '').trim(),
-    })).filter((example) => example.ko || example.zh)
-    : [];
-  return {
-    id: String(note?.id || fallbackId),
-    title: String(note?.title || '').trim(),
-    notes: String(note?.notes || '').trim(),
-    examples,
-    category: note?.category === NOTE_CATEGORY_VOCABULARY
-      ? NOTE_CATEGORY_VOCABULARY
-      : NOTE_CATEGORY_GRAMMAR,
-    pinned: note?.pinned === true,
-    createdAt: String(note?.createdAt || ''),
-    updatedAt: String(note?.updatedAt || ''),
-  };
-}
-
-function formatGrammarExamplesText(examples = []) {
-  return examples
-    .filter((example) => example.ko || example.zh)
-    .map((example) => `${example.ko || ''}\n${example.zh || ''}`)
-    .join('\n\n');
-}
-
-function parseGrammarExamplesText(text, existingExamples = []) {
-  const lines = String(text || '')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (!lines.length) return [];
-  if (lines.length % 2 !== 0) {
-    const incompleteNumber = Math.floor(lines.length / 2) + 1;
-    throw new Error(`第 ${incompleteNumber} 個例句缺少中文翻譯`);
-  }
-
-  const parsed = [];
-  for (let index = 0; index < lines.length; index += 2) {
-    parsed.push({ ko: lines[index], zh: lines[index + 1] });
-  }
-
-  const usedIds = new Set();
-  const resolved = parsed.map((example) => {
-    const exact = existingExamples.find((current) => (
-      !usedIds.has(current.id)
-      && String(current.ko || '').trim() === example.ko
-      && String(current.zh || '').trim() === example.zh
-    ));
-    if (!exact) return example;
-    usedIds.add(exact.id);
-    return { ...example, id: exact.id };
-  });
-
-  return resolved.map((example, index) => {
-    if (example.id) return example;
-    const samePosition = existingExamples[index];
-    if (samePosition?.id && !usedIds.has(samePosition.id)) {
-      usedIds.add(samePosition.id);
-      return { ...example, id: samePosition.id };
-    }
-    const unused = existingExamples.find((current) => current.id && !usedIds.has(current.id));
-    if (unused) {
-      usedIds.add(unused.id);
-      return { ...example, id: unused.id };
-    }
-    return { ...example, id: createId() };
-  });
-}
-
-function formatTaggedNoteText(note) {
-  return [
-    '[標題]',
-    '',
-    String(note?.title || '').trim(),
-    '',
-    '[筆記]',
-    '',
-    String(note?.notes || '').trim(),
-    '',
-    '[例句]',
-    '',
-    formatGrammarExamplesText(note?.examples || []),
-  ].join('\n').trimEnd();
-}
-
-function parseTaggedNoteText(text, existingExamples = []) {
-  const normalized = String(text || '')
-    .replace(/\r\n?/g, '\n')
-    .split('\n')
-    .map((line) => line.replace(/[ \t]*\\[ \t]*$/, ''))
-    .join('\n');
-  const tagPattern = /^\s*\[(標題|筆記|例句)\]\s*$/gm;
-  const matches = [...normalized.matchAll(tagPattern)];
-  const requiredTags = ['標題', '筆記', '例句'];
-  const counts = new Map(requiredTags.map((tag) => [tag, 0]));
-  matches.forEach((match) => counts.set(match[1], (counts.get(match[1]) || 0) + 1));
-
-  const missing = requiredTags.filter((tag) => !counts.get(tag));
-  if (missing.length) throw new Error(`缺少 ${missing.map((tag) => `[${tag}]`).join('、')} 區段`);
-  const duplicated = requiredTags.filter((tag) => counts.get(tag) > 1);
-  if (duplicated.length) throw new Error(`${duplicated.map((tag) => `[${tag}]`).join('、')} 不可以重複`);
-
-  const sections = {};
-  matches.forEach((match, index) => {
-    const contentStart = match.index + match[0].length;
-    const contentEnd = matches[index + 1]?.index ?? normalized.length;
-    sections[match[1]] = normalized.slice(contentStart, contentEnd).trim();
-  });
-  if (!sections.標題) throw new Error('[標題] 內容不可留空');
-
-  return {
-    title: sections.標題,
-    notes: sections.筆記 || '',
-    examples: parseGrammarExamplesText(sections.例句 || '', existingExamples),
-  };
-}
-
-function normalizeYoutubeSubtitle(note, fallbackId = '') {
-  const mode = note?.mode === YT_SUBTITLE_MODE_SRT ? YT_SUBTITLE_MODE_SRT : YT_SUBTITLE_MODE_JSON;
-  const entries = Array.isArray(note?.entries)
-    ? note.entries.map((entry, index) => ({
-      id: String(entry?.id || `${fallbackId || 'subtitle'}-entry-${index}`),
-      ko: String(entry?.ko || '').trim(),
-      zh: String(entry?.zh || '').trim(),
-      startMs: Number.isFinite(Number(entry?.startMs)) ? Math.max(0, Math.floor(Number(entry.startMs))) : null,
-      endMs: Number.isFinite(Number(entry?.endMs)) ? Math.max(0, Math.floor(Number(entry.endMs))) : null,
-    })).filter((entry) => entry.ko && entry.zh)
-    : [];
-  return {
-    id: String(note?.id || fallbackId),
-    title: String(note?.title || '').trim(),
-    tag: String(note?.tag || '').trim(),
-    learned: note?.learned === true,
-    youtubeUrl: String(note?.youtubeUrl || '').trim(),
-    videoId: youtubeVideoId(note?.youtubeUrl || note?.videoId || ''),
-    mode,
-    entries,
-    createdAt: String(note?.createdAt || ''),
-    updatedAt: String(note?.updatedAt || ''),
-  };
-}
-
 function normalizeReadingTest(input, fallbackId = '') {
   const options = Array.isArray(input?.options)
     ? input.options.map((option, index) => ({
@@ -600,28 +463,6 @@ function formatReadingTestsJson(tests = []) {
       ...(Number.isSafeInteger(test.order) ? { order: test.order } : {}),
     })),
   }, null, 2);
-}
-
-function youtubeVideoId(value) {
-  const input = String(value || '').trim();
-  if (!input) return '';
-  try {
-    const url = new URL(input);
-    const host = url.hostname.replace(/^www\./, '').toLowerCase();
-    if (host === 'youtu.be') return url.pathname.split('/').filter(Boolean)[0] || '';
-    if (host.endsWith('youtube.com')) {
-      if (url.pathname === '/watch') return url.searchParams.get('v') || '';
-      const parts = url.pathname.split('/').filter(Boolean);
-      if (['embed', 'shorts', 'live'].includes(parts[0])) return parts[1] || '';
-    }
-  } catch {
-    return '';
-  }
-  return '';
-}
-
-function naverDictionaryUrl(query) {
-  return `https://korean.dict.naver.com/kozhdict/#/search?query=${encodeURIComponent(String(query || '').trim())}`;
 }
 
 function subtitleEntryIds(entries, existingEntries = []) {
@@ -739,16 +580,6 @@ function subtitleWordMatches(text, words = []) {
       if (!previous || match.start >= previous.end) accepted.push(match);
       return accepted;
     }, []);
-}
-
-function subtitleEntryAtTime(entries = [], milliseconds) {
-  const current = Number(milliseconds);
-  if (!Number.isFinite(current)) return null;
-  return entries.find((entry) => (
-    entry.startMs !== null
-    && current >= entry.startMs
-    && (entry.endMs === null || current < entry.endMs)
-  )) || null;
 }
 
 function useGrammarNotes(user, enabled = true) {
@@ -964,113 +795,6 @@ function useReadingTests(user, enabled = true) {
   return { ...state, save, saveMany, remove };
 }
 
-function normalizeFolder(folder, fallbackId = '') {
-  return {
-    id: String(folder?.id || fallbackId),
-    name: String(folder?.name || '').trim(),
-    tag: String(folder?.tag || '').trim(),
-    pinned: folder?.pinned === true,
-    wordIds: [...new Set((Array.isArray(folder?.wordIds) ? folder.wordIds : []).filter(Boolean).map(String))],
-    createdAt: String(folder?.createdAt || ''),
-    updatedAt: String(folder?.updatedAt || ''),
-    systemKey: String(folder?.systemKey || ''),
-  };
-}
-
-function folderTagLabel(folder) {
-  return String(folder?.tag || '').trim() || UNTAGGED_FOLDER_LABEL;
-}
-
-function groupFoldersByTag(folders = []) {
-  const groups = new Map();
-  folders.forEach((folder) => {
-    const label = folderTagLabel(folder);
-    if (!groups.has(label)) groups.set(label, []);
-    groups.get(label).push(folder);
-  });
-  return [...groups.entries()]
-    .map(([label, groupedFolders]) => ({ label, folders: groupedFolders }))
-    .sort((left, right) => {
-      if (left.label === UNTAGGED_FOLDER_LABEL) return 1;
-      if (right.label === UNTAGGED_FOLDER_LABEL) return -1;
-      return left.label.localeCompare(right.label, 'zh-TW');
-    });
-}
-
-function youtubeSubtitleTagLabel(note) {
-  return String(note?.tag || '').trim() || UNTAGGED_FOLDER_LABEL;
-}
-
-function groupYoutubeSubtitlesByTag(notes = []) {
-  const groups = new Map();
-  notes.forEach((note) => {
-    const label = youtubeSubtitleTagLabel(note);
-    if (!groups.has(label)) groups.set(label, []);
-    groups.get(label).push(note);
-  });
-  return [...groups.entries()]
-    .map(([label, groupedNotes]) => ({ label, notes: groupedNotes }))
-    .sort((left, right) => {
-      if (left.label === UNTAGGED_FOLDER_LABEL) return 1;
-      if (right.label === UNTAGGED_FOLDER_LABEL) return -1;
-      return left.label.localeCompare(right.label, 'zh-TW');
-    });
-}
-
-function toggleFolderGroupSelection(selectedFolderIds = [], groupFolderIds = []) {
-  const selected = new Set(selectedFolderIds);
-  const allSelected = groupFolderIds.length > 0 && groupFolderIds.every((folderId) => selected.has(folderId));
-  if (allSelected) groupFolderIds.forEach((folderId) => selected.delete(folderId));
-  else groupFolderIds.forEach((folderId) => selected.add(folderId));
-  return [...selected];
-}
-
-function isLearnedFolder(folder) {
-  return folder?.id === SYSTEM_LEARNED_FOLDER_ID
-    || folder?.systemKey === 'learned'
-    || folder?.name === SYSTEM_LEARNED_FOLDER_NAME;
-}
-
-function isUnfamiliarFolder(folder) {
-  return folder?.id === SYSTEM_UNFAMILIAR_FOLDER_ID
-    || folder?.systemKey === 'unfamiliar'
-    || folder?.name === SYSTEM_UNFAMILIAR_FOLDER_NAME;
-}
-
-function isSystemFolder(folder) {
-  return isLearnedFolder(folder) || isUnfamiliarFolder(folder);
-}
-
-function systemFolderRank(folder) {
-  if (isLearnedFolder(folder)) return 0;
-  if (isUnfamiliarFolder(folder)) return 1;
-  return 2;
-}
-
-function defaultLearnedFolder() {
-  const now = new Date().toISOString();
-  return normalizeFolder({
-    id: SYSTEM_LEARNED_FOLDER_ID,
-    name: SYSTEM_LEARNED_FOLDER_NAME,
-    wordIds: [],
-    systemKey: 'learned',
-    createdAt: now,
-    updatedAt: now,
-  }, SYSTEM_LEARNED_FOLDER_ID);
-}
-
-function defaultUnfamiliarFolder() {
-  const now = new Date().toISOString();
-  return normalizeFolder({
-    id: SYSTEM_UNFAMILIAR_FOLDER_ID,
-    name: SYSTEM_UNFAMILIAR_FOLDER_NAME,
-    wordIds: [],
-    systemKey: 'unfamiliar',
-    createdAt: now,
-    updatedAt: now,
-  }, SYSTEM_UNFAMILIAR_FOLDER_ID);
-}
-
 function useWordFolders(user, enabled = true) {
   const [state, setState] = useState({ folders: [], loading: false, error: '' });
 
@@ -1221,29 +945,12 @@ function useWordFolders(user, enabled = true) {
   return { ...state, save, remove, addWords, removeWords, addWordsToFolders, createFolderAndAssign };
 }
 
-function sortRecords(records) {
-  return records.sort((a, b) => {
-    if (a.date === b.date) {
-      const orderDifference = recordOrder(a) - recordOrder(b);
-      if (orderDifference) return orderDifference;
-      return String(a.id || '').localeCompare(String(b.id || ''));
-    }
-    return a.date.localeCompare(b.date);
-  });
-}
-
 function recordsFromSnapshot(snap) {
   return sortRecords(activeRecordDocuments(snap.docs));
 }
 
 function mergeRecordSnapshot(records, snap) {
   return sortRecords(mergeRecordDocuments(records, snap.docs));
-}
-
-function recordOrder(record) {
-  if (Number.isSafeInteger(record?.order)) return record.order;
-  const createdAt = Date.parse(record?.createdAt || '');
-  return Number.isFinite(createdAt) ? createdAt * 1000 : 0;
 }
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -1308,25 +1015,6 @@ async function commitFirestoreOperations(operations, chunkSize = 400) {
   }
 }
 
-function attemptsByDate(attempts) {
-  return (attempts || []).reduce((groups, attempt) => {
-    const date = attemptDate(attempt);
-    if (!date) return groups;
-    if (!groups[date]) groups[date] = [];
-    groups[date].push(attempt);
-    return groups;
-  }, {});
-}
-
-function attemptDate(attempt) {
-  return attempt?.date || attempt?.time?.slice(0, 10) || '';
-}
-
-function progressShardId(questionId) {
-  const hash = [...questionId].reduce((sum, character) => sum + character.codePointAt(0), 0);
-  return String(hash % PROGRESS_SHARD_COUNT).padStart(2, '0');
-}
-
 async function persistFirestoreStoreChanges(uid, previous, next) {
   const operations = [];
   const changedEntriesByShard = new Map();
@@ -1356,10 +1044,7 @@ async function persistFirestoreStoreChanges(uid, previous, next) {
 
   const previousAttemptIds = new Set((previous.attempts || []).map((attempt) => attempt.id));
   const addedAttempts = (next.attempts || []).filter((attempt) => !previousAttemptIds.has(attempt.id));
-  Object.entries(attemptsByDate(addedAttempts)).forEach(([date, attempts]) => {
-    const ref = doc(db, 'users', uid, 'reviewDays', date);
-    operations.push((batch) => batch.set(ref, { date, attempts: arrayUnion(...attempts), updatedAt: serverTimestamp() }, { merge: true }));
-  });
+  operations.push(...createReviewAttemptWriteOperations(db, uid, previous.attempts, addedAttempts));
 
   const previousCompletedDates = new Set(previous.completedReviewDates || []);
   const addedCompletedDates = (next.completedReviewDates || []).filter((date) => !previousCompletedDates.has(date));
@@ -1426,13 +1111,13 @@ function useFirestoreStore(user) {
         const today = todayString();
         const applySnapshot = (key, value) => {
           initial.set(key, value);
-          if (!initialized && ['records', 'settings', 'progress', 'attempts'].every((name) => initial.has(name))) {
+          if (!initialized && ['records', 'settings', 'progress', 'attemptsLegacy', 'attemptsSegments'].every((name) => initial.has(name))) {
             initialized = true;
             const loadedStore = {
               ...emptyStore(),
               ...initial.get('settings'),
               ...initial.get('progress'),
-              attempts: initial.get('attempts'),
+              attempts: mergeReviewAttempts(initial.get('attemptsLegacy'), initial.get('attemptsSegments')),
               customRecords: initial.get('records'),
             };
             storeRef.current = loadedStore;
@@ -1545,17 +1230,27 @@ function useFirestoreStore(user) {
           'progress',
         );
         listen(
-          'attempts',
-          doc(db, 'users', user.uid, 'reviewDays', today),
+          'attemptsLegacy',
+          reviewDayRef(db, user.uid, today),
           (snap) => (snap.exists() ? snap.data().attempts || [] : []),
           (current, todayAttempts) => {
             const otherAttempts = (current.attempts || []).filter((attempt) => attemptDate(attempt) !== today);
             return {
               ...current,
-              attempts: [...todayAttempts, ...otherAttempts].sort((a, b) => (b.time || '').localeCompare(a.time || '')),
+              attempts: mergeReviewAttempts(todayAttempts, otherAttempts),
             };
           },
           `reviewDay:${today}`,
+        );
+        listen(
+          'attemptsSegments',
+          reviewAttemptSegmentsRef(db, user.uid, today),
+          attemptsFromSegmentsSnapshot,
+          (current, todayAttempts) => ({
+            ...current,
+            attempts: mergeReviewAttempts(current.attempts, todayAttempts),
+          }),
+          `reviewAttemptSegments:${today}`,
         );
       } catch (error) {
         if (!cancelled) setState({ loading: false, error: error.message, store: emptyStore() });
