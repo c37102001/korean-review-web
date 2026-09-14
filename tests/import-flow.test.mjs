@@ -911,6 +911,27 @@ test('Korean-to-Chinese questions auto-pronounce when each prompt appears', () =
   }), true);
 });
 
+test('revealing a Korean-to-Chinese answer cannot restart Korean prompt speech', () => {
+  const prompt = {
+    started: true, recognitionMode: false, grammarMode: false,
+    activeDirection: 'ko-zh', autoPronounce: true,
+    recognitionWordVisible: false, revealed: false, graded: false,
+    question: { id: 'word', ko: '건너다', zh: '跨越' },
+  };
+  assert.equal(helpers.shouldAutoPronouncePracticePrompt(prompt), true);
+  const next = helpers.nextRecognitionRevealState(false, false, false);
+  assert.equal(helpers.shouldAutoPronouncePracticePrompt({
+    ...prompt, recognitionWordVisible: next.wordVisible, revealed: next.revealed,
+  }), false);
+  assert.equal(helpers.shouldAutoPronouncePracticePrompt({ ...prompt, graded: true }), false);
+});
+
+test('daily answer speech selects one language instead of combining both', () => {
+  const question = { ko: '슬리퍼', zh: '拖鞋' };
+  assert.deepEqual(helpers.practiceAnswerSpeech(question, false), { text: '슬리퍼', lang: 'ko-KR' });
+  assert.deepEqual(helpers.practiceAnswerSpeech(question, true), { text: '拖鞋', lang: 'zh-TW' });
+});
+
 test('word-only search includes Korean and Chinese meanings but ignores card details', () => {
   const weather = {
     ko: '날씨',

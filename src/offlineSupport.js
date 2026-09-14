@@ -52,13 +52,7 @@ export function clearOfflinePendingWrites() {
   setPendingWrites(0, { syncError: '' });
 }
 
-export function queueOfflineWrite(operation, label = '離線操作') {
-  let pending;
-  try {
-    pending = operation();
-  } catch (error) {
-    return Promise.reject(error);
-  }
+export function trackOfflineWrite(pending, label = '離線操作') {
   setPendingWrites(offlinePendingWrites() + 1, { queuedLabel: label });
   Promise.resolve(pending).then(
     () => setPendingWrites(offlinePendingWrites() - 1, { syncedLabel: label, syncError: '' }),
@@ -67,6 +61,14 @@ export function queueOfflineWrite(operation, label = '離線操作') {
     }),
   );
   return Promise.resolve({ queuedOffline: true });
+}
+
+export function queueOfflineWrite(operation, label = '離線操作') {
+  try {
+    return trackOfflineWrite(operation(), label);
+  } catch (error) {
+    return Promise.reject(error);
+  }
 }
 
 export function offlineReadyState(uid = '') {

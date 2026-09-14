@@ -27,10 +27,12 @@ import {
   FolderInput,
   FolderOpen,
   FolderPlus,
+  Highlighter,
   LibraryBig,
   ListChecks,
   Link2,
   LogOut,
+  Minus,
   NotebookPen,
   Pencil,
   Pin,
@@ -65,6 +67,7 @@ import {
   OFFLINE_STATUS_EVENT,
   queueOfflineWrite,
   setManualOfflineEnabled,
+  trackOfflineWrite,
 } from './offlineSupport.js';
 import './styles.css';
 
@@ -92,6 +95,9 @@ const PROGRESS_SHARD_COUNT = 16;
 const MAX_ATOMIC_RECORD_WRITES = 450;
 const PUNCTUATION_RE = /[^\p{L}\p{N}\s]/gu;
 const SPEECH_VOICE_STORAGE_KEY = 'korean-review-speech-voices-v1';
+const FONT_SCALE_STORAGE_KEY = 'korean-review-font-scale-v1';
+const FONT_SCALE_MIN = 80;
+const FONT_SCALE_MAX = 150;
 const SPEECH_SAMPLE_TEXT = {
   ko: '오늘도 즐겁게 한국어를 공부해요.',
   zh: '今天也一起開心地學習韓文。',
@@ -1203,8 +1209,16 @@ async function retryFirestoreWrite(operation, maxAttempts = 4) {
   if (Date.now() < firestoreWritesBlockedUntil && firestoreQuotaError) throw firestoreQuotaError;
   let lastError;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let timeoutId;
     try {
-      const result = await operation();
+      const pendingWrite = Promise.resolve().then(operation);
+      const result = await Promise.race([
+        pendingWrite,
+        new Promise((resolve) => {
+          timeoutId = setTimeout(() => resolve({ timedOut: true }), 8000);
+        }),
+      ]);
+      if (result?.timedOut) return trackOfflineWrite(pendingWrite, 'Firebase 資料');
       firestoreWritesBlockedUntil = 0;
       firestoreQuotaError = null;
       return result;
@@ -1217,6 +1231,8 @@ async function retryFirestoreWrite(operation, maxAttempts = 4) {
       }
       if (!isTransientFirestoreError(error) || attempt === maxAttempts) throw error;
       await wait(500 * (2 ** (attempt - 1)));
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
   throw lastError;
@@ -2087,7 +2103,7 @@ function resolveImportConflictDraft(draft, choice, allItems = []) {
 }
 
 async function writeLearningRecords(uid, records, onProgress, folderIds = [], additionalFolderWordIds = [], foldersToCreate = [], folderPatches = [], removeFolderIds = []) {
-  const queuedOffline = isBrowserOffline();
+  let queuedOffline = isBrowserOffline();
   const uniqueFolderIds = [...new Set(folderIds)].filter(Boolean);
   const extraWordIds = [...new Set(additionalFolderWordIds)].filter(Boolean);
   const newFolders = foldersToCreate.filter((folder) => folder?.id && folder?.name);
@@ -2147,7 +2163,7 @@ async function writeLearningRecords(uid, records, onProgress, folderIds = [], ad
     });
   }, 5000) : null;
   try {
-    await retryFirestoreWrite(async () => {
+    const writeResult = await retryFirestoreWrite(async () => {
       const batch = writeBatch(db);
       normalizedRecords.forEach((record) => batch.set(
         doc(db, 'users', uid, 'records', record.id),
@@ -2174,6 +2190,7 @@ async function writeLearningRecords(uid, records, onProgress, folderIds = [], ad
       ));
       await batch.commit();
     });
+    if (writeResult?.queuedOffline) queuedOffline = true;
   } finally {
     if (waitingTimer) clearInterval(waitingTimer);
   }
@@ -2886,6 +2903,32 @@ function speakAnswer(question) {
   speakText(question?.ko, 'ko-KR');
 }
 
+function practiceAnswerSpeech(question, useChinese = false) {
+  return useChinese
+    ? { text: question?.zh || '', lang: 'zh-TW' }
+    : { text: question?.ko || '', lang: 'ko-KR' };
+}
+
+function speakPracticeAnswer(question, useChinese = false, onError = () => {}) {
+  const speech = practiceAnswerSpeech(question, useChinese);
+  if (!speech.text.trim()) { onError('這題沒有可朗讀的答案文字。'); return; }
+  if (!window.speechSynthesis) { onError('此瀏覽器不支援語音播放。'); return; }
+  const synth = window.speechSynthesis;
+  const voices = synth.getVoices();
+  const preferred = findPreferredSpeechVoice(voices, readSpeechVoicePreferences()[speechLanguageKey(speech.lang)], speech.lang);
+  const voice = preferred
+    || voices.find((candidate) => normalizeSpeechLanguage(candidate.lang) === normalizeSpeechLanguage(speech.lang))
+    || voices.find((candidate) => normalizeSpeechLanguage(candidate.lang).startsWith(useChinese ? 'zh' : 'ko'));
+  const utterance = configureSpeechUtterance(new SpeechSynthesisUtterance(speech.text), speech.lang, voice);
+  utterance.onerror = (event) => {
+    if (['canceled', 'interrupted'].includes(event.error)) return;
+    onError(`${useChinese ? '中文' : '韓文'}語音播放失敗（${event.error || 'unknown'}）。請在首頁「語音設定」試聽並選擇可用聲音。`);
+  };
+  synth.cancel();
+  synth.resume();
+  synth.speak(utterance);
+}
+
 function shouldShowStudyChinese(hideChineseInitially, cardChineseRevealed) {
   return !hideChineseInitially || cardChineseRevealed;
 }
@@ -2999,9 +3042,20 @@ function App() {
   const [selectedFolderId, setSelectedFolderId] = useState(null);
   const [selectedYoutubeSubtitleId, setSelectedYoutubeSubtitleId] = useState(null);
   const [selectedReadingTestId, setSelectedReadingTestId] = useState(null);
+  const [fontScale, setFontScale] = useState(() => {
+    try {
+      const stored = Number(window.localStorage.getItem(FONT_SCALE_STORAGE_KEY));
+      return Number.isFinite(stored) ? Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, stored)) : 100;
+    } catch {
+      return 100;
+    }
+  });
   const selectedYoutubeSubtitle = ytSubtitles.notes.find((note) => note.id === selectedYoutubeSubtitleId);
   const selectedSubtitleHasFolder = page === 'ytSubtitle' && !!selectedYoutubeSubtitle && folders.folders.some((folder) => (
     folder.name.toLocaleLowerCase() === YT_SOURCE_FOLDER_NAME.toLocaleLowerCase()
+  ));
+  const selectedReadingHasFolder = page === 'readingTest' && folders.folders.some((folder) => (
+    folder.name.toLocaleLowerCase() === READING_SOURCE_FOLDER_NAME.toLocaleLowerCase()
   ));
   const allRecords = useMemo(() => {
     const byId = new Map();
@@ -3021,6 +3075,11 @@ function App() {
     () => dailyWrongTermQuestions(store, dailyQuestions, todayString()),
     [store.attempts, dailyQuestions],
   );
+
+  useEffect(() => {
+    document.documentElement.style.setProperty('--user-font-scale', String(fontScale / 100));
+    try { window.localStorage.setItem(FONT_SCALE_STORAGE_KEY, String(fontScale)); } catch { /* Local preferences are optional. */ }
+  }, [fontScale]);
 
   useEffect(() => {
     if (!user || storeLoading) return;
@@ -3136,7 +3195,7 @@ function App() {
   }
 
   const views = {
-    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} optionalPractice={optionalPractice} grammarNotes={grammar.notes} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} offlineMode={offlineMode} />,
+    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} optionalPractice={optionalPractice} grammarNotes={grammar.notes} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} offlineMode={offlineMode} fontScale={fontScale} onFontScaleChange={setFontScale} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('dateNotes')} />,
     dateNotes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} folders={folders.folders} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
@@ -3148,7 +3207,7 @@ function App() {
     ytSubtitles: <YoutubeSubtitlesPage notes={ytSubtitles.notes} error={ytSubtitles.error} onSave={ytSubtitles.save} onDelete={ytSubtitles.remove} onOpen={openYoutubeSubtitle} />,
     ytSubtitle: <YoutubeSubtitleReader note={selectedYoutubeSubtitle} allItems={items} folders={folders.folders} onAddRecords={addYoutubeSubtitleRecords} onBack={goUp} onOpenFolder={openFolder} onSave={ytSubtitles.save} onDelete={ytSubtitles.remove} />,
     readingTests: <ReadingTestsPage tests={readingTests.tests} error={readingTests.error} onSave={readingTests.save} onSaveMany={readingTests.saveMany} onDelete={readingTests.remove} onOpen={openReadingTest} />,
-    readingTest: <ReadingTestPage test={readingTests.tests.find((test) => test.id === selectedReadingTestId)} allItems={items} folders={folders.folders} onAddRecords={addReadingTestRecords} onSave={readingTests.save} onDelete={readingTests.remove} onBack={goUp} />,
+    readingTest: <ReadingTestPage test={readingTests.tests.find((test) => test.id === selectedReadingTestId)} allItems={items} folders={folders.folders} onAddRecords={addReadingTestRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} onOpenFolder={openFolder} onSave={readingTests.save} onDelete={readingTests.remove} onBack={goUp} />,
   };
 
   return (
@@ -3171,7 +3230,7 @@ function App() {
         {readingTests.error && <div className="sync-error">閱讀測驗同步失敗：{readingTests.error}</div>}
         {views[page]}
       </main>
-      {page !== 'home' && <button type="button" className={`global-back-button ${page === 'ytSubtitle' ? `with-yt-controls ${selectedYoutubeSubtitle?.videoId ? 'with-yt-video' : ''} ${selectedSubtitleHasFolder ? 'with-yt-folder' : ''}` : ''}`} onClick={goUp} title="回到上一層" aria-label="回到上一層"><ChevronLeft size={24} /></button>}
+      {page !== 'home' && <button type="button" className={`global-back-button ${page === 'ytSubtitle' ? `with-yt-controls ${selectedYoutubeSubtitle?.videoId ? 'with-yt-video' : ''} ${selectedSubtitleHasFolder ? 'with-yt-folder' : ''}` : ''} ${selectedReadingHasFolder ? 'with-reading-folder' : ''}`} onClick={goUp} title="回到上一層" aria-label="回到上一層"><ChevronLeft size={24} /></button>}
     </div>
   );
 }
@@ -3449,7 +3508,7 @@ export function OptionalPracticeModal({ store, questions, grammarQuestions, fold
   </div>;
 }
 
-function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestionsForToday, optionalPractice, grammarNotes, onPractice, onAddRecords, onUpdateRecord, onWriteRecords, folders = [], offlineMode }) {
+function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestionsForToday, optionalPractice, grammarNotes, onPractice, onAddRecords, onUpdateRecord, onWriteRecords, folders = [], offlineMode, fontScale, onFontScaleChange }) {
   const [addOpen, setAddOpen] = useState(false);
   const [practiceCreatorOpen, setPracticeCreatorOpen] = useState(false);
   const [practiceError, setPracticeError] = useState('');
@@ -3489,6 +3548,11 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
             <button onClick={() => setAddOpen(true)}><Plus size={18} /> 快速新增單字</button>
             <button onClick={() => setPracticeCreatorOpen(true)} disabled={optionalPractice.loading}><Plus size={18} /> 新增練習</button>
             <button onClick={() => setVoiceSettingsOpen(true)}><Volume2 size={18} /> 語音設定</button>
+            <div className="font-scale-control" aria-label="網頁字體大小">
+              <span>字體 {fontScale}%</span>
+              <button type="button" onClick={() => onFontScaleChange((current) => Math.max(FONT_SCALE_MIN, current - 5))} disabled={fontScale <= FONT_SCALE_MIN} title="縮小字體" aria-label="縮小字體"><Minus size={18} /></button>
+              <button type="button" onClick={() => onFontScaleChange((current) => Math.min(FONT_SCALE_MAX, current + 5))} disabled={fontScale >= FONT_SCALE_MAX} title="放大字體" aria-label="放大字體"><Plus size={18} /></button>
+            </div>
             <label className={`manual-offline-toggle ${offlineMode.manual ? 'active' : ''}`} title="開啟後只使用本機快取，所有修改會在關閉時同步">
               <span>{offlineMode.manual ? <WifiOff size={18} /> : <Wifi size={18} />} 主動離線</span>
               <input
@@ -5596,8 +5660,8 @@ function isSelfGradeAnswerMode(direction, answerMode = 'typing') {
   return direction === 'ko-zh' || answerMode === 'self-grade';
 }
 
-function shouldAutoPronouncePracticePrompt({ started, recognitionMode, grammarMode, activeDirection, autoPronounce, recognitionWordVisible, question }) {
-  if (!started || !question) return false;
+function shouldAutoPronouncePracticePrompt({ started, recognitionMode, grammarMode, activeDirection, autoPronounce, recognitionWordVisible, revealed, graded, question }) {
+  if (!started || !question || revealed || graded) return false;
   if (recognitionMode || grammarMode) return !recognitionWordVisible;
   return activeDirection === 'ko-zh' && autoPronounce;
 }
@@ -5646,6 +5710,8 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const completionStartedRef = useRef(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [autoPronounce, setAutoPronounce] = useState(!readingMode);
+  const [chinesePronunciation, setChinesePronunciation] = useState(true);
+  const [answerSpeechError, setAnswerSpeechError] = useState('');
   const [optionalSaving, setOptionalSaving] = useState(false);
   const optionalSavingRef = useRef(false);
   const sourceQuestions = useMemo(() => {
@@ -5663,6 +5729,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   }, [set.questions, source, direction, set.termOnly, set.dueOnly, set.allowAlphabeticalOrder, optionalMode, recognitionMode, grammarMode, grammarPracticeMode, store, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
+  const useChineseAnswerSpeech = dailyWordMode && chinesePronunciation;
   const canClassifyCurrentWord = Boolean(question && !grammarMode && !grammarPracticeMode && question.kind !== 'grammar-example');
   const isCurrentWordLearned = Boolean(
     question
@@ -5751,11 +5818,13 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
       activeDirection,
       autoPronounce,
       recognitionWordVisible,
+      revealed,
+      graded,
       question,
     })) return undefined;
     const timer = window.setTimeout(() => speakAnswer(question), 180);
     return () => window.clearTimeout(timer);
-  }, [started, recognitionMode, grammarMode, activeDirection, autoPronounce, recognitionWordVisible, question?.id]);
+  }, [started, recognitionMode, grammarMode, activeDirection, autoPronounce, recognitionWordVisible, revealed, graded, question?.id]);
 
   useEffect(() => {
     if (direction === 'ko-zh') setSource('term');
@@ -5889,7 +5958,8 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     setGraded(true);
     setLastCorrect(correct);
     if (soundEnabled) playResultSound(correct);
-    if (autoPronounce) window.setTimeout(() => speakAnswer(question), soundEnabled ? 320 : 0);
+    setAnswerSpeechError('');
+    if (autoPronounce) speakPracticeAnswer(question, useChineseAnswerSpeech, setAnswerSpeechError);
   };
   const gradeAndRecord = (correct) => {
     finalizeTypedGrade(correct);
@@ -5922,7 +5992,14 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   };
   const revealAnswerForSelfGrade = () => {
     setRevealed(true);
-    if (autoPronounce) speakAnswer(question);
+    setAnswerSpeechError('');
+    if (autoPronounce) speakPracticeAnswer(question, useChineseAnswerSpeech, setAnswerSpeechError);
+  };
+  const replayCurrentSpeech = () => {
+    const answerVisible = revealed || graded || recognitionWordVisible;
+    setAnswerSpeechError('');
+    if (answerVisible) speakPracticeAnswer(question, useChineseAnswerSpeech, setAnswerSpeechError);
+    else speakAnswer(question);
   };
   const advanceRecognitionStage = () => {
     if (recognitionMode) {
@@ -5943,12 +6020,12 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     const onKeyDown = (event) => {
       if (event.key === ' ' && (recognitionMode || grammarMode) && !event.isComposing) {
         event.preventDefault();
-        speakAnswer(question);
+        replayCurrentSpeech();
         return;
       }
       if (event.key === ' ' && (revealed || graded) && !event.isComposing) {
         event.preventDefault();
-        speakAnswer(question);
+        replayCurrentSpeech();
         return;
       }
       if (event.key === 'Enter' && graded && !event.isComposing) {
@@ -5958,7 +6035,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [started, revealed, graded, question, index, queue.length, recognitionMode, grammarMode]);
+  }, [started, revealed, graded, question, index, queue.length, recognitionMode, grammarMode, recognitionWordVisible, useChineseAnswerSpeech]);
 
   if (!started && (!set.dueOnly || configurableWordMode)) {
     return (
@@ -6063,10 +6140,20 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
             <div className="quiz-options">
               <button className={soundEnabled ? 'selected-soft' : ''} onClick={() => setSoundEnabled((enabled) => !enabled)}>{soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />} 音效</button>
               {!recognitionMode && !grammarMode && <button className={autoPronounce ? 'selected-soft' : ''} onClick={() => setAutoPronounce((enabled) => !enabled)}>{autoPronounce ? <Volume2 size={16} /> : <VolumeX size={16} />} 自動發音</button>}
-              <button disabled={!recognitionMode && !grammarMode && activeDirection !== 'ko-zh' && !revealed && !graded} onClick={() => speakAnswer(question)}><Volume2 size={16} /> {recognitionMode || grammarMode || activeDirection === 'ko-zh' ? '重播' : '發音'}</button>
+              {dailyWordMode && <button
+                className={chinesePronunciation ? 'selected-soft' : ''}
+                aria-pressed={chinesePronunciation}
+                onClick={() => {
+                  if (!chinesePronunciation) setAutoPronounce(true);
+                  setChinesePronunciation(!chinesePronunciation);
+                  setAnswerSpeechError('');
+                }}
+              >{chinesePronunciation ? <Volume2 size={16} /> : <VolumeX size={16} />} 中文發音</button>}
+              <button disabled={!recognitionMode && !grammarMode && activeDirection !== 'ko-zh' && !revealed && !graded} onClick={replayCurrentSpeech}><Volume2 size={16} /> {recognitionMode || grammarMode || activeDirection === 'ko-zh' ? '重播' : '發音'}</button>
             </div>
           </div>
           {optionalSaving && <p role="status">儲存練習進度中…</p>}
+          {answerSpeechError && <p className="form-error" role="alert">{answerSpeechError}</p>}
           {completionError && <p className="form-error" role="alert">{completionError}</p>}
           {!selfGradeMode ? (
             <>
@@ -6956,7 +7043,35 @@ function ReadingTestsEditorModal({ test, existingTests, onSave, onClose }) {
   );
 }
 
-function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onSave, onDelete, onBack }) {
+function ReadingKoreanText({ entry, words = [], highlights = [], onSelectWord, onSelectHighlight }) {
+  const knownMatches = subtitleWordMatches(entry.ko, words);
+  const highlightMatches = highlights.filter((highlight) => (
+    highlight.entryId === entry.id
+    && entry.ko.slice(highlight.start, highlight.end) === highlight.text
+  ));
+  const boundaries = [...new Set([
+    0,
+    entry.ko.length,
+    ...knownMatches.flatMap((match) => [match.start, match.end]),
+    ...highlightMatches.flatMap((highlight) => [highlight.start, highlight.end]),
+  ])].sort((left, right) => left - right);
+  return boundaries.slice(0, -1).map((start, index) => {
+    const end = boundaries[index + 1];
+    const text = entry.ko.slice(start, end);
+    const known = knownMatches.find((match) => match.start <= start && match.end >= end);
+    const highlight = highlightMatches.find((match) => match.start <= start && match.end >= end);
+    if (!known && !highlight) return <React.Fragment key={`text-${start}`}>{text}</React.Fragment>;
+    return (
+      <mark
+        className={`${known ? 'subtitle-known-word' : ''} ${highlight ? 'reading-text-highlight' : ''}`.trim()}
+        onClick={(event) => (known ? onSelectWord(event, known.word) : onSelectHighlight(event, highlight, entry))}
+        key={`mark-${start}`}
+      >{text}</mark>
+    );
+  });
+}
+
+function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onUpdateRecord, onDeleteRecord, onOpenFolder, onSave, onDelete, onBack }) {
   const [selected, setSelected] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
@@ -6964,9 +7079,16 @@ function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onSa
   const [quickAdd, setQuickAdd] = useState(null);
   const [selectionAction, setSelectionAction] = useState(null);
   const [definitionBubble, setDefinitionBubble] = useState(null);
+  const [editingWord, setEditingWord] = useState(null);
+  const [localHighlights, setLocalHighlights] = useState([]);
   const selectionUpdateFrameRef = useRef(null);
   const selectionClearTimerRef = useRef(null);
-  useEffect(() => { setSelected(''); setSubmitted(false); setError(''); }, [test?.id]);
+  useEffect(() => {
+    setSelected('');
+    setSubmitted(false);
+    setError('');
+    setLocalHighlights([]);
+  }, [test?.id]);
   const entries = useMemo(() => test ? [
     { id: `${test.id}-passage`, ko: test.passage.ko, zh: test.passage.zh },
     { id: `${test.id}-question`, ko: test.question.ko, zh: test.question.zh },
@@ -7000,11 +7122,21 @@ function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onSa
       const startSource = selectionElement(range.startContainer)?.closest?.('[data-reading-entry-id]');
       const endSource = selectionElement(range.endContainer)?.closest?.('[data-reading-entry-id]');
       const entryId = startSource?.dataset.readingEntryId;
-      const selectedKo = selection.toString().replace(/\s+/g, ' ').trim();
+      const rawSelection = selection.toString();
+      const selectedKo = rawSelection.trim();
       const entry = entries.find((candidate) => candidate.id === entryId);
-      const entryKo = String(entry?.ko || '').replace(/\s+/g, ' ').trim();
       const rect = range.getBoundingClientRect();
-      if (!entryId || startSource !== endSource || !selectedKo || !entryKo.includes(selectedKo) || (!rect.width && !rect.height)) {
+      if (!entryId || startSource !== endSource || !selectedKo || (!rect.width && !rect.height)) {
+        clearLater();
+        return;
+      }
+      const leadingWhitespace = rawSelection.length - rawSelection.trimStart().length;
+      const precedingRange = range.cloneRange();
+      precedingRange.selectNodeContents(startSource);
+      precedingRange.setEnd(range.startContainer, range.startOffset);
+      const start = precedingRange.toString().length + leadingWhitespace;
+      const end = start + selectedKo.length;
+      if (entry.ko.slice(start, end) !== selectedKo) {
         clearLater();
         return;
       }
@@ -7015,8 +7147,10 @@ function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onSa
       setSelectionAction({
         ko: selectedKo,
         entry,
+        start,
+        end,
         top: rect.bottom + 8,
-        left: Math.min(Math.max(10, rect.left + (rect.width / 2) - 41), window.innerWidth - 92),
+        left: Math.min(Math.max(10, rect.left + (rect.width / 2) - 63), window.innerWidth - 136),
       });
     });
   }, [entries]);
@@ -7059,14 +7193,55 @@ function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onSa
     event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
     setDefinitionBubble({
+      word,
       zh: word.zh,
       top: Math.max(10, rect.top - 8),
-      left: Math.min(Math.max(10, rect.left + (rect.width / 2)), window.innerWidth - 18),
+      left: Math.min(Math.max(105, rect.left + (rect.width / 2)), window.innerWidth - 105),
     });
+  };
+  const showHighlightActions = (event, highlight, entry) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setSelectionAction({
+      ko: highlight.text,
+      entry,
+      start: highlight.start,
+      end: highlight.end,
+      highlight,
+      top: rect.bottom + 8,
+      left: Math.min(Math.max(10, rect.left + (rect.width / 2) - 63), window.innerWidth - 136),
+    });
+  };
+  const addHighlight = () => {
+    const highlight = {
+      id: createId(),
+      entryId: selectionAction.entry.id,
+      text: selectionAction.ko,
+      start: selectionAction.start,
+      end: selectionAction.end,
+    };
+    const alreadyExists = localHighlights.some((current) => (
+      current.entryId === highlight.entryId && current.start === highlight.start && current.end === highlight.end
+    ));
+    setSelectionAction(null);
+    window.getSelection()?.removeAllRanges();
+    if (alreadyExists) return;
+    setLocalHighlights((current) => [...current, highlight]);
+  };
+  const removeHighlight = () => {
+    if (!selectionAction?.highlight) return;
+    setLocalHighlights((current) => current.filter((highlight) => highlight.id !== selectionAction.highlight.id));
+    setSelectionAction(null);
+  };
+  const deleteWord = async (word) => {
+    if (!window.confirm(`確定要刪除「${word.ko}」嗎？`)) return;
+    setError('');
+    try { await onDeleteRecord(word.id); setDefinitionBubble(null); } catch (deleteError) { setError(deleteError.message || '刪除單字失敗'); }
   };
   const selectableKorean = (entry) => (
     <span className="reading-korean-source" data-reading-entry-id={entry.id} lang="ko">
-      <SubtitleKoreanText text={entry.ko} words={readingWords} onSelectWord={showDefinition} />
+      <ReadingKoreanText entry={entry} words={readingWords} highlights={localHighlights} onSelectWord={showDefinition} onSelectHighlight={showHighlightActions} />
     </span>
   );
   return (
@@ -7106,8 +7281,31 @@ function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onSa
           title="使用 Naver 字典查詢"
           aria-label={`使用 Naver 字典查詢「${selectionAction.ko}」`}
         ><BookMarked size={18} /></a>
+        {!selectionAction.highlight && <button
+          type="button"
+          className="subtitle-selection-highlight"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={addHighlight}
+          title="畫線"
+          aria-label={`畫線標記「${selectionAction.ko}」`}
+        ><Highlighter size={18} /></button>}
+        {selectionAction.highlight && <button
+          type="button"
+          className="subtitle-selection-remove-highlight"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={removeHighlight}
+          title="刪除畫線"
+          aria-label={`刪除「${selectionAction.ko}」的畫線`}
+        ><Trash2 size={18} /></button>}
       </div>}
-      {definitionBubble && <div className="subtitle-word-definition" style={{ top: definitionBubble.top, left: definitionBubble.left }} role="status">{definitionBubble.zh}</div>}
+      {definitionBubble && <div className="subtitle-word-definition reading-word-definition" style={{ top: definitionBubble.top, left: definitionBubble.left }} role="dialog" aria-label={`${definitionBubble.word.ko}的單字資訊`}>
+        <span><strong>{definitionBubble.word.ko}</strong>{definitionBubble.zh}</span>
+        <div>
+          <button type="button" onClick={() => { setEditingWord(definitionBubble.word); setDefinitionBubble(null); }} title="編輯單字" aria-label="編輯單字"><Pencil size={15} /></button>
+          <button type="button" className="delete-icon-button" onClick={() => deleteWord(definitionBubble.word)} title="刪除單字" aria-label="刪除單字"><Trash2 size={15} /></button>
+        </div>
+      </div>}
+      {readingFolder && <div className="reading-reader-floating-actions"><button type="button" className="yt-reader-floating-button" onClick={() => onOpenFolder?.(readingFolder.id)} title={`開啟資料夾「${readingFolder.name}」`} aria-label={`開啟資料夾「${readingFolder.name}」`}><FolderOpen size={22} /></button></div>}
       <article className="reading-passage">
         <p>{selectableKorean(entries[0])}</p>
         {submitted && <p className="reading-translation">{test.passage.zh}</p>}
@@ -7129,7 +7327,8 @@ function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onSa
       {!submitted ? <button type="button" className="primary reading-submit" disabled={!selected} onClick={() => setSubmitted(true)}><Check size={18} /> 確認答案</button>
         : <div className={`reading-result ${selectedCorrectly ? 'correct' : 'incorrect'}`}><strong>{selectedCorrectly ? '答對了' : '答錯了'}</strong><span>正確答案是選項 {test.answer}</span><button type="button" onClick={() => { setSelected(''); setSubmitted(false); }}>再做一次</button></div>}
       {editing && <ReadingTestsEditorModal test={test} existingTests={[test]} onSave={async (tests) => { await onSave(tests[0]); setEditing(false); }} onClose={() => setEditing(false)} />}
-      {quickAdd && <SubtitleQuickAddModal selection={quickAdd} entries={entries} allItems={allItems} sourceLabel="閱讀題" onAddRecords={(records, options) => onAddRecords(test, records, options)} onClose={() => setQuickAdd(null)} />}
+      {quickAdd && <SubtitleQuickAddModal selection={quickAdd} entries={entries} allItems={allItems} sourceLabel="閱讀題" includeInitialExample={false} initialMarkLearned={false} onAddRecords={(records, options) => onAddRecords(test, records, options)} onClose={() => setQuickAdd(null)} />}
+      {editingWord && <AddItemsModal title="編輯單字" date={editingWord.date} lockedDate editItem={editingWord} allItems={allItems} onUpdateRecord={onUpdateRecord} onClose={() => setEditingWord(null)} />}
     </section>
   );
 }
@@ -7699,15 +7898,15 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
   );
 }
 
-function SubtitleQuickAddModal({ selection, entries = [], allItems, sourceLabel = '字幕', onAddRecords, onClose }) {
+function SubtitleQuickAddModal({ selection, entries = [], allItems, sourceLabel = '字幕', includeInitialExample = true, initialMarkLearned = true, onAddRecords, onClose }) {
   const [ko, setKo] = useState(selection.ko);
   const [zh, setZh] = useState(selection.zh || '');
-  const [examples, setExamples] = useState(() => formatPairLines([selection.entry]));
+  const [examples, setExamples] = useState(() => includeInitialExample ? formatPairLines([selection.entry]) : '');
   const entryIndex = entries.findIndex((entry) => entry.id === selection.entry.id);
   const [previousIndex, setPreviousIndex] = useState(entryIndex - 1);
   const [nextIndex, setNextIndex] = useState(entryIndex + 1);
   const [exampleHistory, setExampleHistory] = useState([]);
-  const [markLearned, setMarkLearned] = useState(true);
+  const [markLearned, setMarkLearned] = useState(initialMarkLearned);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const extendExample = (entry, position) => {
@@ -7760,10 +7959,16 @@ function SubtitleQuickAddModal({ selection, entries = [], allItems, sourceLabel 
       setError(`韓文單字「${korean}」已存在於單字本，請直接編輯既有單字卡。`);
       return;
     }
-    setSaving(true);
     setError('');
+    let parsedExamples;
     try {
-      const parsedExamples = parsePairLines(examples);
+      parsedExamples = parsePairLines(examples);
+    } catch (parseError) {
+      setError(parseError.message || '例句格式錯誤，請確認每組都是韓文一行、中文一行。');
+      return;
+    }
+    setSaving(true);
+    try {
       const records = createRecordsForDate(todayString(), [{
         ko: korean,
         meanings: [{ zh: chinese, examples: parsedExamples }],
@@ -7781,17 +7986,17 @@ function SubtitleQuickAddModal({ selection, entries = [], allItems, sourceLabel 
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`從${sourceLabel}新增單字`}>
       <form className="modal-panel subtitle-quick-add-modal" onSubmit={submit}>
         <button type="button" className="modal-close" onClick={onClose} disabled={saving} aria-label="關閉"><X size={18} /></button>
-        <div className="panel-title"><div><span className="eyebrow">Selected word</span><h2>新增單字</h2><span>例句已自動帶入目前{sourceLabel}。</span></div></div>
+        <div className="panel-title"><div><span className="eyebrow">Selected word</span><h2>新增單字</h2><span>{includeInitialExample ? `例句已自動帶入目前${sourceLabel}。` : '可視需要自行加入例句。'}</span></div></div>
         <div className="form-grid subtitle-quick-add-fields">
           <label>韓文<input value={ko} onChange={(event) => setKo(event.target.value)} required autoFocus /></label>
           <label>中文<input value={zh} onChange={(event) => setZh(event.target.value)} required placeholder="請填寫中文意思" /></label>
           <div className="full-width subtitle-example-field">
             <label htmlFor="subtitle-quick-add-examples">例句</label>
-            <span className="subtitle-example-extend-actions">
+            {includeInitialExample && <span className="subtitle-example-extend-actions">
               <button type="button" className="small" onClick={addPreviousExample} disabled={previousIndex < 0} title="加入前一句逐字稿"><ArrowUp size={16} /><Plus size={14} /> 往前加</button>
               <button type="button" className="small" onClick={addNextExample} disabled={nextIndex >= entries.length} title="加入後一句逐字稿"><ArrowDown size={16} /><Plus size={14} /> 往後加</button>
               <button type="button" className="small subtitle-example-undo" onClick={undoExampleExtension} disabled={!exampleHistory.length} title="復原上一次例句延伸" aria-label="復原上一次例句延伸"><RotateCcw size={16} /></button>
-            </span>
+            </span>}
             <textarea id="subtitle-quick-add-examples" value={examples} onChange={(event) => { setExamples(event.target.value); setExampleHistory([]); }} rows={4} />
           </div>
           <label className="subtitle-quick-add-learned"><input type="checkbox" checked={markLearned} onChange={(event) => setMarkLearned(event.target.checked)} /><span><strong>已學會</strong><small>同時加入「已學習」資料夾，不會出現在每日測驗。</small></span></label>
@@ -8668,6 +8873,7 @@ export {
   parseYoutubeSubtitleJson,
   parseYoutubeSubtitleSrt,
   parsePairLines,
+  practiceAnswerSpeech,
   formatReadingTestsJson,
   normalizeReadingTest,
   nextRecognitionRevealState,
