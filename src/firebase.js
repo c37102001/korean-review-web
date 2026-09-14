@@ -5,7 +5,9 @@ import {
   disableNetwork,
   doc,
   enableNetwork,
+  getDocFromCache,
   getDocFromServer,
+  getDocsFromCache,
   getDocsFromServer,
   getFirestore,
   initializeFirestore,
@@ -13,7 +15,13 @@ import {
   persistentMultipleTabManager,
   waitForPendingWrites,
 } from 'firebase/firestore';
-import { manualOfflineEnabled } from './offlineSupport.js';
+import {
+  clearOfflineDataCoverage,
+  manualOfflineEnabled,
+  markOfflineSectionReady,
+  offlineDataCoverage,
+} from './offlineSupport.js';
+import { clearRecordSyncCheckpoint, updateRecordSyncCheckpoint } from './firestoreSync.js';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCfy63R72H6LDCb-bR7L7RwkKNnGCTHPgU',
@@ -47,26 +55,47 @@ export function setFirestoreNetworkEnabled(enabled) {
   return enabled ? enableNetwork(db) : disableNetwork(db);
 }
 
-export async function prepareOfflineFirestoreData(uid, today, onProgress) {
+export async function prepareOfflineFirestoreData(uid, today, onProgress, { forceFull = false } = {}) {
   const targets = [
-    ['單字', () => getDocsFromServer(collection(db, 'users', uid, 'records'))],
-    ['熟悉度與複習排程', () => getDocsFromServer(collection(db, 'users', uid, 'progressShards'))],
-    ['資料夾', () => getDocsFromServer(collection(db, 'users', uid, 'folders'))],
-    ['筆記', () => getDocsFromServer(collection(db, 'users', uid, 'grammarNotes'))],
-    ['YT 字幕文字', () => getDocsFromServer(collection(db, 'users', uid, 'ytSubtitles'))],
-    ['閱讀測驗', () => getDocsFromServer(collection(db, 'users', uid, 'readingTests'))],
-    ['測驗設定', () => getDocFromServer(doc(db, 'users', uid, 'settings', 'review'))],
-    ['自選練習', () => getDocFromServer(doc(db, 'users', uid, 'settings', 'grammarReview'))],
-    ['今日作答紀錄', () => getDocFromServer(doc(db, 'users', uid, 'reviewDays', today))],
+    ['records', '單字', collection(db, 'users', uid, 'records')],
+    ['progress', '熟悉度與複習排程', collection(db, 'users', uid, 'progressShards')],
+    ['folders', '資料夾', collection(db, 'users', uid, 'folders')],
+    ['grammarNotes', '筆記', collection(db, 'users', uid, 'grammarNotes')],
+    ['ytSubtitles', 'YT 字幕文字', collection(db, 'users', uid, 'ytSubtitles')],
+    ['readingTests', '閱讀測驗', collection(db, 'users', uid, 'readingTests')],
+    ['reviewSettings', '測驗設定', doc(db, 'users', uid, 'settings', 'review')],
+    ['grammarReview', '自選練習', doc(db, 'users', uid, 'settings', 'grammarReview')],
+    [`reviewDay:${today}`, '今日作答紀錄', doc(db, 'users', uid, 'reviewDays', today)],
   ];
-  let documentCount = 0;
-  for (let index = 0; index < targets.length; index += 1) {
-    const [label, load] = targets[index];
-    onProgress?.({ current: index + 1, total: targets.length, label });
-    const snapshot = await load();
-    documentCount += 'size' in snapshot ? snapshot.size : Number(snapshot.exists());
+  if (forceFull) {
+    clearOfflineDataCoverage(uid);
+    clearRecordSyncCheckpoint(uid);
   }
-  return { documentCount, sectionCount: targets.length };
+  const coverage = offlineDataCoverage(uid);
+  let documentCount = 0;
+  let downloadedCount = 0;
+  for (let index = 0; index < targets.length; index += 1) {
+    const [section, label, reference] = targets[index];
+    const cached = !forceFull && Boolean(coverage[section]);
+    const isDocument = reference.type === 'document';
+    onProgress?.({ current: index + 1, total: targets.length, label, cached });
+    let snapshot;
+    try {
+      snapshot = isDocument
+        ? await (cached ? getDocFromCache(reference) : getDocFromServer(reference))
+        : await (cached ? getDocsFromCache(reference) : getDocsFromServer(reference));
+    } catch (error) {
+      if (!cached) throw error;
+      snapshot = isDocument ? await getDocFromServer(reference) : await getDocsFromServer(reference);
+      downloadedCount += 'size' in snapshot ? snapshot.size : Number(snapshot.exists());
+    }
+    const count = 'size' in snapshot ? snapshot.size : Number(snapshot.exists());
+    documentCount += count;
+    if (!cached) downloadedCount += count;
+    markOfflineSectionReady(uid, section);
+    if (section === 'records' && !snapshot.metadata.fromCache) updateRecordSyncCheckpoint(uid, snapshot.docs || []);
+  }
+  return { documentCount, downloadedCount, sectionCount: targets.length, forceFull };
 }
 
 export function waitForFirestoreSync() {

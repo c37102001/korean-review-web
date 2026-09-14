@@ -156,6 +156,48 @@ class OfflineTests(unittest.TestCase):
         self.assertTrue(self.client.offline_mode)
         self.assertEqual(loaded[1], [])
 
+    def test_record_delta_merge_updates_adds_and_removes_cards(self):
+        records = [
+            {'id': 'a', 'item': {'ko': '가'}},
+            {'id': 'b', 'item': {'ko': '나'}},
+        ]
+        merged = terminal.merge_record_changes(records, [
+            {'id': 'a', 'item': {'ko': '각'}},
+            {'id': 'b', 'deletedAt': '2026-09-14T00:00:00Z'},
+            {'id': 'c', 'item': {'ko': '다'}},
+        ])
+        self.assertEqual({record['id']: record['item']['ko'] for record in merged}, {'a': '각', 'c': '다'})
+
+    def test_cached_online_load_uses_incremental_sync(self):
+        cached = terminal._read_terminal_cache(self.session.uid)
+        cached['sync'] = {
+            'version': terminal.TERMINAL_SYNC_VERSION,
+            'recordsUpdatedAt': '2026-09-14T00:00:00Z',
+            'foldersUpdatedAt': '2026-09-14T00:00:00Z',
+            'grammarNotesUpdatedAt': '2026-09-14T00:00:00Z',
+            'ytSubtitlesUpdatedAt': '2026-09-14T00:00:00Z',
+        }
+        terminal._write_terminal_cache(self.session.uid, cached)
+        expected = (terminal.empty_state(), [], [], [], {}, [])
+        with patch.object(terminal, 'load_data_incrementally', return_value=expected) as incremental, patch.object(terminal, 'load_data', side_effect=AssertionError('full load used')):
+            loaded, from_cache = terminal.load_data_with_cache(self.client, self.session)
+        self.assertEqual(loaded, expected)
+        self.assertFalse(from_cache)
+        incremental.assert_called_once()
+
+    def test_incremental_records_query_uses_updated_at_checkpoint(self):
+        response = [{'document': {
+            'name': 'projects/project/databases/(default)/documents/users/uid/records/card',
+            'fields': {'updatedAt': {'timestampValue': '2026-09-14T00:00:00Z'}},
+        }}]
+        with patch.object(self.client, '_request_json', return_value=response) as network:
+            records = self.client.list_records_updated_since(self.session, '2026-09-13T00:00:00Z')
+        self.assertEqual(records[0]['_docId'], 'card')
+        query = network.call_args.kwargs['payload']['structuredQuery']
+        self.assertEqual(query['where']['fieldFilter']['field']['fieldPath'], 'updatedAt')
+        self.assertEqual(query['where']['fieldFilter']['op'], 'GREATER_THAN')
+        self.assertEqual(query['where']['fieldFilter']['value']['timestampValue'], '2026-09-13T00:00:00Z')
+
     def test_local_ack_failure_keeps_pending_id_for_safe_retry(self):
         self.client.start_offline(self.session)
         self.session.id_token = 'token'

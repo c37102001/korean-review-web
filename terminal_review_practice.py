@@ -64,6 +64,7 @@ SYSTEM_UNFAMILIAR_FOLDER_NAME = "不熟悉"
 KOREAN_NEURAL_VOICE = "ko-KR-SunHiNeural"
 KOREAN_NEURAL_RATE = "-8%"
 CACHE_DIR = Path.home() / ".cache" / "korean-review-web-terminal"
+TERMINAL_SYNC_VERSION = 1
 
 
 def utc_now_iso() -> str:
@@ -217,6 +218,33 @@ class FirebaseClient:
             for doc in self._list_documents(["users", session.uid, "records"], session)
         ]
 
+    def list_records_updated_since(self, session: AuthSession, updated_at: str) -> List[Dict[str, Any]]:
+        return self._list_documents_updated_since(session, "records", updated_at)
+
+    def _list_documents_updated_since(self, session: AuthSession, collection_id: str, updated_at: str) -> List[Dict[str, Any]]:
+        url = f"{self._document_url(['users', session.uid])}:runQuery"
+        response = self._request_json("POST", url, payload={
+            "structuredQuery": {
+                "from": [{"collectionId": collection_id}],
+                "where": {
+                    "fieldFilter": {
+                        "field": {"fieldPath": "updatedAt"},
+                        "op": "GREATER_THAN",
+                        "value": {"timestampValue": updated_at},
+                    },
+                },
+            },
+        }, session=session)
+        return [
+            _parse_firestore_fields(row["document"].get("fields", {}))
+            | {
+                "id": _doc_id(row["document"].get("name", "")),
+                "_docId": _doc_id(row["document"].get("name", "")),
+            }
+            for row in response
+            if row.get("document")
+        ]
+
     def list_folders(self, session: AuthSession) -> List[Dict[str, Any]]:
         return [
             _parse_firestore_fields(document.get("fields", {}))
@@ -231,7 +259,7 @@ class FirebaseClient:
         folder_id: str,
         folder_name: str,
         system_key: str,
-    ) -> Dict[str, Any]:
+    ) -> Any:
         folder = next((
             folder for folder in folders
             if folder.get("id") == folder_id
@@ -834,6 +862,39 @@ def record_order(record: Dict[str, Any]) -> int:
         return 0
 
 
+def active_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [record for record in records if not record.get("deletedAt")]
+
+
+def latest_updated_at(records: List[Dict[str, Any]], fallback: str = "") -> str:
+    values = [fallback, *(str(record.get("updatedAt") or "") for record in records)]
+
+    def timestamp(value: str) -> float:
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return float("-inf")
+
+    return max(values, key=timestamp)
+
+
+def merge_record_changes(records: List[Dict[str, Any]], changes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    by_id = {
+        str(record.get("id") or record.get("_docId")): record
+        for record in active_records(records)
+        if record.get("id") or record.get("_docId")
+    }
+    for change in changes:
+        record_id = str(change.get("id") or change.get("_docId") or "")
+        if not record_id:
+            continue
+        if change.get("deletedAt"):
+            by_id.pop(record_id, None)
+        else:
+            by_id[record_id] = change
+    return list(by_id.values())
+
+
 def normalize_records(records: List[Dict[str, Any]], state: Dict[str, Any]) -> Tuple[List[Card], List[Question]]:
     starred = set(state.get("starred") or [])
     cards: List[Card] = []
@@ -951,6 +1012,7 @@ def load_data(
     client: FirebaseClient,
     session: AuthSession,
 ) -> Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any], List[YoutubeSubtitle]]:
+    baseline_started_at = utc_now_iso()
     with ThreadPoolExecutor(max_workers=6) as executor:
         state_future = executor.submit(client.load_review_state, session)
         records_future = executor.submit(client.list_records, session)
@@ -959,20 +1021,27 @@ def load_data(
         youtube_subtitles_future = executor.submit(client.list_youtube_subtitles, session)
         grammar_review_future = executor.submit(client.load_grammar_review, session)
         state = state_future.result()
-        records = records_future.result()
-        folders = folders_future.result()
-        grammar_note_records = grammar_notes_future.result()
-        youtube_subtitle_records = youtube_subtitles_future.result()
+        all_record_documents = records_future.result()
+        all_folder_documents = folders_future.result()
+        all_grammar_note_documents = grammar_notes_future.result()
+        all_youtube_subtitle_documents = youtube_subtitles_future.result()
         grammar_review = grammar_review_future.result()
 
     payload = {
         'account': {'uid': session.uid, 'email': session.email},
         "state": state,
-        "records": records,
-        "folders": folders,
-        "grammarNotes": grammar_note_records,
-        "ytSubtitles": youtube_subtitle_records,
+        "records": active_records(all_record_documents),
+        "folders": active_records(all_folder_documents),
+        "grammarNotes": active_records(all_grammar_note_documents),
+        "ytSubtitles": active_records(all_youtube_subtitle_documents),
         "grammarReview": grammar_review,
+        "sync": {
+            "version": TERMINAL_SYNC_VERSION,
+            "recordsUpdatedAt": latest_updated_at(all_record_documents, baseline_started_at),
+            "foldersUpdatedAt": latest_updated_at(all_folder_documents, baseline_started_at),
+            "grammarNotesUpdatedAt": latest_updated_at(all_grammar_note_documents, baseline_started_at),
+            "ytSubtitlesUpdatedAt": latest_updated_at(all_youtube_subtitle_documents, baseline_started_at),
+        },
     }
     loaded = _hydrate_loaded_data(client, session, payload, ensure_system_folders=True)
     payload['state'] = _clone_json(loaded[0])
@@ -981,11 +1050,66 @@ def load_data(
     return loaded
 
 
+def load_data_incrementally(
+    client: FirebaseClient,
+    session: AuthSession,
+    cached: Dict[str, Any],
+) -> Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any], List[YoutubeSubtitle]]:
+    sync = cached.get("sync") or {}
+    checkpoints = {
+        "records": str(sync.get("recordsUpdatedAt") or ""),
+        "folders": str(sync.get("foldersUpdatedAt") or ""),
+        "grammarNotes": str(sync.get("grammarNotesUpdatedAt") or ""),
+        "ytSubtitles": str(sync.get("ytSubtitlesUpdatedAt") or ""),
+    }
+    if not all(checkpoints.values()):
+        return load_data(client, session)
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        state_future = executor.submit(client.load_review_state, session)
+        records_future = executor.submit(client._list_documents_updated_since, session, "records", checkpoints["records"])
+        folders_future = executor.submit(client._list_documents_updated_since, session, "folders", checkpoints["folders"])
+        grammar_notes_future = executor.submit(client._list_documents_updated_since, session, "grammarNotes", checkpoints["grammarNotes"])
+        youtube_subtitles_future = executor.submit(client._list_documents_updated_since, session, "ytSubtitles", checkpoints["ytSubtitles"])
+        grammar_review_future = executor.submit(client.load_grammar_review, session)
+        state = state_future.result()
+        record_changes = records_future.result()
+        folder_changes = folders_future.result()
+        grammar_note_changes = grammar_notes_future.result()
+        youtube_subtitle_changes = youtube_subtitles_future.result()
+        grammar_review = grammar_review_future.result()
+
+    records = merge_record_changes(cached.get("records") or [], record_changes)
+    folders = merge_record_changes(cached.get("folders") or [], folder_changes)
+    grammar_note_records = merge_record_changes(cached.get("grammarNotes") or [], grammar_note_changes)
+    youtube_subtitle_records = merge_record_changes(cached.get("ytSubtitles") or [], youtube_subtitle_changes)
+    payload = {
+        "account": {"uid": session.uid, "email": session.email},
+        "state": state,
+        "records": records,
+        "folders": folders,
+        "grammarNotes": grammar_note_records,
+        "ytSubtitles": youtube_subtitle_records,
+        "grammarReview": grammar_review,
+        "sync": {
+            "version": TERMINAL_SYNC_VERSION,
+            "recordsUpdatedAt": latest_updated_at(record_changes, checkpoints["records"]),
+            "foldersUpdatedAt": latest_updated_at(folder_changes, checkpoints["folders"]),
+            "grammarNotesUpdatedAt": latest_updated_at(grammar_note_changes, checkpoints["grammarNotes"]),
+            "ytSubtitlesUpdatedAt": latest_updated_at(youtube_subtitle_changes, checkpoints["ytSubtitles"]),
+        },
+    }
+    loaded = _hydrate_loaded_data(client, session, payload, ensure_system_folders=True)
+    payload["state"] = _clone_json(loaded[0])
+    payload["folders"] = _clone_json(loaded[0]["folders"])
+    _write_terminal_cache(session.uid, payload)
+    return loaded
+
+
 def load_data_with_cache(
     client: FirebaseClient,
     session: AuthSession,
 ) -> Tuple[Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any], List[YoutubeSubtitle]], bool]:
-    """Load Firebase data, falling back to the most recent local snapshot on quota exhaustion."""
+    """Use the local record baseline, sync deltas, and fall back fully offline when needed."""
     if client.offline_mode:
         payload = client.offline_payload or _read_terminal_cache(session.uid)
         if not payload:
@@ -1004,7 +1128,8 @@ def load_data_with_cache(
             client.start_offline(session, cached)
             return load_data_with_cache(client, session)
     try:
-        loaded = load_data(client, session)
+        sync = cached.get("sync") if cached else None
+        loaded = load_data_incrementally(client, session, cached) if sync and sync.get("version") == TERMINAL_SYNC_VERSION else load_data(client, session)
     except RuntimeError as exc:
         if not _is_quota_exceeded_error(str(exc)) and 'Network error' not in str(exc):
             raise
@@ -4748,7 +4873,8 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 ("grammar", "文法筆記"),
                 ("vocabulary_notes", "單字筆記"),
                 ("youtube_subtitles", "YT字幕"),
-                ("refresh", "重新同步"),
+                ("refresh", "同步最新變更"),
+                ("full_refresh", "完整重新下載（維修）"),
                 ("offline", "切換至離線模式（使用本機備份）"),
                 ("quit", "離開"),
             ],
@@ -4762,6 +4888,14 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 (state, cards, questions, grammar_notes, grammar_review, youtube_subtitles), using_cached_data = load_data_with_cache(client, session)
             except RuntimeError as exc:
                 wait_message(stdscr, "同步失敗", friendly_firebase_error(exc))
+            continue
+        if choice == "full_refresh":
+            try:
+                client.sync_offline(session)
+                state, cards, questions, grammar_notes, grammar_review, youtube_subtitles = load_data(client, session)
+                using_cached_data = False
+            except RuntimeError as exc:
+                wait_message(stdscr, "完整下載失敗", friendly_firebase_error(exc))
             continue
         if choice == 'offline':
             if client.offline_mode:
@@ -4958,7 +5092,7 @@ def main() -> None:
         if args.sync:
             try:
                 client.sync_offline(session)
-                load_data(client, session)
+                load_data_with_cache(client, session)
             except RuntimeError as exc:
                 parser.exit(1, f'同步失敗，待同步資料仍保留：{exc}\n')
             print('同步完成，本機備份已更新。')

@@ -24,6 +24,7 @@ function installBrowserStorage() {
     localStorage: {
       getItem: (key) => values.get(key) ?? null,
       setItem: (key, value) => values.set(key, value),
+      removeItem: (key) => values.delete(key),
     },
     dispatchEvent: () => true,
   };
@@ -84,5 +85,17 @@ test('manual offline mode persists on the device and counts as offline', async (
 
   setManualOfflineEnabled(false);
   assert.equal(manualOfflineEnabled(), false);
+  cleanup();
+});
+
+test('offline data coverage tracks independently loaded sections', async () => {
+  const cleanup = installBrowserStorage();
+  const { clearOfflineDataCoverage, markOfflineSectionReady, offlineDataCoverage } = await import('../src/offlineSupport.js');
+  markOfflineSectionReady('user-a', 'records');
+  markOfflineSectionReady('user-a', 'folders');
+  assert.deepEqual(Object.keys(offlineDataCoverage('user-a')).sort(), ['folders', 'records']);
+  assert.deepEqual(offlineDataCoverage('user-b'), {});
+  clearOfflineDataCoverage('user-a');
+  assert.deepEqual(offlineDataCoverage('user-a'), {});
   cleanup();
 });

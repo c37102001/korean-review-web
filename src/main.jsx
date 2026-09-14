@@ -54,13 +54,20 @@ import {
   X,
 } from 'lucide-react';
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { arrayRemove, arrayUnion, collection, deleteDoc, deleteField, doc, FieldPath, onSnapshot, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
+import { arrayRemove, arrayUnion, collection, deleteDoc, deleteField, doc, FieldPath, getDocsFromCache, onSnapshot, query, serverTimestamp, setDoc, Timestamp, where, writeBatch } from 'firebase/firestore';
 import { auth, db, prepareOfflineFirestoreData, setFirestoreNetworkEnabled, waitForFirestoreSync } from './firebase.js';
+import {
+  activeRecordDocuments,
+  mergeRecordDocuments,
+  recordSyncCheckpoint,
+  updateRecordSyncCheckpoint,
+} from './firestoreSync.js';
 import {
   clearOfflinePendingWrites,
   isBrowserOffline,
   manualOfflineEnabled,
   markOfflineReady,
+  markOfflineSectionReady,
   MANUAL_OFFLINE_STORAGE_KEY,
   offlinePendingWrites,
   offlineReadyState,
@@ -282,10 +289,10 @@ function useOfflineMode(user) {
     };
   }, [syncPendingWrites, user]);
 
-  const prepare = useCallback(async () => {
+  const prepare = useCallback(async ({ forceFull = false } = {}) => {
     if (!user) throw new Error('請先登入');
     if (navigator.onLine === false || manualOfflineEnabled()) throw new Error('請先連線並關閉主動離線模式，才能更新離線資料');
-    setState((current) => ({ ...current, preparing: true, progress: '正在準備離線程式...', error: '' }));
+    setState((current) => ({ ...current, preparing: true, progress: forceFull ? '正在完整重建離線資料...' : '正在更新離線資料...', error: '' }));
     try {
       if ('serviceWorker' in navigator) {
         let registration = await navigator.serviceWorker.getRegistration(import.meta.env.BASE_URL);
@@ -298,9 +305,9 @@ function useOfflineMode(user) {
       } else if (import.meta.env.PROD) {
         throw new Error('此瀏覽器不支援離線網頁');
       }
-      const result = await prepareOfflineFirestoreData(user.uid, todayString(), ({ current, total, label }) => {
-        setState((value) => ({ ...value, progress: `下載文字資料 ${current}/${total}：${label}` }));
-      });
+      const result = await prepareOfflineFirestoreData(user.uid, todayString(), ({ current, total, label, cached }) => {
+        setState((value) => ({ ...value, progress: `${cached ? '確認本機資料' : '下載文字資料'} ${current}/${total}：${label}` }));
+      }, { forceFull });
       try {
         await navigator.storage?.persist?.();
       } catch {
@@ -311,7 +318,9 @@ function useOfflineMode(user) {
         ...current,
         ready,
         preparing: false,
-        progress: `離線資料已就緒，共 ${result.documentCount} 筆文件`,
+        progress: result.downloadedCount
+          ? `離線資料已就緒，本次下載 ${result.downloadedCount} 筆文件`
+          : `離線資料已是最新，共 ${result.documentCount} 筆快取文件`,
       }));
       return result;
     } catch (error) {
@@ -761,7 +770,9 @@ function useGrammarNotes(user, enabled = true) {
       collection(db, 'users', user.uid, 'grammarNotes'),
       { includeMetadataChanges: true },
       (snapshot) => {
+        if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) markOfflineSectionReady(user.uid, 'grammarNotes');
         const notes = snapshot.docs
+          .filter((documentSnap) => !documentSnap.data().deletedAt)
           .map((documentSnap) => normalizeGrammarNote(documentSnap.data(), documentSnap.id))
           .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '') || a.title.localeCompare(b.title));
         setState((current) => ({ ...current, notes, loading: false, error: '' }));
@@ -777,6 +788,7 @@ function useGrammarNotes(user, enabled = true) {
       doc(db, 'users', user.uid, 'settings', 'grammarReview'),
       { includeMetadataChanges: true },
       (snapshot) => {
+        if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) markOfflineSectionReady(user.uid, 'grammarReview');
         setState((current) => ({
           ...current,
           review: snapshot.exists() ? snapshot.data() : null,
@@ -804,7 +816,17 @@ function useGrammarNotes(user, enabled = true) {
 
   const remove = useCallback(async (id) => {
     if (!user) throw new Error('尚未登入');
-    await retryFirestoreWrite(() => deleteDoc(doc(db, 'users', user.uid, 'grammarNotes', id)));
+    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'grammarNotes', id), {
+      id,
+      deletedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      title: deleteField(),
+      notes: deleteField(),
+      examples: deleteField(),
+      category: deleteField(),
+      createdAt: deleteField(),
+      pinned: deleteField(),
+    }, { merge: true }));
   }, [user]);
 
   const completeReview = useCallback(async (note, date = todayString()) => {
@@ -839,7 +861,9 @@ function useYoutubeSubtitles(user, enabled = true) {
       collection(db, 'users', user.uid, 'ytSubtitles'),
       { includeMetadataChanges: true },
       (snapshot) => {
+        if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) markOfflineSectionReady(user.uid, 'ytSubtitles');
         const notes = snapshot.docs
+          .filter((documentSnap) => !documentSnap.data().deletedAt)
           .map((documentSnap) => normalizeYoutubeSubtitle(documentSnap.data(), documentSnap.id))
           .filter((note) => note.title)
           .sort((left, right) => (right.updatedAt || right.createdAt || '').localeCompare(left.updatedAt || left.createdAt || '') || left.title.localeCompare(right.title));
@@ -868,7 +892,20 @@ function useYoutubeSubtitles(user, enabled = true) {
 
   const remove = useCallback(async (id) => {
     if (!user) throw new Error('尚未登入');
-    await retryFirestoreWrite(() => deleteDoc(doc(db, 'users', user.uid, 'ytSubtitles', id)));
+    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'ytSubtitles', id), {
+      id,
+      deletedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      title: deleteField(),
+      entries: deleteField(),
+      youtubeUrl: deleteField(),
+      videoId: deleteField(),
+      mode: deleteField(),
+      tag: deleteField(),
+      createdAt: deleteField(),
+      learned: deleteField(),
+      pinned: deleteField(),
+    }, { merge: true }));
   }, [user]);
 
   return { ...state, save, remove };
@@ -887,6 +924,7 @@ function useReadingTests(user, enabled = true) {
       collection(db, 'users', user.uid, 'readingTests'),
       { includeMetadataChanges: true },
       (snapshot) => {
+        if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) markOfflineSectionReady(user.uid, 'readingTests');
         const tests = snapshot.docs
           .map((documentSnap) => normalizeReadingTest(documentSnap.data(), documentSnap.id))
           .sort((left, right) => (right.createdAt || '').localeCompare(left.createdAt || '') || left.order - right.order || left.id.localeCompare(right.id));
@@ -1046,7 +1084,9 @@ function useWordFolders(user, enabled = true) {
       collection(db, 'users', user.uid, 'folders'),
       { includeMetadataChanges: true },
       (snapshot) => {
+        if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) markOfflineSectionReady(user.uid, 'folders');
         let folders = snapshot.docs
+          .filter((documentSnap) => !documentSnap.data().deletedAt)
           .map((documentSnap) => normalizeFolder(documentSnap.data(), documentSnap.id))
           .filter((folder) => folder.name)
           .sort((a, b) => systemFolderRank(a) - systemFolderRank(b) || (b.createdAt || '').localeCompare(a.createdAt || '') || a.name.localeCompare(b.name));
@@ -1094,7 +1134,16 @@ function useWordFolders(user, enabled = true) {
     if (isSystemFolder(state.folders.find((folder) => folder.id === folderId) || { id: folderId })) {
       throw new Error('系統資料夾無法刪除');
     }
-    await retryFirestoreWrite(() => deleteDoc(doc(db, 'users', user.uid, 'folders', folderId)));
+    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'folders', folderId), {
+      id: folderId,
+      deletedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      name: deleteField(),
+      wordIds: deleteField(),
+      tag: deleteField(),
+      createdAt: deleteField(),
+      pinned: deleteField(),
+    }, { merge: true }));
   }, [user, state.folders]);
 
   const addWords = useCallback(async (folderId, wordIds) => {
@@ -1172,8 +1221,8 @@ function useWordFolders(user, enabled = true) {
   return { ...state, save, remove, addWords, removeWords, addWordsToFolders, createFolderAndAssign };
 }
 
-function recordsFromSnapshot(snap) {
-  return snap.docs.map((documentSnap) => documentSnap.data()).sort((a, b) => {
+function sortRecords(records) {
+  return records.sort((a, b) => {
     if (a.date === b.date) {
       const orderDifference = recordOrder(a) - recordOrder(b);
       if (orderDifference) return orderDifference;
@@ -1181,6 +1230,14 @@ function recordsFromSnapshot(snap) {
     }
     return a.date.localeCompare(b.date);
   });
+}
+
+function recordsFromSnapshot(snap) {
+  return sortRecords(activeRecordDocuments(snap.docs));
+}
+
+function mergeRecordSnapshot(records, snap) {
+  return sortRecords(mergeRecordDocuments(records, snap.docs));
 }
 
 function recordOrder(record) {
@@ -1383,8 +1440,9 @@ function useFirestoreStore(user) {
             if (!cancelled) setState({ loading: false, error: '', store: loadedStore });
           }
         };
-        const listen = (key, reference, parseSnapshot, applyRemote) => {
+        const listen = (key, reference, parseSnapshot, applyRemote, section = key) => {
           unsubscribers.push(onSnapshot(reference, { includeMetadataChanges: true }, (snap) => {
+            if (!snap.metadata.fromCache && !snap.metadata.hasPendingWrites) markOfflineSectionReady(user.uid, section);
             const value = parseSnapshot(snap);
             if (!initialized) {
               applySnapshot(key, value);
@@ -1400,12 +1458,53 @@ function useFirestoreStore(user) {
             setState((current) => ({ ...current, error: error.message }));
           }));
         };
-        listen(
-          'records',
-          collection(db, 'users', user.uid, 'records'),
-          recordsFromSnapshot,
-          (current, customRecords) => ({ ...current, customRecords }),
-        );
+        const recordsReference = collection(db, 'users', user.uid, 'records');
+        const checkpoint = recordSyncCheckpoint(user.uid);
+        let useIncrementalRecords = Boolean(checkpoint);
+        if (useIncrementalRecords) {
+          try {
+            const cachedSnapshot = await getDocsFromCache(recordsReference);
+            if (!cachedSnapshot.size) useIncrementalRecords = false;
+            else applySnapshot('records', recordsFromSnapshot(cachedSnapshot));
+          } catch {
+            useIncrementalRecords = false;
+          }
+        }
+        if (cancelled) return;
+        if (useIncrementalRecords) {
+          const changesReference = query(
+            recordsReference,
+            where('updatedAt', '>', new Timestamp(checkpoint.seconds, checkpoint.nanoseconds)),
+          );
+          unsubscribers.push(onSnapshot(changesReference, { includeMetadataChanges: true }, (snap) => {
+            if (!snap.metadata.fromCache && !snap.metadata.hasPendingWrites) {
+              markOfflineSectionReady(user.uid, 'records');
+              updateRecordSyncCheckpoint(user.uid, snap.docs);
+            }
+            const applyChanges = (records) => mergeRecordSnapshot(records, snap);
+            if (!initialized) {
+              applySnapshot('records', applyChanges(initial.get('records') || []));
+              return;
+            }
+            if (!cancelled) applyOrDeferRemote('records', (current) => ({ ...current, customRecords: applyChanges(current.customRecords) }));
+          }, (error) => {
+            if (!cancelled) setState((current) => ({ ...current, loading: false, error: error.message }));
+          }));
+        } else {
+          unsubscribers.push(onSnapshot(recordsReference, { includeMetadataChanges: true }, (snap) => {
+            if (!snap.metadata.fromCache && !snap.metadata.hasPendingWrites) {
+              markOfflineSectionReady(user.uid, 'records');
+              updateRecordSyncCheckpoint(user.uid, snap.docs);
+            }
+            const value = recordsFromSnapshot(snap);
+            if (!initialized) applySnapshot('records', value);
+            else if (!cancelled) applyOrDeferRemote('records', (current) => ({ ...current, customRecords: value }));
+          }, (error) => {
+            if (cancelled) return;
+            if (!initialized) setState({ loading: false, error: error.message, store: emptyStore() });
+            else setState((current) => ({ ...current, error: error.message }));
+          }));
+        }
         listen(
           'settings',
           reviewSettingsRef(user.uid),
@@ -1426,6 +1525,7 @@ function useFirestoreStore(user) {
             starred: settings.starred || [],
             recognition: settings.recognition || null,
           }),
+          'reviewSettings',
         );
         listen(
           'progress',
@@ -1442,6 +1542,7 @@ function useFirestoreStore(user) {
             return { stats, progress };
           },
           (current, progress) => ({ ...current, ...progress }),
+          'progress',
         );
         listen(
           'attempts',
@@ -1454,6 +1555,7 @@ function useFirestoreStore(user) {
               attempts: [...todayAttempts, ...otherAttempts].sort((a, b) => (b.time || '').localeCompare(a.time || '')),
             };
           },
+          `reviewDay:${today}`,
         );
       } catch (error) {
         if (!cancelled) setState({ loading: false, error: error.message, store: emptyStore() });
@@ -2306,7 +2408,19 @@ async function deleteLearningRecords(uid, recordIds, folders = []) {
   if (ids.length + affectedFolders.length > 500) throw new Error('這次刪除超過 Firebase 單次批次上限，請縮小選取範圍');
   await retryFirestoreWrite(async () => {
     const batch = writeBatch(db);
-    ids.forEach((recordId) => batch.delete(doc(db, 'users', uid, 'records', recordId)));
+    ids.forEach((recordId) => batch.set(
+      doc(db, 'users', uid, 'records', recordId),
+      {
+        id: recordId,
+        deletedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        item: deleteField(),
+        date: deleteField(),
+        createdAt: deleteField(),
+        order: deleteField(),
+      },
+      { merge: true },
+    ));
     affectedFolders.forEach((folder) => batch.set(
       doc(db, 'users', uid, 'folders', folder.id),
       { wordIds: arrayRemove(...ids), updatedAt: serverTimestamp() },
@@ -3625,6 +3739,15 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
             >
               <CloudDownload size={18} /> {offlineMode.preparing ? '準備中...' : offlineMode.ready ? '更新離線資料' : '準備離線使用'}
             </button>
+            {offlineMode.ready && (
+              <button
+                onClick={() => offlineMode.prepare({ forceFull: true }).catch(() => {})}
+                disabled={offlineMode.preparing || offlineMode.switching || !offlineMode.online || offlineMode.manual}
+                title="忽略既有快取，從 Firebase 完整重新下載所有文字資料"
+              >
+                <RotateCcw size={18} /> 完整重建離線資料
+              </button>
+            )}
           </div>
         </div>
         <div className="hero-meter">

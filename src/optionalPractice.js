@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { doc, onSnapshot, runTransaction, setDoc } from 'firebase/firestore';
 import { db } from './firebase.js';
-import { isBrowserOffline, queueOfflineWrite } from './offlineSupport.js';
+import { isBrowserOffline, markOfflineSectionReady, queueOfflineWrite } from './offlineSupport.js';
 
 export function drawPracticeIds(poolIds, seenIds = [], reservedIds = [], count = 10, random = Math.random) {
   if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error('題數須為 1 至 500 的整數');
@@ -78,6 +78,7 @@ export function useOptionalPractice(user) {
     if (!user) { setLoading(false); return undefined; }
     setLoading(true);
     return onSnapshot(doc(db, 'users', user.uid, 'settings', 'grammarReview'), (snapshot) => {
+      if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) markOfflineSectionReady(user.uid, 'grammarReview');
       const next = snapshot.data()?.optionalPractice || { tasks: [], pools: {} };
       stateRef.current = next;
       setState(next);

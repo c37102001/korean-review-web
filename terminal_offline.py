@@ -159,6 +159,7 @@ def synchronize(client, session, payload, api):
             if values:
                 transforms.append({'fieldPath': 'wordIds', operation: {'values': values}})
         if transforms:
+            transforms.append({'fieldPath': 'updatedAt', 'setToServerValue': 'REQUEST_TIME'})
             folder_document = read(client._document_url(['users', uid, 'folders', folder_id]))
             if not folder_document:
                 raise RuntimeError('待同步的資料夾已被刪除，已保留離線資料')

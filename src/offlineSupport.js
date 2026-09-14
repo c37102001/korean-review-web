@@ -1,5 +1,6 @@
 const PENDING_WRITES_KEY = 'korean-review-offline-pending-writes-v1';
 const OFFLINE_READY_KEY = 'korean-review-offline-ready-v1';
+const OFFLINE_COVERAGE_KEY = 'korean-review-offline-coverage-v1';
 export const MANUAL_OFFLINE_STORAGE_KEY = 'korean-review-manual-offline-v1';
 export const OFFLINE_STATUS_EVENT = 'korean-review-offline-status';
 
@@ -81,4 +82,20 @@ export function markOfflineReady(uid, details = {}) {
   storage()?.setItem(OFFLINE_READY_KEY, JSON.stringify(value));
   emitStatus({ offlineReady: value });
   return value;
+}
+
+export function offlineDataCoverage(uid = '') {
+  const value = readJson(OFFLINE_COVERAGE_KEY, null);
+  return value?.uid === uid ? value.sections || {} : {};
+}
+
+export function markOfflineSectionReady(uid, section) {
+  if (!uid || !section) return;
+  const sections = { ...offlineDataCoverage(uid), [section]: new Date().toISOString() };
+  storage()?.setItem(OFFLINE_COVERAGE_KEY, JSON.stringify({ uid, sections }));
+}
+
+export function clearOfflineDataCoverage(uid = '') {
+  const value = readJson(OFFLINE_COVERAGE_KEY, null);
+  if (!uid || value?.uid === uid) storage()?.removeItem(OFFLINE_COVERAGE_KEY);
 }
