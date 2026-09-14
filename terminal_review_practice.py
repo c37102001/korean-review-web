@@ -18,6 +18,9 @@ Core keys:
 from __future__ import annotations
 
 import curses
+import argparse
+import fcntl
+import sys
 import getpass
 import hashlib
 import json
@@ -37,6 +40,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib import error, parse, request
+import terminal_offline
 
 
 API_KEY = "AIzaSyCfy63R72H6LDCb-bR7L7RwkKNnGCTHPgU"
@@ -139,6 +143,62 @@ class FirebaseClient:
         self._saved_state: Dict[str, Any] = empty_state()
         self._writes_blocked_until = 0.0
         self.offline_mode = False
+        self.offline_payload = None
+
+    def start_offline(self, session, payload=None):
+        payload = payload or _read_terminal_cache(session.uid)
+        if not payload:
+            raise RuntimeError('此帳號沒有本機備份，請先連線載入一次')
+        self.offline_payload = terminal_offline.begin(payload)
+        self.offline_payload['account'] = {'uid': session.uid, 'email': session.email}
+        self.offline_mode = True
+        self.persist_offline(session)
+
+    def persist_offline(self, session):
+        try:
+            terminal_offline.persist(_terminal_cache_path(session.uid), self.offline_payload)
+        except OSError as exc:
+            raise RuntimeError(f'本機備份寫入失敗：{exc}') from exc
+
+    def sync_offline(self, session):
+        payload = self.offline_payload or _read_terminal_cache(session.uid)
+        if not payload or not payload.get('pending'):
+            self.offline_mode = False
+            return
+        self.offline_mode = False
+        try:
+            if not session.id_token:
+                password = os.getenv('TERMINAL_PRACTICE_PASSWORD', '')
+                if not password:
+                    raise RuntimeError('同步需要登入，請退出後不帶 --offline 重新啟動並登入')
+                authenticated = self.sign_in(session.email, password)
+                if authenticated.uid != session.uid:
+                    raise RuntimeError('登入帳號與本機備份不同，拒絕同步')
+                session.id_token = authenticated.id_token
+                session.refresh_token = authenticated.refresh_token
+            terminal_offline.synchronize(self, session, payload, sys.modules[__name__])
+            synchronized_payload = _clone_json(payload)
+            synchronized_payload.pop('pending', None)
+            terminal_offline.persist(_terminal_cache_path(session.uid), synchronized_payload)
+            self.offline_payload = None
+        except Exception as exc:
+            self.offline_mode = True
+            self.offline_payload = payload
+            if isinstance(exc, OSError):
+                raise RuntimeError(f'本機備份寫入失敗，待同步資料仍保留：{exc}') from exc
+            raise
+
+    def offline_folder_change(self, session, folder_id, word_id, included):
+        payload = _clone_json(self.offline_payload)
+        payload['pending']['folders'].setdefault(folder_id, {})[word_id] = included
+        sync_state_folder_membership({'folders': payload['folders']}, folder_id, word_id, included)
+        previous = self.offline_payload
+        self.offline_payload = payload
+        try:
+            self.persist_offline(session)
+        except RuntimeError:
+            self.offline_payload = previous
+            raise
 
     def sign_in(self, email: str, password: str) -> AuthSession:
         url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={self.api_key}"
@@ -210,6 +270,9 @@ class FirebaseClient:
         )
 
     def add_word_to_folder(self, session: AuthSession, folder_id: str, word_id: str) -> None:
+        if self.offline_mode:
+            self.offline_folder_change(session, folder_id, word_id, True)
+            return
         document_name = f"projects/{self.project_id}/databases/(default)/documents/users/{session.uid}/folders/{folder_id}"
         commit_url = f"https://firestore.googleapis.com/v1/projects/{self.project_id}/databases/(default)/documents:commit"
         self._request_json("POST", commit_url, payload={"writes": [{
@@ -223,6 +286,9 @@ class FirebaseClient:
         }]}, session=session)
 
     def remove_word_from_folder(self, session: AuthSession, folder_id: str, word_id: str) -> None:
+        if self.offline_mode:
+            self.offline_folder_change(session, folder_id, word_id, False)
+            return
         document_name = f"projects/{self.project_id}/databases/(default)/documents/users/{session.uid}/folders/{folder_id}"
         commit_url = f"https://firestore.googleapis.com/v1/projects/{self.project_id}/databases/(default)/documents:commit"
         self._request_json("POST", commit_url, payload={"writes": [{
@@ -268,6 +334,17 @@ class FirebaseClient:
         change: Any,
     ) -> Dict[str, Any]:
         """Atomically replace only optionalPractice without losing web updates."""
+        if self.offline_mode:
+            review = self.offline_payload.setdefault('grammarReview', {})
+            previous = _clone_json(review)
+            next_value = change(_clone_json(review.get('optionalPractice') or {'tasks': [], 'pools': {}}))
+            review['optionalPractice'] = next_value
+            try:
+                self.persist_offline(session)
+            except RuntimeError:
+                self.offline_payload['grammarReview'] = previous
+                raise
+            return next_value
         url = self._document_url(["users", session.uid, "settings", "grammarReview"])
         for attempt in range(4):
             try:
@@ -313,6 +390,15 @@ class FirebaseClient:
             "completedDate": date_key,
             "updatedAt": utc_now_iso(),
         }
+        if self.offline_mode:
+            previous_review = _clone_json(self.offline_payload.get('grammarReview') or {})
+            self.offline_payload.setdefault('grammarReview', {}).update(review)
+            try:
+                self.persist_offline(session)
+            except RuntimeError:
+                self.offline_payload['grammarReview'] = previous_review
+                raise
+            return review
         payload = {"fields": {key: _to_firestore_value(value) for key, value in review.items()}}
         update_mask = parse.urlencode([("updateMask.fieldPaths", key) for key in review])
         self._request_json(
@@ -365,8 +451,20 @@ class FirebaseClient:
 
     def save_review_state(self, session: AuthSession, state: Dict[str, Any]) -> None:
         if self.offline_mode:
-            # Keep the current terminal session usable while Firestore has rejected reads.
-            # These changes are intentionally not presented as persisted data.
+            previous = self.offline_payload['state']
+            previous_attempts = _clone_json(self.offline_payload['pending'].get('attempts') or {})
+            base_ids = {attempt['id'] for attempt in self.offline_payload['pending']['baseState'].get('attempts', [])}
+            journal = self.offline_payload['pending'].setdefault('attempts', {})
+            for attempt in state.get('attempts', []):
+                if attempt['id'] not in base_ids:
+                    journal[attempt['id']] = _clone_json(attempt)
+            self.offline_payload['state'] = _clone_json(state)
+            try:
+                self.persist_offline(session)
+            except RuntimeError:
+                self.offline_payload['state'] = previous
+                self.offline_payload['pending']['attempts'] = previous_attempts
+                raise
             self._saved_state = _clone_json(state)
             return
         if time.monotonic() < self._writes_blocked_until:
@@ -379,6 +477,11 @@ class FirebaseClient:
             raise
         self._saved_state = _clone_json(state)
         self._writes_blocked_until = 0.0
+        cached = _read_terminal_cache(session.uid)
+        if cached and not cached.get('pending'):
+            cached['state'] = _clone_json(state)
+            cached['folders'] = _clone_json(state.get('folders') or cached.get('folders') or [])
+            _write_terminal_cache(session.uid, cached)
 
     def _save_review_state_changes(self, session: AuthSession, previous: Dict[str, Any], state: Dict[str, Any]) -> None:
         question_ids = set(previous.get("stats") or {}) | set(previous.get("progress") or {}) | set(state.get("stats") or {}) | set(state.get("progress") or {})
@@ -495,6 +598,8 @@ class FirebaseClient:
         session: Optional[AuthSession] = None,
         _retry: bool = True,
     ) -> Dict[str, Any]:
+        if self.offline_mode:
+            raise RuntimeError('目前為離線模式，這項操作需要連線；沒有存取 Firebase')
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         transient_attempt = 0
         can_refresh_token = bool(session and _retry)
@@ -861,6 +966,7 @@ def load_data(
         grammar_review = grammar_review_future.result()
 
     payload = {
+        'account': {'uid': session.uid, 'email': session.email},
         "state": state,
         "records": records,
         "folders": folders,
@@ -868,8 +974,11 @@ def load_data(
         "ytSubtitles": youtube_subtitle_records,
         "grammarReview": grammar_review,
     }
+    loaded = _hydrate_loaded_data(client, session, payload, ensure_system_folders=True)
+    payload['state'] = _clone_json(loaded[0])
+    payload['folders'] = _clone_json(loaded[0]['folders'])
     _write_terminal_cache(session.uid, payload)
-    return _hydrate_loaded_data(client, session, payload, ensure_system_folders=True)
+    return loaded
 
 
 def load_data_with_cache(
@@ -877,16 +986,35 @@ def load_data_with_cache(
     session: AuthSession,
 ) -> Tuple[Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any], List[YoutubeSubtitle]], bool]:
     """Load Firebase data, falling back to the most recent local snapshot on quota exhaustion."""
+    if client.offline_mode:
+        payload = client.offline_payload or _read_terminal_cache(session.uid)
+        if not payload:
+            raise RuntimeError('此帳號沒有本機備份，請先連線載入一次')
+        client.start_offline(session, payload)
+        loaded = _hydrate_loaded_data(client, session, client.offline_payload, ensure_system_folders=False)
+        client._saved_state = _clone_json(loaded[0])
+        return loaded, True
+    cached = _read_terminal_cache(session.uid)
+    if cached and cached.get('pending'):
+        client.offline_payload = cached
+        try:
+            client.sync_offline(session)
+        except RuntimeError as exc:
+            client.offline_sync_error = str(exc)
+            client.start_offline(session, cached)
+            return load_data_with_cache(client, session)
     try:
         loaded = load_data(client, session)
     except RuntimeError as exc:
-        if not _is_quota_exceeded_error(str(exc)):
+        if not _is_quota_exceeded_error(str(exc)) and 'Network error' not in str(exc):
             raise
         payload = _read_terminal_cache(session.uid)
         if payload is None:
             raise
-        client.offline_mode = True
-        return _hydrate_loaded_data(client, session, payload, ensure_system_folders=False), True
+        client.start_offline(session, payload)
+        loaded = _hydrate_loaded_data(client, session, client.offline_payload, ensure_system_folders=False)
+        client._saved_state = _clone_json(loaded[0])
+        return loaded, True
     client.offline_mode = False
     return loaded, False
 
@@ -4591,6 +4719,8 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
     except RuntimeError as exc:
         wait_message(stdscr, "載入失敗", friendly_firebase_error(exc))
         return
+    if getattr(client, 'offline_sync_error', ''):
+        wait_message(stdscr, '同步未完成，改用本機備份', client.offline_sync_error)
     while True:
         today = today_string()
         completed = state.setdefault("completedReviewDates", [])
@@ -4608,7 +4738,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
             )
         choice = menu(
             stdscr,
-            f"韓文筆記 Terminal | {session.email}{' | 離線快取（不會同步）' if using_cached_data else ''}",
+            f"韓文筆記 Terminal | {session.email}{' | 離線（已保存，待同步）' if client.offline_mode else ''}",
             [
                 ("due", "今日複習題"),
                 ("optional_practice", "自選練習"),
@@ -4619,6 +4749,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 ("vocabulary_notes", "單字筆記"),
                 ("youtube_subtitles", "YT字幕"),
                 ("refresh", "重新同步"),
+                ("offline", "切換至離線模式（使用本機備份）"),
                 ("quit", "離開"),
             ],
             "↑↓=移動 Enter=選擇 .=切換自動語音 Esc=離開",
@@ -4627,14 +4758,28 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
             return
         if choice == "refresh":
             try:
+                client.sync_offline(session)
                 (state, cards, questions, grammar_notes, grammar_review, youtube_subtitles), using_cached_data = load_data_with_cache(client, session)
             except RuntimeError as exc:
                 wait_message(stdscr, "同步失敗", friendly_firebase_error(exc))
             continue
-        if choice == "optional_practice":
-            if using_cached_data:
-                wait_message(stdscr, "自選練習", "目前使用離線快取，無法新增或同步練習進度。請在額度恢復後重新同步。")
+        if choice == 'offline':
+            if client.offline_mode:
+                wait_message(stdscr, '離線模式', '已使用本機備份，變更已保存；選擇重新同步即可上傳')
                 continue
+            try:
+                client.start_offline(session)
+                client.offline_payload['state'] = _clone_json(state)
+                client.offline_payload['folders'] = _clone_json(state.get('folders') or [])
+                client.offline_payload['grammarReview'] = _clone_json(grammar_review)
+                client.offline_payload['pending']['baseState'] = _clone_json(state)
+                client.offline_payload['pending']['baseGrammarReview'] = _clone_json(grammar_review)
+                client.persist_offline(session)
+                using_cached_data = True
+            except RuntimeError as exc:
+                wait_message(stdscr, '離線模式失敗', str(exc))
+            continue
+        if choice == "optional_practice":
             run_optional_practice_menu(
                 stdscr, cards, questions, grammar_notes, state, grammar_review, client, session,
             )
@@ -4777,9 +4922,48 @@ def prompt_login(client: FirebaseClient) -> AuthSession:
 
 def main() -> None:
     load_local_env()
+    parser = argparse.ArgumentParser(description='韓文筆記 Terminal')
+    parser.add_argument('--offline', action='store_true', help='只使用本機備份，不連線登入或讀寫 Firebase')
+    parser.add_argument('--sync', action='store_true', help='登入並同步本機變更後退出')
+    parser.add_argument('--email', default=os.getenv('TERMINAL_PRACTICE_EMAIL', ''), help='離線備份所屬帳號')
+    args = parser.parse_args()
+    if args.offline and args.sync:
+        parser.error('--offline 與 --sync 不能同時使用')
     client = FirebaseClient(API_KEY, PROJECT_ID)
-    session = prompt_login(client)
-    curses.wrapper(run_terminal_ui, client, session)
+    if args.offline:
+        matches = []
+        for path in CACHE_DIR.glob('*.json'):
+            try:
+                payload = json.loads(path.read_text(encoding='utf-8'))
+                account = payload.get('account') or {}
+                if account.get('email', '').lower() == args.email.lower() and account.get('uid'):
+                    matches.append(account)
+            except (OSError, ValueError):
+                continue
+        if len(matches) != 1:
+            parser.error('找不到此帳號的本機備份，請先線上登入一次；可用 --email 指定帳號')
+        account = matches[0]
+        session = AuthSession(account['email'], account['uid'], '', '')
+    else:
+        session = prompt_login(client)
+    lock_path = _terminal_cache_path(session.uid).with_suffix('.lock')
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            parser.error('此帳號已有另一個 terminal 執行中，請先關閉，避免本機備份互相覆蓋')
+        if args.offline:
+            client.start_offline(session)
+        if args.sync:
+            try:
+                client.sync_offline(session)
+                load_data(client, session)
+            except RuntimeError as exc:
+                parser.exit(1, f'同步失敗，待同步資料仍保留：{exc}\n')
+            print('同步完成，本機備份已更新。')
+            return
+        curses.wrapper(run_terminal_ui, client, session)
 
 
 if __name__ == "__main__":

@@ -235,6 +235,21 @@ Terminal 在任何顯示單字卡的學習或測驗畫面都可按 `*`，立即�
 
 ## 資料夾
 
+### Terminal 離線使用
+
+線上登入一次會在 `~/.cache/korean-review-web-terminal/` 備份單字、資料夾、筆記、YT 文字字幕與練習狀態。備份不包含密碼或登入 token，YouTube 音訊仍需另外下載或先快取。
+
+```bash
+python terminal_review_practice.py --offline
+python terminal_review_practice.py --offline --email your@email.com
+python terminal_review_practice.py --sync
+```
+
+`--offline` 不連線登入、不讀寫 Firestore；使用 `.env` 中的 email 選取本機備份。主選單也可切換至離線模式。離線作答、星號、已學習／不熟悉資料夾異動及自選練習都會持久保存，退出後仍保留。離線模式只代表資料庫離線，線上 TTS 或未快取的 YouTube 音訊仍可能需要網路。
+
+要上傳時選「重新同步」、執行 `--sync` 或下次正常登入。同步會合併作答次數增量、以陣列操作更新資料夾，並以單一批次及資料版本檢查避免重複計分或覆蓋遠端變更。若其他裝置同時修改相同單字排程或自選練習，會提示衝突並保留本機資料，不強制覆蓋。額度仍不足時也保留待同步資料，繼續使用本機備份。每個帳號同一台電腦只允許一個 terminal 同時操作備份。
+
+
 網頁的資料夾只保存單字 ID reference，單字內容仍唯一存放在 `records` collection。
 同一張單字卡可以加入多個資料夾；從資料夾移除或刪除資料夾不會刪除單字卡。
 資料夾內可加入既有單字，也可用手動或 JSON 匯入建立新單字，並可直接啟動該

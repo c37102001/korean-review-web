@@ -40,6 +40,41 @@ test('Naver dictionary links use the current Korean dictionary search route', ()
   );
 });
 
+test('single-word JSON editing uses the import envelope and preserves existing example ids', () => {
+  const original = {
+    id: 'word', date: '2026-09-14', ko: '나름', pos: '名詞／副詞性表達',
+    meanings: [{ id: 'word-0', zh: '按照自己的方式', examples: [{ id: 'word-0-ex-0', ko: '저도 나름대로 열심히 했어요.', zh: '我也努力了。' }] }],
+    notes: [], related: [],
+  };
+  const document = JSON.parse(helpers.formatSingleWordJson(original));
+  assert.equal(document.schemaVersion, 2);
+  assert.equal(document.data.length, 1);
+  assert.equal(document.data[0].id, undefined);
+  document.data[0].meanings.push({ zh: '取決於怎麼做', pattern: 'V-기 나름이다', examples: [{ ko: '결과는 노력하기 나름이에요.', zh: '結果取決於努力。' }] });
+  document.data[0].notes = ['**使用提醒**'];
+  const edited = helpers.parseSingleWordEditJson(JSON.stringify(document), original, [original]);
+  assert.equal(edited.meanings.length, 2);
+  assert.equal(edited.meanings[0].id, 'word-0');
+  assert.equal(edited.meanings[0].examples[0].id, 'word-0-ex-0');
+  assert.deepEqual(edited.notes, ['**使用提醒**']);
+  assert.equal(edited.pos, original.pos);
+  assert.equal(original.meanings.length, 1);
+});
+
+test('single-word JSON editing rejects malformed, multiple, duplicate and unsupported data', () => {
+  const original = { id: 'word', ko: '나름', meanings: [{ zh: '自己的方式', examples: [] }] };
+  const other = { id: 'other', ko: '날씨', meanings: [{ zh: '天氣', examples: [] }] };
+  const input = JSON.parse(helpers.formatSingleWordJson(original));
+  assert.throws(() => helpers.parseSingleWordEditJson('{', original, [original]), /JSON/);
+  assert.throws(() => helpers.parseSingleWordEditJson(JSON.stringify({ data: [] }), original, [original]), /1 筆/);
+  assert.throws(() => helpers.parseSingleWordEditJson(JSON.stringify({ data: [input.data[0], input.data[0]] }), original, [original]), /1 筆/);
+  assert.throws(() => helpers.parseSingleWordEditJson(JSON.stringify({ ...input, schemaVersion: 3 }), original, [original]), /schemaVersion/);
+  assert.throws(() => helpers.parseSingleWordEditJson(JSON.stringify({ data: [{ ...input.data[0], ko: '날씨' }] }), original, [original, other]), /重複/);
+  assert.throws(() => helpers.parseSingleWordEditJson(JSON.stringify({ data: [{ ...input.data[0], related: ['不存在'] }] }), original, [original]), /相關詞/);
+  assert.throws(() => helpers.parseSingleWordEditJson(JSON.stringify({ data: [{ ...input.data[0], id: 'changed' }] }), original, [original]), /ID/);
+  assert.throws(() => helpers.parseSingleWordEditJson(JSON.stringify({ data: [{ ...input.data[0], examples: [] }] }), original, [original]), /不支援/);
+});
+
 test('word folder memberships are derived from folder references', () => {
   const folders = [
     { id: 'a', wordIds: ['word-1', 'word-2'] },

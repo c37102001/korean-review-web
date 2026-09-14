@@ -2059,6 +2059,59 @@ function parseEditedImportItem(text, label = '編輯後的單字') {
   return item;
 }
 
+function formatSingleWordJson(item) {
+  const content = {
+    ko: item.ko,
+    ...(item.pos ? { pos: item.pos } : {}),
+    meanings: (item.meanings || []).map((meaning) => ({
+      zh: meaning.zh,
+      ...(meaning.pattern ? { pattern: meaning.pattern } : {}),
+      examples: (meaning.examples || []).map(({ ko, zh }) => ({ ko, zh })),
+    })),
+    notes: item.notes || [],
+    ...(item.related?.length ? { related: item.related } : {}),
+  };
+  return JSON.stringify({ schemaVersion: CONTENT_SCHEMA_VERSION, data: [content] }, null, 2);
+}
+
+function parseSingleWordEditJson(text, original, allItems = []) {
+  const data = readJsonImportDocument(text);
+  if (data.length !== 1) throw new Error('編輯單字的 data 必須只包含 1 筆單字');
+  const input = data[0];
+  validateImportItem(input, 0);
+  if (input.id && input.id !== original.id) throw new Error('不能修改這張單字卡的 ID');
+  if (input.date && input.date !== original.date) throw new Error('請使用日期欄位修改日期');
+  const collision = allItems.find((item) => item.id !== original.id && normalizeKoreanKey(item.ko) === normalizeKoreanKey(input.ko));
+  if (collision) throw new Error(`韓文「${input.ko}」與既有單字重複，請編輯既有單字卡`);
+  const usedMeaningIds = new Set();
+  const meanings = input.meanings.map((meaning, index) => {
+    const previous = (original.meanings || []).find((entry) => (
+      !usedMeaningIds.has(entry.id) && (meaning.id ? entry.id === meaning.id : entry.zh === meaning.zh)
+    )) || (!usedMeaningIds.has(original.meanings?.[index]?.id) ? original.meanings?.[index] : null);
+    const id = previous?.id || `${original.id}-meaning-${createId()}`;
+    usedMeaningIds.add(id);
+    const usedExampleIds = new Set();
+    return {
+      ...meaning,
+      id,
+      examples: (meaning.examples || []).map((example) => {
+        const existing = (previous?.examples || []).find((entry) => (
+          !usedExampleIds.has(entry.id) && (example.id ? entry.id === example.id : entry.ko === example.ko && entry.zh === example.zh)
+        ));
+        const exampleId = existing?.id || `${id}-ex-${createId()}`;
+        usedExampleIds.add(exampleId);
+        return { ...example, id: exampleId };
+      }),
+    };
+  });
+  const lookup = buildRecordLookup(allItems.map((item) => ({ id: item.id, item })));
+  const item = normalizeItemToV2({ ...input, ko: input.ko.trim(), meanings }, original.id, lookup);
+  if (item.related.some((id) => id === original.id || !allItems.some((entry) => entry.id === id))) {
+    throw new Error('相關詞必須是其他已存在的單字卡');
+  }
+  return item;
+}
+
 function resolveImportConflictDraft(draft, choice, allItems = []) {
   const conflict = draft.conflict;
   if (!conflict) throw new Error('目前沒有需要處理的衝突');
@@ -3936,7 +3989,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
     : [...new Set([...initialFolderIds, ...requiredFolderIds])];
   const [mode, setMode] = useState('manual');
   const [formDate, setFormDate] = useState(date);
-  const [jsonText, setJsonText] = useState('');
+  const [jsonText, setJsonText] = useState(() => editItem ? formatSingleWordJson(editItem) : '');
   const [importDraft, setImportDraft] = useState(null);
   const [manual, setManual] = useState(() => itemToManual(editItem));
   const [message, setMessage] = useState('');
@@ -3969,6 +4022,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
   useEffect(() => {
     setFormDate(editItem?.date || date);
     setManual(itemToManual(editItem));
+    setJsonText(editItem ? formatSingleWordJson(editItem) : '');
     setMode('manual');
     setImportDraft(null);
     setMessage('');
@@ -4144,6 +4198,23 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
     ));
   };
 
+  const switchMode = (nextMode) => {
+    if (nextMode === mode || saving) return;
+    setError('');
+    try {
+      if (isEditing) {
+        if (nextMode === 'json') {
+          setJsonText(formatSingleWordJson(mergeEditedItem(editItem, manual, allItems)));
+        } else {
+          setManual(itemToManual(parseSingleWordEditJson(jsonText, editItem, allItems)));
+        }
+      }
+      setMode(nextMode);
+    } catch (validationError) {
+      setError(validationError.message);
+    }
+  };
+
   const submit = async (event) => {
     event.preventDefault();
     if (submissionLockRef.current) return;
@@ -4160,7 +4231,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
           id: editItem.id,
           date: targetDate,
           order: recordOrder(editItem),
-          item: mergeEditedItem(editItem, manual, allItems),
+          item: mode === 'json' ? parseSingleWordEditJson(jsonText, editItem, allItems) : mergeEditedItem(editItem, manual, allItems),
           createdAt: editItem.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
@@ -4221,9 +4292,9 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
     <form className={`${compactPanel ? '' : 'panel'} add-panel`} onSubmit={submit}>
       <div className="panel-title">
         <div><h2>{title}</h2><span>{isEditing ? '修改後會覆蓋這筆單字資料' : '可貼上整份 JSON，或手動新增一筆'}</span></div>
-        {!isEditing && !importCompleted && <div className="segmented compact">
-          <button type="button" className={mode === 'manual' ? 'active' : ''} onClick={() => setMode('manual')}>手動填寫</button>
-          <button type="button" className={mode === 'json' ? 'active' : ''} onClick={() => setMode('json')}>貼上 JSON</button>
+        {!importCompleted && <div className="segmented compact">
+          <button type="button" disabled={saving} className={mode === 'manual' ? 'active' : ''} onClick={() => switchMode('manual')}>手動填寫</button>
+          <button type="button" disabled={saving} className={mode === 'json' ? 'active' : ''} onClick={() => switchMode('json')}>{isEditing ? '修改 JSON' : '貼上 JSON'}</button>
         </div>}
       </div>
 
@@ -4270,6 +4341,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
               詞性 / 類型
               <select value={manual.pos} onChange={(event) => setManual({ ...manual, pos: event.target.value })}>
                 <option value="">不指定</option>
+                {manual.pos && !['名詞', '動詞', '形容詞', '副詞', '片語', '動詞片語', '句子', '文法', '比較'].includes(manual.pos) && <option value={manual.pos}>{manual.pos}</option>}
                 {['名詞', '動詞', '形容詞', '副詞', '片語', '動詞片語', '句子', '文法', '比較'].map((option) => <option key={option}>{option}</option>)}
               </select>
             </label>
@@ -4318,7 +4390,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
         ) : (
           <label className="wide-field">
             JSON 內容
-            <textarea className="json-input" value={jsonText} onChange={(event) => setJsonText(event.target.value)} placeholder='{ "data": [{ "ko": "뉴스", "pos": "名詞", "meanings": [{ "zh": "新聞", "examples": [] }] }] }' required />
+            <textarea className="json-input" spellCheck={false} value={jsonText} onChange={(event) => setJsonText(event.target.value)} placeholder='{ "schemaVersion": 2, "data": [{ "ko": "뉴스", "pos": "名詞", "meanings": [{ "zh": "新聞", "examples": [] }] }] }' required />
           </label>
         )}
       </div>}
@@ -8843,6 +8915,8 @@ export {
   matchesFamiliarityLevels,
   folderFilterWordIds,
   folderMembershipChanges,
+  formatSingleWordJson,
+  parseSingleWordEditJson,
   selectedFoldersFirst,
   wordFolderIds,
   folderTagLabel,
