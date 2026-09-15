@@ -2379,6 +2379,27 @@ def update_curses_screen(stdscr: curses.window) -> None:
     curses.doupdate()
 
 
+def clear_with_default_background(stdscr: curses.window) -> None:
+    """Clear attributes inherited from the previously highlighted menu row."""
+    try:
+        stdscr.attrset(curses.A_NORMAL)
+        stdscr.bkgdset(" ", curses.A_NORMAL)
+    except curses.error:
+        pass
+    stdscr.erase()
+
+
+def initialize_terminal_appearance(stdscr: curses.window) -> None:
+    """Use the terminal's own background instead of curses' ANSI black."""
+    if curses.has_colors():
+        try:
+            curses.start_color()
+            curses.use_default_colors()
+        except curses.error:
+            pass
+    clear_with_default_background(stdscr)
+
+
 def set_cursor_visibility(visibility: int) -> int:
     try:
         return curses.curs_set(visibility)
@@ -2482,7 +2503,7 @@ def menu(stdscr: curses.window, title: str, options: List[Tuple[str, str]], subt
         draw_line(stdscr, 2, 2, subtitle, curses.A_DIM)
         for row, (_, label) in enumerate(visible_options, 3):
             option_index = start + row - 3
-            attr = curses.A_REVERSE if option_index == selected else curses.A_NORMAL
+            attr = curses.A_BOLD if option_index == selected else curses.A_NORMAL
             draw_line(stdscr, row, 2, ("» " if option_index == selected else "  ") + label, attr)
         if len(options) > visible_count:
             draw_line(
@@ -2568,7 +2589,7 @@ def multi_select_menu(
         for row, (value, label) in enumerate(options[start:start + visible_count], 3):
             index = start + row - 3
             marker = "[✓]" if value in selected_values else "[ ]"
-            draw_line(stdscr, row, 2, ("» " if index == cursor else "  ") + f"{marker} {label}", curses.A_REVERSE if index == cursor else 0)
+            draw_line(stdscr, row, 2, ("» " if index == cursor else "  ") + f"{marker} {label}", curses.A_BOLD if index == cursor else 0)
         update_curses_screen(stdscr)
         key = read_terminal_key(stdscr, wide=True)
         if key == "\x1b" or key == 27:
@@ -2633,7 +2654,7 @@ def grouped_folder_select_menu(
                 folder_id = str(folder.get("id") or "")
                 marker = "[✓]" if folder_id in selected_values else "[ ]"
                 label = f"    {marker} {folder.get('name') or '未命名資料夾'} · {len(folder.get('wordIds') or [])} 張卡"
-            draw_line(stdscr, screen_row, 2, ("» " if index == cursor else "  ") + label, curses.A_REVERSE if index == cursor else 0)
+            draw_line(stdscr, screen_row, 2, ("» " if index == cursor else "  ") + label, curses.A_BOLD if index == cursor else 0)
         update_curses_screen(stdscr)
         key = read_terminal_key(stdscr, wide=True)
         if key == "\x1b" or key == 27:
@@ -2851,7 +2872,7 @@ def run_grammar_notebook(
                 row,
                 2,
                 ("» " if note_index == cursor else "  ") + label,
-                curses.A_REVERSE if note_index == cursor else 0,
+                curses.A_BOLD if note_index == cursor else 0,
             )
         footer = message
         if len(notes) > visible_count:
@@ -3131,7 +3152,7 @@ def run_youtube_subtitles(
                 row,
                 2,
                 ("» " if subtitle_index == cursor else "  ") + label,
-                curses.A_REVERSE if subtitle_index == cursor else 0,
+                curses.A_BOLD if subtitle_index == cursor else 0,
             )
         if len(notes) > visible_count:
             draw_line(stdscr, height - 1, 2, f"{cursor + 1}/{len(notes)}", curses.A_DIM)
@@ -3200,7 +3221,7 @@ def optional_word_practice_setup(
         draw_line(stdscr, 1, 2, "新增練習 | 單字練習", curses.A_BOLD)
         draw_line(stdscr, 2, 2, "↑↓=項目 Enter=設定/新增 Esc=返回 · 已學習單字固定排除", curses.A_DIM)
         for index, label in enumerate(rows):
-            draw_line(stdscr, 3 + index, 2, ("» " if index == row else "  ") + label, curses.A_REVERSE if index == row else 0)
+            draw_line(stdscr, 3 + index, 2, ("» " if index == row else "  ") + label, curses.A_BOLD if index == row else 0)
         update_curses_screen(stdscr)
         key = read_terminal_key(stdscr, wide=True)
         if key == "\x1b" or key == 27:
@@ -3463,7 +3484,7 @@ def setup_menu(
         recording_note = "可選擇是否紀錄" if allow_result_recording else "自主測驗不紀錄"
         draw_line(stdscr, 2, 2, f"↑↓=項目 ←→=切換 Enter=開始 Esc=返回 · {recording_note}", curses.A_DIM)
         for idx, label in enumerate(rows):
-            draw_line(stdscr, 3 + idx, 2, ("» " if idx == row else "  ") + label, curses.A_REVERSE if idx == row else 0)
+            draw_line(stdscr, 3 + idx, 2, ("» " if idx == row else "  ") + label, curses.A_BOLD if idx == row else 0)
         stdscr.refresh()
         key = read_terminal_key(stdscr)
         if key == 27:
@@ -3562,7 +3583,7 @@ def grammar_practice_setup_menu(
                 3 + index,
                 2,
                 ("» " if index == row else "  ") + label,
-                curses.A_REVERSE if index == row else 0,
+                curses.A_BOLD if index == row else 0,
             )
         update_curses_screen(stdscr)
         key = read_terminal_key(stdscr)
@@ -3811,7 +3832,7 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
         auto_face = auto_step[0] if auto_step else ""
         if auto_step and auto_step[1] >= 0:
             example_index = auto_step[1]
-        stdscr.clear()
+        clear_with_default_background(stdscr)
         draw_line(
             stdscr,
             1,
@@ -4279,6 +4300,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
     pending_example_audio = ""
     pending_word_audio = False
     spoken_question_id = ""
+    scroll_offset = 0
     ok_attr = curses.A_BOLD
     wrong_attr = curses.A_REVERSE | curses.A_BOLD
     wrong_result_attr = curses.A_BOLD
@@ -4332,13 +4354,14 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         answer_visible = show_hint or graded
         learned_help = " -=已學習" if answer_visible and daily_review and question.kind == "term" else ""
         self_grade_help = " 1=答錯 2=答對" if self_grade_mode and answer_visible and not graded else ""
+        scroll_help = " ↑↓=捲動" if answer_visible else ""
         if answer_visible and example_audio_enabled:
             example_controls = "7=例句" if question.kind == "grammar-example" else "7=例句 +=下一句"
-            controls = f"Esc=返回{star_help}{unfamiliar_help}{learned_help}{self_grade_help} {example_controls} 4/6=上下題 Enter={'下一題' if graded else '送出'}"
+            controls = f"Esc=返回{star_help}{unfamiliar_help}{learned_help}{self_grade_help} {example_controls}{scroll_help} 4/6=上下題 Enter={'下一題' if graded else '送出'}"
         else:
             prompt_audio_help = " 7=題目" if config["direction"] == "ko-zh" and not answer_visible else ""
             check_help = " +=檢查" if not self_grade_mode else ""
-            controls = f"Esc=返回{star_help}{unfamiliar_help}{learned_help}{self_grade_help}{prompt_audio_help} 8=答案 4/6=上下題{check_help} Enter={'下一題' if graded else '送出'}"
+            controls = f"Esc=返回{star_help}{unfamiliar_help}{learned_help}{self_grade_help}{prompt_audio_help} 8=答案{scroll_help} 4/6=上下題{check_help} Enter={'下一題' if graded else '送出'}"
         draw_line(stdscr, 1, 2, f"測驗{record_label} | {title} | {idx + 1}/{len(questions)}  {auto_audio_control_label()} {controls}", curses.A_BOLD)
         length_hint = f"  ({count_korean_letters(answer)} 個韓文字)" if config["direction"] == "zh-ko" else ""
         star_prefix = f"{'★' if question.source.is_starred else '☆'} " if allow_star else ""
@@ -4367,38 +4390,65 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             positions = draw_answer_with_feedback(stdscr, input_y, 2, "輸入: ", user_input, partial, ok_attr, wrong_attr, answered_attr)
             count_x = max(positions[-1] + 2, width - 18)
             draw_line(stdscr, input_y, count_x, f"{count_korean_letters(user_input)} 個韓文字", curses.A_DIM)
-        message_y = input_y + 1
+        detail_start = input_y + 1
+        detail_lines: List[Tuple[str, int, int]] = []
+
+        def append_detail(text: str, indent: int = 0, attr: int = 0) -> None:
+            line_width = max(1, width - 4 - indent)
+            for line in _split_by_cell_width(text, line_width):
+                detail_lines.append((line, indent, attr))
+
         if (show_hint or graded) and question.kind == "grammar-example":
-            draw_line(stdscr, message_y, 2, f"筆記: {question.source.ko}", curses.A_BOLD)
-            message_y += 1
+            append_detail(f"筆記: {question.source.ko}", attr=curses.A_BOLD)
             for note in question.source.notes:
-                message_y = draw_wrapped(stdscr, message_y, 4, width - 6, f"筆記: {note}", curses.A_DIM)
-            message_y = draw_wrapped(stdscr, message_y, 4, width - 6, f"韓文: {question.ko}")
-            message_y = draw_wrapped(stdscr, message_y, 4, width - 6, f"中文: {question.zh}", curses.A_DIM)
+                append_detail(f"筆記: {note}", indent=2, attr=curses.A_DIM)
+            append_detail(f"韓文: {question.ko}", indent=2)
+            append_detail(f"中文: {question.zh}", indent=2, attr=curses.A_DIM)
         elif (show_hint or graded) and question.kind == "term":
             if examples:
-                draw_line(stdscr, message_y, 2, "例句:", curses.A_DIM)
-                message_y += 1
+                append_detail("例句:", attr=curses.A_DIM)
                 for index, example in enumerate(examples):
                     marker = "▶" if index == example_index else " "
                     text = " / ".join(part for part in (example.get("ko"), example.get("zh")) if part)
-                    message_y = draw_wrapped(
-                        stdscr,
-                        message_y,
-                        4,
-                        width - 6,
+                    append_detail(
                         f"{marker} {index + 1}. {text}",
-                        curses.A_BOLD if index == example_index else curses.A_DIM,
+                        indent=2,
+                        attr=curses.A_BOLD if index == example_index else curses.A_DIM,
                     )
+        if (show_hint or graded) and question.source.pos != "文法" and question.source.notes:
+            append_detail("筆記:", attr=curses.A_DIM)
+            for note in question.source.notes:
+                append_detail(str(note), indent=2, attr=curses.A_DIM)
         if not self_grade_mode and (retry_diff or (graded and last_correct is False)):
-            draw_answer_diff(stdscr, message_y, 2, user_input, answer, wrong_attr)
-            message_y += 1
-        if display_message:
+            draw_answer_diff(stdscr, detail_start, 2, user_input, answer, wrong_attr)
+            detail_start += 1
+        visible_rows = max(1, height - detail_start - 1)
+        max_scroll = max(0, len(detail_lines) - visible_rows)
+        scroll_offset = min(scroll_offset, max_scroll)
+        for row, (line, indent, attr) in enumerate(
+            detail_lines[scroll_offset:scroll_offset + visible_rows],
+            detail_start,
+        ):
             draw_line(
                 stdscr,
-                message_y,
+                row,
+                2 + indent,
+                line,
+                attr,
+            )
+        footer_parts = []
+        if display_message:
+            footer_parts.append(display_message)
+        if len(detail_lines) > visible_rows:
+            footer_parts.append(
+                f"內容 {scroll_offset + 1}-{min(len(detail_lines), scroll_offset + visible_rows)}/{len(detail_lines)}"
+            )
+        if footer_parts:
+            draw_line(
+                stdscr,
+                height - 1,
                 2,
-                display_message,
+                "  ".join(footer_parts),
                 wrong_result_attr if retry_diff or (graded and last_correct is False) else curses.A_BOLD,
             )
         if not self_grade_mode:
@@ -4458,6 +4508,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 pending_word_audio = False
                 message = ""
                 result_message = ""
+                scroll_offset = 0
                 continue
             if self_grade_mode:
                 message = "請先按 8 公佈答案，再按 1 或 2 自評。"
@@ -4526,6 +4577,12 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 continue
             input_cursor = min(len(user_input), input_cursor + 1)
             continue
+        if key == curses.KEY_UP and answer_visible:
+            scroll_offset = max(0, scroll_offset - 1)
+            continue
+        if key == curses.KEY_DOWN and answer_visible:
+            scroll_offset = min(max_scroll, scroll_offset + 1)
+            continue
         if isinstance(key, str):
             if key == "0" and allow_star:
                 snapshot = _clone_json(state)
@@ -4580,6 +4637,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             elif key == "8":
                 revealing_answer = not show_hint
                 show_hint = revealing_answer
+                scroll_offset = 0
                 if revealing_answer:
                     pending_word_audio = auto_answer_audio and _AUTO_PLAY_AUDIO and bool(answer_word)
             elif key in ("1", "2") and self_grade_mode:
@@ -4650,6 +4708,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 pending_word_audio = False
                 message = ""
                 result_message = ""
+                scroll_offset = 0
             elif key == "6":
                 if require_answer_before_next and not graded:
                     message = "請先送出這一題的答案。"
@@ -4672,6 +4731,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 pending_word_audio = False
                 message = ""
                 result_message = ""
+                scroll_offset = 0
             elif key.isprintable():
                 if graded or self_grade_mode:
                     continue
@@ -4765,7 +4825,7 @@ def run_notebook(
         draw_line(stdscr, 2, 2, "↑↓=項目 ←→=切換 Enter=設定/開始 R=重設 Esc=返回", curses.A_DIM)
         for screen_row, label in enumerate(visible_rows, 3):
             index = start + screen_row - 3
-            attr = curses.A_REVERSE if index == row else curses.A_BOLD if index >= 6 else 0
+            attr = curses.A_BOLD if index == row or index >= 6 else 0
             draw_line(stdscr, screen_row, 2, ("» " if index == row else "  ") + label, attr)
         if len(rows) > visible_count:
             draw_line(stdscr, height - 1, 2, f"{row + 1}/{len(rows)} · 繼續按 ↓ 可看到開始選項", curses.A_DIM)
@@ -4881,6 +4941,7 @@ def run_folder_notebook(
 
 
 def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: AuthSession) -> None:
+    initialize_terminal_appearance(stdscr)
     try:
         (state, cards, questions, grammar_notes, grammar_review, youtube_subtitles), using_cached_data = load_data_with_cache(client, session)
     except RuntimeError as exc:
