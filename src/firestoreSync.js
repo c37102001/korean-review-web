@@ -1,5 +1,15 @@
+import { firestoreTimestampMillis } from './shared/firestoreTimestamp.js';
+
+export { firestoreTimestampMillis } from './shared/firestoreTimestamp.js';
+
 const RECORD_SYNC_STORAGE_KEY = 'korean-review-record-sync-v1';
 const RECORD_SYNC_VERSION = 1;
+
+function collectionSyncStorageKey(collectionName) {
+  return collectionName === 'records'
+    ? RECORD_SYNC_STORAGE_KEY
+    : `korean-review-${collectionName}-sync-v1`;
+}
 
 function storage() {
   try {
@@ -7,16 +17,6 @@ function storage() {
   } catch {
     return null;
   }
-}
-
-export function firestoreTimestampMillis(value) {
-  if (!value) return 0;
-  if (typeof value.toMillis === 'function') return value.toMillis();
-  if (typeof value === 'object' && Number.isFinite(value.seconds)) {
-    return (value.seconds * 1000) + Math.floor((Number(value.nanoseconds) || 0) / 1_000_000);
-  }
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function firestoreTimestampParts(value) {
@@ -32,10 +32,10 @@ function firestoreTimestampParts(value) {
   };
 }
 
-export function recordSyncCheckpoint(uid) {
+export function collectionSyncCheckpoint(uid, collectionName) {
   if (!uid) return null;
   try {
-    const value = JSON.parse(storage()?.getItem(RECORD_SYNC_STORAGE_KEY) || 'null');
+    const value = JSON.parse(storage()?.getItem(collectionSyncStorageKey(collectionName)) || 'null');
     if (value?.version !== RECORD_SYNC_VERSION || value.uid !== uid || !Number.isFinite(value.seconds) || !Number.isFinite(value.nanoseconds)) return null;
     return value;
   } catch {
@@ -43,9 +43,9 @@ export function recordSyncCheckpoint(uid) {
   }
 }
 
-export function updateRecordSyncCheckpoint(uid, documents = []) {
+export function updateCollectionSyncCheckpoint(uid, collectionName, documents = []) {
   if (!uid) return null;
-  const previous = recordSyncCheckpoint(uid);
+  const previous = collectionSyncCheckpoint(uid, collectionName);
   const latest = documents.reduce((current, entry) => {
     const data = typeof entry?.data === 'function' ? entry.data() : entry;
     const candidate = firestoreTimestampParts(data?.updatedAt);
@@ -61,14 +61,22 @@ export function updateRecordSyncCheckpoint(uid, documents = []) {
     nanoseconds: latest.nanoseconds,
     updatedAtMillis: (latest.seconds * 1000) + Math.floor(latest.nanoseconds / 1_000_000),
   };
-  storage()?.setItem(RECORD_SYNC_STORAGE_KEY, JSON.stringify(value));
+  storage()?.setItem(collectionSyncStorageKey(collectionName), JSON.stringify(value));
   return value;
 }
 
-export function clearRecordSyncCheckpoint(uid = '') {
-  const current = recordSyncCheckpoint(uid);
-  if (!uid || current?.uid === uid) storage()?.removeItem(RECORD_SYNC_STORAGE_KEY);
+export function clearCollectionSyncCheckpoint(uid = '', collectionName = 'records') {
+  const current = collectionSyncCheckpoint(uid, collectionName);
+  if (!uid || current?.uid === uid) storage()?.removeItem(collectionSyncStorageKey(collectionName));
 }
+
+export function clearCollectionSyncCheckpoints(uid = '', collectionNames = []) {
+  collectionNames.forEach((collectionName) => clearCollectionSyncCheckpoint(uid, collectionName));
+}
+
+export const recordSyncCheckpoint = (uid) => collectionSyncCheckpoint(uid, 'records');
+export const updateRecordSyncCheckpoint = (uid, documents = []) => updateCollectionSyncCheckpoint(uid, 'records', documents);
+export const clearRecordSyncCheckpoint = (uid = '') => clearCollectionSyncCheckpoint(uid, 'records');
 
 function recordFromDocument(entry) {
   if (!entry) return null;
@@ -77,7 +85,7 @@ function recordFromDocument(entry) {
   return id ? { ...data, id } : null;
 }
 
-export function mergeRecordDocuments(currentRecords = [], documents = []) {
+export function mergeCollectionDocuments(currentRecords = [], documents = []) {
   const byId = new Map(currentRecords.map((record) => [record.id, record]));
   documents.forEach((entry) => {
     const record = recordFromDocument(entry);
@@ -88,6 +96,9 @@ export function mergeRecordDocuments(currentRecords = [], documents = []) {
   return [...byId.values()];
 }
 
-export function activeRecordDocuments(documents = []) {
-  return mergeRecordDocuments([], documents);
+export function activeCollectionDocuments(documents = []) {
+  return mergeCollectionDocuments([], documents);
 }
+
+export const mergeRecordDocuments = mergeCollectionDocuments;
+export const activeRecordDocuments = activeCollectionDocuments;

@@ -1,4 +1,5 @@
 import { createId } from '../shared/id.js';
+import { firestoreTimestampIso } from '../shared/firestoreTimestamp.js';
 
 export const NOTE_CATEGORY_GRAMMAR = 'grammar';
 export const NOTE_CATEGORY_VOCABULARY = 'vocabulary';
@@ -20,8 +21,8 @@ export function normalizeGrammarNote(note, fallbackId = '') {
       ? NOTE_CATEGORY_VOCABULARY
       : NOTE_CATEGORY_GRAMMAR,
     pinned: note?.pinned === true,
-    createdAt: String(note?.createdAt || ''),
-    updatedAt: String(note?.updatedAt || ''),
+    createdAt: firestoreTimestampIso(note?.createdAt),
+    updatedAt: firestoreTimestampIso(note?.updatedAt),
   };
 }
 

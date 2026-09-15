@@ -54,7 +54,7 @@ import {
   X,
 } from 'lucide-react';
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { arrayRemove, arrayUnion, collection, deleteDoc, deleteField, doc, FieldPath, getDocsFromCache, onSnapshot, query, serverTimestamp, setDoc, Timestamp, where, writeBatch } from 'firebase/firestore';
+import { arrayRemove, arrayUnion, collection, deleteField, doc, FieldPath, getDocsFromCache, onSnapshot, query, serverTimestamp, setDoc, Timestamp, where, writeBatch } from 'firebase/firestore';
 import { auth, db, prepareOfflineFirestoreData, setFirestoreNetworkEnabled, waitForFirestoreSync } from './firebase.js';
 import {
   defaultLearnedFolder,
@@ -113,8 +113,10 @@ import {
   reviewAttemptSegmentsRef,
   reviewDayRef,
 } from './repositories/reviewDaysRepository.js';
+import { subscribeToIncrementalCollection } from './repositories/incrementalCollectionRepository.js';
 import { attemptDate, emptyStore, progressShardId } from './review-engine/store.js';
 import { createId } from './shared/id.js';
+import { firestoreTimestampIso } from './shared/firestoreTimestamp.js';
 import {
   groupYoutubeSubtitlesByTag,
   naverDictionaryUrl,
@@ -406,8 +408,8 @@ function normalizeReadingTest(input, fallbackId = '') {
     answer: String(input?.answer || '').trim(),
     learned: input?.learned === true,
     order: Number.isSafeInteger(input?.order) ? input.order : 0,
-    createdAt: String(input?.createdAt || ''),
-    updatedAt: String(input?.updatedAt || ''),
+    createdAt: firestoreTimestampIso(input?.createdAt),
+    updatedAt: firestoreTimestampIso(input?.updatedAt),
   };
 }
 
@@ -597,19 +599,18 @@ function useGrammarNotes(user, enabled = true) {
       return undefined;
     }
     setState((current) => ({ ...current, loading: true, error: '' }));
-    return onSnapshot(
-      collection(db, 'users', user.uid, 'grammarNotes'),
-      { includeMetadataChanges: true },
-      (snapshot) => {
-        if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) markOfflineSectionReady(user.uid, 'grammarNotes');
-        const notes = snapshot.docs
-          .filter((documentSnap) => !documentSnap.data().deletedAt)
-          .map((documentSnap) => normalizeGrammarNote(documentSnap.data(), documentSnap.id))
+    return subscribeToIncrementalCollection({
+      db,
+      uid: user.uid,
+      collectionName: 'grammarNotes',
+      onData: (documents) => {
+        const notes = documents
+          .map((note) => normalizeGrammarNote(note, note.id))
           .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '') || a.title.localeCompare(b.title));
         setState((current) => ({ ...current, notes, loading: false, error: '' }));
       },
-      (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
-    );
+      onError: (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
+    });
   }, [user, enabled]);
 
   useEffect(() => {
@@ -641,7 +642,10 @@ function useGrammarNotes(user, enabled = true) {
       updatedAt: now,
     }, id);
     if (!note.title) throw new Error('請輸入筆記標題');
-    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'grammarNotes', id), note));
+    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'grammarNotes', id), {
+      ...note,
+      updatedAt: serverTimestamp(),
+    }));
     return note;
   }, [user]);
 
@@ -688,20 +692,19 @@ function useYoutubeSubtitles(user, enabled = true) {
       return undefined;
     }
     setState((current) => ({ ...current, loading: true, error: '' }));
-    return onSnapshot(
-      collection(db, 'users', user.uid, 'ytSubtitles'),
-      { includeMetadataChanges: true },
-      (snapshot) => {
-        if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) markOfflineSectionReady(user.uid, 'ytSubtitles');
-        const notes = snapshot.docs
-          .filter((documentSnap) => !documentSnap.data().deletedAt)
-          .map((documentSnap) => normalizeYoutubeSubtitle(documentSnap.data(), documentSnap.id))
+    return subscribeToIncrementalCollection({
+      db,
+      uid: user.uid,
+      collectionName: 'ytSubtitles',
+      onData: (documents) => {
+        const notes = documents
+          .map((note) => normalizeYoutubeSubtitle(note, note.id))
           .filter((note) => note.title)
           .sort((left, right) => (right.updatedAt || right.createdAt || '').localeCompare(left.updatedAt || left.createdAt || '') || left.title.localeCompare(right.title));
         setState({ notes, loading: false, error: '' });
       },
-      (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
-    );
+      onError: (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
+    });
   }, [user, enabled]);
 
   const save = useCallback(async (input) => {
@@ -717,7 +720,10 @@ function useYoutubeSubtitles(user, enabled = true) {
     if (!note.title) throw new Error('請輸入字幕筆記標題');
     if (!note.entries.length) throw new Error('請至少加入一個字幕句子');
     if (note.youtubeUrl && !note.videoId) throw new Error('YouTube 連結格式無法辨識，請使用 youtube.com 或 youtu.be 連結');
-    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'ytSubtitles', id), note));
+    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'ytSubtitles', id), {
+      ...note,
+      updatedAt: serverTimestamp(),
+    }));
     return note;
   }, [user]);
 
@@ -751,18 +757,18 @@ function useReadingTests(user, enabled = true) {
       return undefined;
     }
     setState((current) => ({ ...current, loading: true, error: '' }));
-    return onSnapshot(
-      collection(db, 'users', user.uid, 'readingTests'),
-      { includeMetadataChanges: true },
-      (snapshot) => {
-        if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) markOfflineSectionReady(user.uid, 'readingTests');
-        const tests = snapshot.docs
-          .map((documentSnap) => normalizeReadingTest(documentSnap.data(), documentSnap.id))
+    return subscribeToIncrementalCollection({
+      db,
+      uid: user.uid,
+      collectionName: 'readingTests',
+      onData: (documents) => {
+        const tests = documents
+          .map((test) => normalizeReadingTest(test, test.id))
           .sort((left, right) => (right.createdAt || '').localeCompare(left.createdAt || '') || left.order - right.order || left.id.localeCompare(right.id));
         setState({ tests, loading: false, error: '' });
       },
-      (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
-    );
+      onError: (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
+    });
   }, [user, enabled]);
 
   const saveMany = useCallback(async (inputs) => {
@@ -779,7 +785,10 @@ function useReadingTests(user, enabled = true) {
     }, input.id), index));
     await retryFirestoreWrite(async () => {
       const batch = writeBatch(db);
-      tests.forEach((test) => batch.set(doc(db, 'users', user.uid, 'readingTests', test.id), test));
+      tests.forEach((test) => batch.set(doc(db, 'users', user.uid, 'readingTests', test.id), {
+        ...test,
+        updatedAt: serverTimestamp(),
+      }));
       await batch.commit();
     });
     return tests;
@@ -789,7 +798,18 @@ function useReadingTests(user, enabled = true) {
 
   const remove = useCallback(async (id) => {
     if (!user) throw new Error('尚未登入');
-    await retryFirestoreWrite(() => deleteDoc(doc(db, 'users', user.uid, 'readingTests', id)));
+    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'readingTests', id), {
+      id,
+      deletedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      passage: deleteField(),
+      question: deleteField(),
+      options: deleteField(),
+      answer: deleteField(),
+      learned: deleteField(),
+      order: deleteField(),
+      createdAt: deleteField(),
+    }, { merge: true }));
   }, [user]);
 
   return { ...state, save, saveMany, remove };
@@ -804,14 +824,13 @@ function useWordFolders(user, enabled = true) {
       return undefined;
     }
     setState((current) => ({ ...current, loading: true, error: '' }));
-    return onSnapshot(
-      collection(db, 'users', user.uid, 'folders'),
-      { includeMetadataChanges: true },
-      (snapshot) => {
-        if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) markOfflineSectionReady(user.uid, 'folders');
-        let folders = snapshot.docs
-          .filter((documentSnap) => !documentSnap.data().deletedAt)
-          .map((documentSnap) => normalizeFolder(documentSnap.data(), documentSnap.id))
+    return subscribeToIncrementalCollection({
+      db,
+      uid: user.uid,
+      collectionName: 'folders',
+      onData: (documents) => {
+        let folders = documents
+          .map((folder) => normalizeFolder(folder, folder.id))
           .filter((folder) => folder.name)
           .sort((a, b) => systemFolderRank(a) - systemFolderRank(b) || (b.createdAt || '').localeCompare(a.createdAt || '') || a.name.localeCompare(b.name));
         const missingSystemFolders = [];
@@ -820,14 +839,17 @@ function useWordFolders(user, enabled = true) {
         if (missingSystemFolders.length) {
           folders = [...missingSystemFolders, ...folders].sort((a, b) => systemFolderRank(a) - systemFolderRank(b) || (b.createdAt || '').localeCompare(a.createdAt || '') || a.name.localeCompare(b.name));
           missingSystemFolders.forEach((folder) => {
-            retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'folders', folder.id), folder))
+            retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'folders', folder.id), {
+              ...folder,
+              updatedAt: serverTimestamp(),
+            }))
               .catch((error) => setState((current) => ({ ...current, error: `建立${folder.name}資料夾失敗：${error.message}` })));
           });
         }
         setState({ folders, loading: false, error: '' });
       },
-      (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
-    );
+      onError: (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
+    });
   }, [user, enabled]);
 
   const save = useCallback(async (input) => {
@@ -849,7 +871,10 @@ function useWordFolders(user, enabled = true) {
       createdAt: existing?.createdAt || input?.createdAt || now,
       updatedAt: now,
     }, id);
-    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'folders', id), folder));
+    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'folders', id), {
+      ...folder,
+      updatedAt: serverTimestamp(),
+    }));
     return folder;
   }, [user, state.folders]);
 
@@ -931,7 +956,10 @@ function useWordFolders(user, enabled = true) {
     });
     await retryFirestoreWrite(async () => {
       const batch = writeBatch(db);
-      batch.set(doc(db, 'users', user.uid, 'folders', folder.id), folder);
+      batch.set(doc(db, 'users', user.uid, 'folders', folder.id), {
+        ...folder,
+        updatedAt: serverTimestamp(),
+      });
       targetFolderIds.forEach((folderId) => batch.set(
         doc(db, 'users', user.uid, 'folders', folderId),
         { wordIds: arrayUnion(...ids), updatedAt: serverTimestamp() },
@@ -3312,7 +3340,7 @@ export function OptionalPracticeModal({ store, questions, grammarQuestions, fold
   const [kind, setKind] = useState('listening');
   const [count, setCount] = useState(10);
   const [query, setQuery] = useState('');
-  const [scope, setScope] = useState('all');
+  const [scope, setScope] = useState('word');
   const [levels, setLevels] = useState([]);
   const [folderIds, setFolderIds] = useState([]);
   const [direction, setDirection] = useState('ko-zh');
@@ -3358,10 +3386,15 @@ export function OptionalPracticeModal({ store, questions, grammarQuestions, fold
         {kind === 'grammar' && <label>文法<select value={grammarId} onChange={(event) => setGrammarId(event.target.value)}>{grammarGroups.map((note) => <option key={note.id} value={note.id}>{note.title}</option>)}</select></label>}
       </div>
       {kind === 'words' && <>
-        <div className="form-grid"><label>搜尋<input value={query} onChange={(event) => setQuery(event.target.value)} /></label><label>方向<select value={direction} onChange={(event) => setDirection(event.target.value)}><option value="ko-zh">韓翻中</option><option value="zh-ko">中翻韓</option></select></label></div>
-        <SearchScopeControl value={scope} onChange={setScope} />
-        <MultiSelectFilter label="熟悉度" options={FAMILIARITY_FILTER_OPTIONS} selectedValues={levels} onToggle={(value) => toggle(setLevels, value)} onClear={() => setLevels([])} />
-        <GroupedFolderMultiSelect folders={folders} selectedValues={folderIds} onToggle={(value) => toggle(setFolderIds, value)} onToggleGroup={(ids) => setFolderIds((current) => toggleFolderGroupSelection(current, ids))} onClear={() => setFolderIds([])} />
+        <div className="word-search-tools optional-practice-search">
+          <label className="search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={scope === 'word' ? '搜尋韓文單字或中文意思' : '搜尋單字、例句、筆記或相關詞'} /></label>
+          <SearchScopeControl value={scope} onChange={setScope} />
+        </div>
+        <div className="form-grid optional-practice-filter-grid">
+          <label>方向<select value={direction} onChange={(event) => setDirection(event.target.value)}><option value="ko-zh">韓翻中</option><option value="zh-ko">中翻韓</option></select></label>
+          <MultiSelectFilter label="熟悉度" options={FAMILIARITY_FILTER_OPTIONS} selectedValues={levels} onToggle={(value) => toggle(setLevels, value)} onClear={() => setLevels([])} />
+          <GroupedFolderMultiSelect folders={folders} selectedValues={folderIds} onToggle={(value) => toggle(setFolderIds, value)} onToggleGroup={(ids) => setFolderIds((current) => toggleFolderGroupSelection(current, ids))} onClear={() => setFolderIds([])} />
+        </div>
       </>}
       <p>可用 {pool.length} 題 · 本次最多 {requestedCount} 題</p>
       {error && <div className="form-error">{error}</div>}
@@ -3818,6 +3851,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
   const [importLog, setImportLog] = useState([]);
   const [importCompleted, setImportCompleted] = useState(null);
   const [selectedFolderIds, setSelectedFolderIds] = useState(() => initialSelectedFolderIds);
+  const [jsonCopied, setJsonCopied] = useState(false);
   const submissionLockRef = useRef(false);
 
   useEffect(() => {
@@ -3850,6 +3884,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
     setImportLog([]);
     setImportCompleted(null);
     setSelectedFolderIds(initialSelectedFolderIds);
+    setJsonCopied(false);
     submissionLockRef.current = false;
   }, [date, editItem, initialFolderIds.join('|'), requiredFolderIds.join('|'), editFolderIds.join('|')]);
 
@@ -4027,10 +4062,28 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
           setManual(itemToManual(parseSingleWordEditJson(jsonText, editItem, allItems)));
         }
       }
+      setJsonCopied(false);
       setMode(nextMode);
     } catch (validationError) {
       setError(validationError.message);
     }
+  };
+
+  const copyJsonContent = async () => {
+    try {
+      await copyText(jsonText);
+      setJsonCopied(true);
+      window.setTimeout(() => setJsonCopied(false), 1600);
+    } catch (copyError) {
+      setError(copyError.message || '無法複製 JSON 內容');
+    }
+  };
+
+  const clearJsonContent = () => {
+    setJsonText('');
+    setJsonCopied(false);
+    setError('');
+    setMessage('');
   };
 
   const submit = async (event) => {
@@ -4206,10 +4259,16 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
             <RelatedSelector manual={manual} setManual={setManual} allItems={allItems} editItem={editItem} />
           </>
         ) : (
-          <label className="wide-field">
-            JSON 內容
-            <textarea className="json-input" spellCheck={false} value={jsonText} onChange={(event) => setJsonText(event.target.value)} placeholder='{ "schemaVersion": 2, "data": [{ "ko": "뉴스", "pos": "名詞", "meanings": [{ "zh": "新聞", "examples": [] }] }] }' required />
-          </label>
+          <div className="wide-field json-input-field">
+            <div className="json-input-heading">
+              <label htmlFor="word-json-input">JSON 內容</label>
+              {isEditing && <div className="json-input-actions">
+                <button type="button" className="soft-button" onClick={copyJsonContent} aria-live="polite"><Copy size={15} /> {jsonCopied ? '已複製內容' : '複製'}</button>
+                <button type="button" className="json-clear-button" onClick={clearJsonContent}><X size={15} /> 清除</button>
+              </div>}
+            </div>
+            <textarea id="word-json-input" className="json-input" spellCheck={false} value={jsonText} onChange={(event) => { setJsonText(event.target.value); setJsonCopied(false); }} placeholder='{ "schemaVersion": 2, "data": [{ "ko": "뉴스", "pos": "名詞", "meanings": [{ "zh": "新聞", "examples": [] }] }] }' required />
+          </div>
         )}
       </div>}
 
@@ -4606,8 +4665,8 @@ function compareQuestionsByKoreanAlphabet(left, right) {
 function SearchScopeControl({ value, onChange }) {
   return (
     <div className="search-scope segmented" aria-label="搜尋範圍">
-      <button type="button" className={value === 'all' ? 'active' : ''} aria-pressed={value === 'all'} onClick={() => onChange('all')}>全部內容</button>
-      <button type="button" className={value === 'word' ? 'active' : ''} aria-pressed={value === 'word'} onClick={() => onChange('word')}>單字本身</button>
+      <button type="button" className={value === 'word' ? 'active' : ''} aria-pressed={value === 'word'} onClick={() => onChange('word')}>單字</button>
+      <button type="button" className={value === 'all' ? 'active' : ''} aria-pressed={value === 'all'} onClick={() => onChange('all')}>全部</button>
     </div>
   );
 }
@@ -8307,7 +8366,7 @@ function FoldersPage({ folders, items, loading, error, onSave, onDelete, onOpen 
 
 function AddExistingWordsModal({ folder, items, onAdd, onClose }) {
   const [query, setQuery] = useState('');
-  const [searchScope, setSearchScope] = useState('all');
+  const [searchScope, setSearchScope] = useState('word');
   const [selectedIds, setSelectedIds] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -8339,7 +8398,7 @@ function AddExistingWordsModal({ folder, items, onAdd, onClose }) {
         <span className="eyebrow">Add reference</span>
         <h2 id="add-existing-title">加入現有單字到「{folder.name}」</h2>
         <div className="word-search-tools folder-word-search">
-          <label className="search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchScope === 'word' ? '只搜尋韓文單字本身' : '搜尋韓文、中文、例句、筆記或相關詞'} autoFocus /></label>
+          <label className="search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchScope === 'word' ? '搜尋韓文單字或中文意思' : '搜尋韓文、中文、例句、筆記或相關詞'} autoFocus /></label>
           <SearchScopeControl value={searchScope} onChange={setSearchScope} />
         </div>
         <div className="existing-word-results">
@@ -8363,7 +8422,7 @@ function AddExistingWordsModal({ folder, items, onAdd, onClose }) {
 
 function FolderDetailPage({ folder, folders, store, updateStore, items, questions, onSaveFolder, onDeleteFolder, onAddWords, onAssignFolders, onCreateFolderAndAssign, onRemoveWords, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords, onBack }) {
   const [query, setQuery] = useState('');
-  const [searchScope, setSearchScope] = useState('all');
+  const [searchScope, setSearchScope] = useState('word');
   const [pageNumber, setPageNumber] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
   const [addExistingOpen, setAddExistingOpen] = useState(false);
@@ -8417,7 +8476,7 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
         </div>
       </div>
       <div className="word-search-tools folder-word-search">
-        <label className="search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchScope === 'word' ? '只搜尋韓文單字本身' : '搜尋這個資料夾中的全部卡片內容'} /></label>
+        <label className="search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchScope === 'word' ? '搜尋韓文單字或中文意思' : '搜尋這個資料夾中的全部卡片內容'} /></label>
         <SearchScopeControl value={searchScope} onChange={setSearchScope} />
       </div>
       {!!staleIds.length && <button className="text-link" onClick={() => onRemoveWords(folder.id, staleIds)}>清理 {staleIds.length} 個不存在的單字 reference</button>}
@@ -8489,7 +8548,7 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
 
 function NotebookPage({ store, updateStore, items, questions, folders = [], onAssignFolders, onCreateFolderAndAssign, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords }) {
   const [query, setQuery] = useState('');
-  const [searchScope, setSearchScope] = useState('all');
+  const [searchScope, setSearchScope] = useState('word');
   const [selectedLevels, setSelectedLevels] = useState([]);
   const [selectedFolderIds, setSelectedFolderIds] = useState([]);
   const [sort, setSort] = useState('default');
@@ -8589,7 +8648,7 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
       )}
       <div className="filters">
         <div className="word-search-tools filter-search-tools">
-          <label className="search"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={searchScope === 'word' ? '只搜尋韓文單字本身' : '搜尋單字、例句、筆記或相關詞'} /></label>
+          <label className="search"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={searchScope === 'word' ? '搜尋韓文單字或中文意思' : '搜尋單字、例句、筆記或相關詞'} /></label>
           <SearchScopeControl value={searchScope} onChange={setSearchScope} />
         </div>
         <MultiSelectFilter

@@ -3,11 +3,15 @@ import test from 'node:test';
 
 import {
   activeRecordDocuments,
+  clearCollectionSyncCheckpoints,
+  collectionSyncCheckpoint,
   firestoreTimestampMillis,
   mergeRecordDocuments,
   recordSyncCheckpoint,
+  updateCollectionSyncCheckpoint,
   updateRecordSyncCheckpoint,
 } from '../src/firestoreSync.js';
+import { firestoreTimestampIso } from '../src/shared/firestoreTimestamp.js';
 
 function installStorage() {
   const values = new Map();
@@ -46,4 +50,27 @@ test('record checkpoint only advances to the latest server timestamp', () => {
   assert.equal(recordSyncCheckpoint('uid').updatedAtMillis, first.updatedAtMillis);
   assert.equal(firestoreTimestampMillis({ toMillis: () => 1234 }), 1234);
   cleanup();
+});
+
+test('collection checkpoints are isolated and can be cleared together', () => {
+  const cleanup = installStorage();
+  updateCollectionSyncCheckpoint('uid', 'folders', [{ updatedAt: '2026-09-14T01:00:00.000Z' }]);
+  updateCollectionSyncCheckpoint('uid', 'grammarNotes', [{ updatedAt: '2026-09-14T02:00:00.000Z' }]);
+  assert.equal(collectionSyncCheckpoint('uid', 'folders').updatedAtMillis, Date.parse('2026-09-14T01:00:00.000Z'));
+  assert.equal(collectionSyncCheckpoint('uid', 'grammarNotes').updatedAtMillis, Date.parse('2026-09-14T02:00:00.000Z'));
+  assert.equal(collectionSyncCheckpoint('other-user', 'folders'), null);
+  clearCollectionSyncCheckpoints('uid', ['folders', 'grammarNotes']);
+  assert.equal(collectionSyncCheckpoint('uid', 'folders'), null);
+  assert.equal(collectionSyncCheckpoint('uid', 'grammarNotes'), null);
+  cleanup();
+});
+
+test('Firestore timestamps normalize to stable ISO strings for sorting and display', () => {
+  assert.equal(
+    firestoreTimestampIso({ seconds: 1_789_344_000, nanoseconds: 123_000_000 }),
+    '2026-09-14T00:00:00.123Z',
+  );
+  assert.equal(firestoreTimestampIso('2026-09-14T01:00:00.000Z'), '2026-09-14T01:00:00.000Z');
+  assert.equal(firestoreTimestampIso({ seconds: 0, nanoseconds: 0 }), '1970-01-01T00:00:00.000Z');
+  assert.equal(firestoreTimestampIso(null), '');
 });

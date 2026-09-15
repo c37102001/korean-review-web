@@ -1,3 +1,5 @@
+import { firestoreTimestampIso } from '../shared/firestoreTimestamp.js';
+
 export const YT_SUBTITLE_MODE_JSON = 'json';
 export const YT_SUBTITLE_MODE_SRT = 'srt';
 export const YOUTUBE_EMBED_ORIGIN = 'https://www.youtube-nocookie.com';
@@ -23,8 +25,8 @@ export function normalizeYoutubeSubtitle(note, fallbackId = '') {
     videoId: youtubeVideoId(note?.youtubeUrl || note?.videoId || ''),
     mode,
     entries,
-    createdAt: String(note?.createdAt || ''),
-    updatedAt: String(note?.updatedAt || ''),
+    createdAt: firestoreTimestampIso(note?.createdAt),
+    updatedAt: firestoreTimestampIso(note?.updatedAt),
   };
 }
 

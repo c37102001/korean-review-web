@@ -1,3 +1,5 @@
+import { firestoreTimestampIso } from '../shared/firestoreTimestamp.js';
+
 export const SYSTEM_LEARNED_FOLDER_ID = 'system-learned';
 export const SYSTEM_LEARNED_FOLDER_NAME = '已學習';
 export const SYSTEM_UNFAMILIAR_FOLDER_ID = 'system-unfamiliar';
@@ -15,8 +17,8 @@ export function normalizeFolder(folder, fallbackId = '') {
     tag: String(folder?.tag || '').trim(),
     pinned: folder?.pinned === true,
     wordIds: [...new Set((Array.isArray(folder?.wordIds) ? folder.wordIds : []).filter(Boolean).map(String))],
-    createdAt: String(folder?.createdAt || ''),
-    updatedAt: String(folder?.updatedAt || ''),
+    createdAt: firestoreTimestampIso(folder?.createdAt),
+    updatedAt: firestoreTimestampIso(folder?.updatedAt),
     systemKey: String(folder?.systemKey || ''),
   };
 }

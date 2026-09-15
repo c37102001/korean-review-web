@@ -11,7 +11,7 @@ Optional .env values:
 Core keys:
   . toggle automatic audio, A toggle full-card autoplay, 1/2/3 set card repeats,
   0 toggle star, * add current word to unfamiliar, 5 show/hide Chinese in study mode,
-  8 show/hide answer or details, 4 previous, 6 next,
+  7 play an example, 9 replay the word, 8 show/hide answer or details, 4 previous, 6 next,
   + partial check, Enter submit answer, Esc back.
 """
 
@@ -280,11 +280,21 @@ class FirebaseClient:
             "createdAt": now,
             "updatedAt": now,
         }
-        payload = {"fields": {key: _to_firestore_value(value) for key, value in folder.items()}}
+        document_name = f"projects/{self.project_id}/databases/(default)/documents/users/{session.uid}/folders/{folder_id}"
         self._request_json(
-            "PATCH",
-            self._document_url(["users", session.uid, "folders", folder_id]),
-            payload=payload,
+            "POST",
+            f"https://firestore.googleapis.com/v1/projects/{self.project_id}/databases/(default)/documents:commit",
+            payload={"writes": [{
+                "update": {
+                    "name": document_name,
+                    "fields": {
+                        key: _to_firestore_value(value)
+                        for key, value in folder.items()
+                        if key != "updatedAt"
+                    },
+                },
+                "updateTransforms": [{"fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"}],
+            }]},
             session=session,
         )
         return folder
@@ -4074,7 +4084,7 @@ def run_daily_recognition(
             revealed = True
         stdscr.erase()
         height, width = stdscr.getmaxyx()
-        star_help = "" if grammar_mode else " 0=星號 *=不熟悉 -=已學習"
+        star_help = "" if grammar_mode else " 0=星號 *=不熟悉 -=已學習 9=單字"
         audio_label = "例句"
         draw_line(
             stdscr,
@@ -4214,6 +4224,12 @@ def run_daily_recognition(
                 message = "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
             else:
                 message = "已重播韓文發音。"
+        elif key == "9" and not grammar_mode:
+            message = (
+                "已重播韓文單字。"
+                if speak_korean(card.ko)
+                else "無法播放單字語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+            )
         elif key == "-" and not grammar_mode:
             if not revealed:
                 message = "請先按 8 揭露答案，再加入「已學習」。"
@@ -4355,13 +4371,14 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         learned_help = " -=已學習" if answer_visible and daily_review and question.kind == "term" else ""
         self_grade_help = " 1=答錯 2=答對" if self_grade_mode and answer_visible and not graded else ""
         scroll_help = " ↑↓=捲動" if answer_visible else ""
+        word_audio_help = " 9=單字" if answer_word else ""
         if answer_visible and example_audio_enabled:
             example_controls = "7=例句" if question.kind == "grammar-example" else "7=例句 +=下一句"
-            controls = f"Esc=返回{star_help}{unfamiliar_help}{learned_help}{self_grade_help} {example_controls}{scroll_help} 4/6=上下題 Enter={'下一題' if graded else '送出'}"
+            controls = f"Esc=返回{star_help}{unfamiliar_help}{learned_help}{self_grade_help}{word_audio_help} {example_controls}{scroll_help} 4/6=上下題 Enter={'下一題' if graded else '送出'}"
         else:
             prompt_audio_help = " 7=題目" if config["direction"] == "ko-zh" and not answer_visible else ""
             check_help = " +=檢查" if not self_grade_mode else ""
-            controls = f"Esc=返回{star_help}{unfamiliar_help}{learned_help}{self_grade_help}{prompt_audio_help} 8=答案{scroll_help} 4/6=上下題{check_help} Enter={'下一題' if graded else '送出'}"
+            controls = f"Esc=返回{star_help}{unfamiliar_help}{learned_help}{self_grade_help}{word_audio_help}{prompt_audio_help} 8=答案{scroll_help} 4/6=上下題{check_help} Enter={'下一題' if graded else '送出'}"
         draw_line(stdscr, 1, 2, f"測驗{record_label} | {title} | {idx + 1}/{len(questions)}  {auto_audio_control_label()} {controls}", curses.A_BOLD)
         length_hint = f"  ({count_korean_letters(answer)} 個韓文字)" if config["direction"] == "zh-ko" else ""
         star_prefix = f"{'★' if question.source.is_starred else '☆'} " if allow_star else ""
@@ -4666,6 +4683,12 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 record_suffix = "已記錄" if should_record_results else "未紀錄"
                 message = f"{result_label}，{record_suffix}。按 Enter 或 6 進入下一題。"
                 result_message = message
+            elif key == "9" and answer_word:
+                message = (
+                    "已重播韓文單字。"
+                    if speak_korean(answer_word)
+                    else "無法播放單字語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
+                )
             elif key == "7" and (
                 (answer_visible and example_audio_enabled)
                 or (config["direction"] == "ko-zh" and not answer_visible)

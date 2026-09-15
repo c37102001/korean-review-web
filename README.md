@@ -64,10 +64,10 @@ IndexedDB 佇列；恢復網路後自動依序同步。畫面頂端會顯示離�
 progress shard 只會原子更新變動題目；新作答依 attempt id 分散到固定 16 個 segment，
 使用原子追加避免網頁、手機與 Terminal 同時使用時互相覆寫。程式仍可讀取尚未遷移的
 `reviewDays.attempts`，但不會再寫入該舊欄位。
-單字同步採用 `updatedAt` checkpoint。第一次在裝置載入會建立完整基準，之後先顯示
-IndexedDB／Terminal 快取，再只下載 checkpoint 之後異動的單字。刪除單字會保留帶有
-`deletedAt` 的同步 tombstone；資料夾、筆記及 YT 字幕也使用相同方式傳播刪除，避免其他
-離線裝置重新顯示已刪除內容。
+單字、資料夾、筆記、YT 字幕與閱讀測驗都採用各自的 `updatedAt` checkpoint。第一次
+在裝置載入會建立完整基準，之後先顯示 IndexedDB 快取，再只監聽 checkpoint 之後的
+新增、修改或刪除文件。Terminal 也對其支援的文字集合使用增量同步。刪除會保留帶有
+`deletedAt` 的同步 tombstone，避免離線或其他裝置重新顯示已刪除內容。
 
 舊版每日作答資料可先預覽、再遷移：
 

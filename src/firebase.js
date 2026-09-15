@@ -13,7 +13,10 @@ import {
   initializeFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
+  query,
+  Timestamp,
   waitForPendingWrites,
+  where,
 } from 'firebase/firestore';
 import {
   clearOfflineDataCoverage,
@@ -21,7 +24,11 @@ import {
   markOfflineSectionReady,
   offlineDataCoverage,
 } from './offlineSupport.js';
-import { clearRecordSyncCheckpoint, updateRecordSyncCheckpoint } from './firestoreSync.js';
+import {
+  clearCollectionSyncCheckpoints,
+  collectionSyncCheckpoint,
+  updateCollectionSyncCheckpoint,
+} from './firestoreSync.js';
 import { reviewAttemptSegmentsRef } from './repositories/reviewDaysRepository.js';
 
 const firebaseConfig = {
@@ -58,12 +65,12 @@ export function setFirestoreNetworkEnabled(enabled) {
 
 export async function prepareOfflineFirestoreData(uid, today, onProgress, { forceFull = false } = {}) {
   const targets = [
-    ['records', '單字', collection(db, 'users', uid, 'records')],
+    ['records', '單字', collection(db, 'users', uid, 'records'), 'records'],
     ['progress', '熟悉度與複習排程', collection(db, 'users', uid, 'progressShards')],
-    ['folders', '資料夾', collection(db, 'users', uid, 'folders')],
-    ['grammarNotes', '筆記', collection(db, 'users', uid, 'grammarNotes')],
-    ['ytSubtitles', 'YT 字幕文字', collection(db, 'users', uid, 'ytSubtitles')],
-    ['readingTests', '閱讀測驗', collection(db, 'users', uid, 'readingTests')],
+    ['folders', '資料夾', collection(db, 'users', uid, 'folders'), 'folders'],
+    ['grammarNotes', '筆記', collection(db, 'users', uid, 'grammarNotes'), 'grammarNotes'],
+    ['ytSubtitles', 'YT 字幕文字', collection(db, 'users', uid, 'ytSubtitles'), 'ytSubtitles'],
+    ['readingTests', '閱讀測驗', collection(db, 'users', uid, 'readingTests'), 'readingTests'],
     ['reviewSettings', '測驗設定', doc(db, 'users', uid, 'settings', 'review')],
     ['grammarReview', '自選練習', doc(db, 'users', uid, 'settings', 'grammarReview')],
     [`reviewDay:${today}`, '今日作答紀錄', doc(db, 'users', uid, 'reviewDays', today)],
@@ -71,31 +78,50 @@ export async function prepareOfflineFirestoreData(uid, today, onProgress, { forc
   ];
   if (forceFull) {
     clearOfflineDataCoverage(uid);
-    clearRecordSyncCheckpoint(uid);
+    clearCollectionSyncCheckpoints(uid, ['records', 'folders', 'grammarNotes', 'ytSubtitles', 'readingTests']);
   }
   const coverage = offlineDataCoverage(uid);
   let documentCount = 0;
   let downloadedCount = 0;
   for (let index = 0; index < targets.length; index += 1) {
-    const [section, label, reference] = targets[index];
+    const [section, label, reference, collectionName] = targets[index];
     const cached = !forceFull && Boolean(coverage[section]);
     const isDocument = reference.type === 'document';
     onProgress?.({ current: index + 1, total: targets.length, label, cached });
     let snapshot;
+    let serverSnapshot = null;
     try {
-      snapshot = isDocument
-        ? await (cached ? getDocFromCache(reference) : getDocFromServer(reference))
-        : await (cached ? getDocsFromCache(reference) : getDocsFromServer(reference));
+      if (isDocument) {
+        snapshot = await (cached ? getDocFromCache(reference) : getDocFromServer(reference));
+      } else if (cached) {
+        snapshot = await getDocsFromCache(reference);
+        if (collectionName) {
+          const checkpoint = collectionSyncCheckpoint(uid, collectionName);
+          serverSnapshot = checkpoint && snapshot.size
+            ? await getDocsFromServer(query(
+              reference,
+              where('updatedAt', '>', new Timestamp(checkpoint.seconds, checkpoint.nanoseconds)),
+            ))
+            : await getDocsFromServer(reference);
+        }
+      } else {
+        snapshot = await getDocsFromServer(reference);
+        serverSnapshot = snapshot;
+      }
     } catch (error) {
       if (!cached) throw error;
       snapshot = isDocument ? await getDocFromServer(reference) : await getDocsFromServer(reference);
-      downloadedCount += 'size' in snapshot ? snapshot.size : Number(snapshot.exists());
+      serverSnapshot = snapshot;
     }
     const count = 'size' in snapshot ? snapshot.size : Number(snapshot.exists());
     documentCount += count;
-    if (!cached) downloadedCount += count;
+    downloadedCount += serverSnapshot
+      ? ('size' in serverSnapshot ? serverSnapshot.size : Number(serverSnapshot.exists()))
+      : 0;
     markOfflineSectionReady(uid, section);
-    if (section === 'records' && !snapshot.metadata.fromCache) updateRecordSyncCheckpoint(uid, snapshot.docs || []);
+    if (collectionName && serverSnapshot && !serverSnapshot.metadata.fromCache) {
+      updateCollectionSyncCheckpoint(uid, collectionName, serverSnapshot.docs || []);
+    }
   }
   return { documentCount, downloadedCount, sectionCount: targets.length, forceFull };
 }

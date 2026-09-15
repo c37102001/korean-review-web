@@ -58,6 +58,22 @@ test('updatedAt delta queries deliver a tombstone to another client', async () =
   assert.equal(snapshot.docs[0].data().deletedAt.toMillis(), 3_000);
 });
 
+test('all incrementally cached content collections expose deletion tombstones', async () => {
+  const first = environment.authenticatedContext('owner').firestore();
+  const second = environment.authenticatedContext('owner').firestore();
+  const collections = ['folders', 'grammarNotes', 'ytSubtitles', 'readingTests'];
+  for (const collectionName of collections) {
+    const reference = doc(first, `users/owner/${collectionName}/entry`);
+    await setDoc(reference, { id: 'entry', deletedAt: Timestamp.fromMillis(3_000), updatedAt: Timestamp.fromMillis(3_000) });
+    const snapshot = await getDocs(query(
+      collection(second, `users/owner/${collectionName}`),
+      where('updatedAt', '>', Timestamp.fromMillis(2_000)),
+    ));
+    assert.equal(snapshot.size, 1);
+    assert.equal(snapshot.docs[0].data().deletedAt.toMillis(), 3_000);
+  }
+});
+
 test('two clients can append attempts without losing either result', async () => {
   const first = environment.authenticatedContext('owner').firestore();
   const second = environment.authenticatedContext('owner').firestore();
