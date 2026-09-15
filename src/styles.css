@@ -4384,6 +4384,29 @@ textarea:focus {
   gap: 5px;
 }
 
+.folder-special-options {
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e4ecea;
+}
+
+.date-folder-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.date-folder-filter-row .multi-select-filter {
+  width: min(320px, 100%);
+}
+
+.date-folder-filter-row > span {
+  color: #748188;
+  font-size: calc(13.2px * var(--user-font-scale, 1));
+  font-weight: 700;
+}
+
 .folder-filter-group {
   border: 1px solid #e4ecea;
   border-radius: 9px;

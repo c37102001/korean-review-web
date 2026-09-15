@@ -1111,6 +1111,24 @@ test('folder filtering combines selected folders without duplicating words', () 
   );
 });
 
+test('date folder filtering unions selected folders and unfiled words', () => {
+  const items = [{ id: 'one' }, { id: 'shared' }, { id: 'two' }, { id: 'loose' }];
+  const folders = [
+    { id: 'verbs', wordIds: ['one', 'shared'] },
+    { id: 'topik', wordIds: ['shared', 'two'] },
+  ];
+
+  assert.deepEqual(
+    helpers.filterItemsByFolderSelection(items, folders, ['verbs', 'topik']).map((item) => item.id),
+    ['one', 'shared', 'two'],
+  );
+  assert.deepEqual(
+    helpers.filterItemsByFolderSelection(items, folders, ['verbs', '__unfiled__']).map((item) => item.id),
+    ['one', 'shared', 'loose'],
+  );
+  assert.equal(helpers.filterItemsByFolderSelection(items, folders, []), items);
+});
+
 test('saved speech voices resolve only within the requested language', () => {
   const voices = [
     { name: 'Natural', lang: 'en-US', voiceURI: 'english-natural' },

@@ -2284,6 +2284,25 @@ function folderFilterWordIds(folders = [], selectedFolderIds = []) {
   );
 }
 
+const UNFILED_FOLDER_FILTER_ID = '__unfiled__';
+
+function filterItemsByFolderSelection(items = [], folders = [], selectedFolderIds = []) {
+  if (!selectedFolderIds.length) return items;
+  const selected = new Set(selectedFolderIds);
+  const selectedFolderWordIds = folderFilterWordIds(
+    folders,
+    selectedFolderIds.filter((folderId) => folderId !== UNFILED_FOLDER_FILTER_ID),
+  ) || new Set();
+  const allFolderWordIds = selected.has(UNFILED_FOLDER_FILTER_ID)
+    ? new Set(folders.flatMap((folder) => folder.wordIds || []))
+    : null;
+
+  return items.filter((item) => (
+    selectedFolderWordIds.has(item.id)
+    || (allFolderWordIds && !allFolderWordIds.has(item.id))
+  ));
+}
+
 function wordFolderIds(folders = [], wordId) {
   if (!wordId) return [];
   return folders
@@ -3783,10 +3802,25 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, folde
   const [editingItem, setEditingItem] = useState(null);
   const [viewingItem, setViewingItem] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [selectedFolderIds, setSelectedFolderIds] = useState([]);
   const starredSet = new Set(store.starred || []);
+  const filteredItems = useMemo(
+    () => filterItemsByFolderSelection(items, folders, selectedFolderIds),
+    [items, folders, selectedFolderIds],
+  );
+  const filteredItemIds = useMemo(() => new Set(filteredItems.map((item) => item.id)), [filteredItems]);
+  const filteredQuestions = questions.filter((question) => filteredItemIds.has(question.itemId));
+  const unfiledCount = useMemo(() => {
+    const assignedWordIds = new Set(folders.flatMap((folder) => folder.wordIds || []));
+    return items.filter((item) => !assignedWordIds.has(item.id)).length;
+  }, [items, folders]);
   const toggleSelected = (itemId) => setSelectedIds((current) => (
     current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]
   ));
+  const toggleFolderFilter = (folderId) => setSelectedFolderIds((current) => (
+    current.includes(folderId) ? current.filter((id) => id !== folderId) : [...current, folderId]
+  ));
+  const toggleFolderTag = (folderIds) => setSelectedFolderIds((current) => toggleFolderGroupSelection(current, folderIds));
   const deleteDateItems = async () => {
     if (!items.length) return;
     const confirmed = window.confirm(`確定要刪除 ${date} 的 ${items.length} 筆單字嗎？這不會刪除其他日期的單字。`);
@@ -3794,15 +3828,25 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, folde
     await onDeleteRecords(items.map((item) => item.id));
     setSelectedIds([]);
   };
-  useEffect(() => setSelectedIds([]), [date]);
+  useEffect(() => {
+    setSelectedIds([]);
+    setSelectedFolderIds([]);
+  }, [date]);
+
+  useEffect(() => {
+    const availableFolderIds = new Set([UNFILED_FOLDER_FILTER_ID, ...folders.map((folder) => folder.id)]);
+    setSelectedFolderIds((current) => current.filter((folderId) => availableFolderIds.has(folderId)));
+  }, [folders]);
+
+  useEffect(() => setSelectedIds([]), [selectedFolderIds]);
   return (
     <section className="page">
       <div className="topbar">
         <div><span className="eyebrow">Notes · {dateLabel(date)}</span><h1>日期筆記</h1></div>
         <div className="actions notebook-actions">
           <button className="add-date-button" onClick={() => setAddOpen(true)}><Plus size={18} /> 新增</button>
-          <button disabled={!items.length} onClick={() => onStudy(items, `${date} 學習`)}><BookOpen size={18} /> 學習</button>
-          <button className="primary" disabled={!questions.length} onClick={() => onPractice(questions, `${date} 測驗`)}><Dumbbell size={18} /> 測驗</button>
+          <button disabled={!filteredItems.length} onClick={() => onStudy(filteredItems, `${date} 學習`)}><BookOpen size={18} /> 學習</button>
+          <button className="primary" disabled={!filteredQuestions.length} onClick={() => onPractice(filteredQuestions, `${date} 測驗`)}><Dumbbell size={18} /> 測驗</button>
           <ActionMenu>
             <button disabled={!items.length} onClick={() => setExportOpen(true)}><Download size={18} /> 匯出 JSON</button>
             <button disabled={!items.length} onClick={() => setJsonEditOpen(true)}><Pencil size={18} /> 修改 JSON</button>
@@ -3868,16 +3912,28 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, folde
           onClose={() => setViewingItem(null)}
         />
       )}
+      <div className="date-folder-filter-row">
+        <GroupedFolderMultiSelect
+          folders={folders}
+          selectedValues={selectedFolderIds}
+          onToggle={toggleFolderFilter}
+          onToggleGroup={toggleFolderTag}
+          onClear={() => setSelectedFolderIds([])}
+          includeUnfiled
+          unfiledCount={unfiledCount}
+        />
+        <span>{selectedFolderIds.length ? `顯示 ${filteredItems.length} / ${items.length} 筆` : `共 ${items.length} 筆`}</span>
+      </div>
       <BulkWordActions
         selectedIds={selectedIds}
-        visibleIds={items.map((item) => item.id)}
+        visibleIds={filteredItems.map((item) => item.id)}
         folders={folders}
         onSelectionChange={setSelectedIds}
         onAssignFolders={onAssignFolders}
         onCreateFolderAndAssign={onCreateFolderAndAssign}
         onDeleteRecords={onDeleteRecords}
       />
-      <div className="notes-grid">{items.map((item) => (
+      {filteredItems.length ? <div className="notes-grid">{filteredItems.map((item) => (
         <NoteCard
           key={item.id}
           item={item}
@@ -3893,7 +3949,7 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, folde
           selected={selectedIds.includes(item.id)}
           onToggleSelected={toggleSelected}
         />
-      ))}</div>
+      ))}</div> : <div className="empty">這個日期沒有符合資料夾篩選的單字</div>}
     </section>
   );
 }
@@ -4848,7 +4904,7 @@ function IndeterminateCheckbox({ checked, indeterminate, onChange }) {
   return <input ref={inputRef} type="checkbox" checked={checked} onChange={onChange} />;
 }
 
-function GroupedFolderMultiSelect({ folders, selectedValues, onToggle, onToggleGroup, onClear }) {
+function GroupedFolderMultiSelect({ folders, selectedValues, onToggle, onToggleGroup, onClear, includeUnfiled = false, unfiledCount = 0 }) {
   const [open, setOpen] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const rootRef = useRef(null);
@@ -4891,6 +4947,19 @@ function GroupedFolderMultiSelect({ folders, selectedValues, onToggle, onToggleG
             <strong>依標籤選擇資料夾</strong>
             {!!selectedValues.length && <button type="button" className="text-link" onClick={onClear}>清除</button>}
           </div>
+          {includeUnfiled && (
+            <div className="multi-select-options folder-special-options">
+              <label className={selectedSet.has(UNFILED_FOLDER_FILTER_ID) ? 'selected' : ''}>
+                <input
+                  type="checkbox"
+                  checked={selectedSet.has(UNFILED_FOLDER_FILTER_ID)}
+                  onChange={() => onToggle(UNFILED_FOLDER_FILTER_ID)}
+                />
+                <span>無資料夾</span>
+                <small>{unfiledCount}</small>
+              </label>
+            </div>
+          )}
           <div className="folder-filter-groups">
             {groups.map((group) => {
               const folderIds = group.folders.map((folder) => folder.id);
@@ -9030,6 +9099,7 @@ export {
   familiarityLevel,
   familiarityScore,
   matchesFamiliarityLevels,
+  filterItemsByFolderSelection,
   folderFilterWordIds,
   folderMembershipChanges,
   initialPracticeDirection,
