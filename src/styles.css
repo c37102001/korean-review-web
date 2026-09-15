@@ -3614,8 +3614,15 @@ main {
   margin: 0;
 }
 
-.practice-mistake-review-head > strong {
+.practice-mistake-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.practice-mistake-review-actions > strong {
   color: #c74f4f;
+  white-space: nowrap;
 }
 
 .practice-mistake-grid {

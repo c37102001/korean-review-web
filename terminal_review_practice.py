@@ -1304,11 +1304,25 @@ def daily_wrong_term_questions(
         for question in questions
         if question.kind == "term" and question.item_id not in learned_word_ids
     }
-    wrong_ids = {
-        str(attempt.get("questionId") or "")
-        for attempt in (state.get("attempts") or [])
-        if attempt_date(attempt) == date_key and attempt.get("correct") is False
-    }
+    wrong_ids: set[str] = set()
+    attempts = sorted(
+        (
+            attempt for attempt in (state.get("attempts") or [])
+            if attempt_date(attempt) == date_key
+        ),
+        key=lambda attempt: str(attempt.get("time") or ""),
+    )
+    for attempt in attempts:
+        question_id = str(attempt.get("questionId") or "")
+        if not question_id:
+            continue
+        if attempt.get("mode") == DAILY_WRONG_REVIEW_MODE:
+            if attempt.get("correct") is True:
+                wrong_ids.discard(question_id)
+            elif attempt.get("correct") is False:
+                wrong_ids.add(question_id)
+        elif attempt.get("correct") is False:
+            wrong_ids.add(question_id)
     return sorted(
         (term_by_id[question_id] for question_id in wrong_ids if question_id in term_by_id),
         key=lambda question: (
@@ -1636,6 +1650,23 @@ def record_answer(
     }
     attempts = state.setdefault("attempts", [])
     attempts.insert(0, {"id": str(uuid.uuid4()), "questionId": question.id, "correct": correct, "date": today_string(), "time": now})
+    del attempts[5000:]
+
+
+def record_daily_wrong_review_answer(
+    state: Dict[str, Any],
+    question: Question,
+    correct: bool,
+) -> None:
+    attempts = state.setdefault("attempts", [])
+    attempts.insert(0, {
+        "id": str(uuid.uuid4()),
+        "questionId": question.id,
+        "correct": correct,
+        "date": today_string(),
+        "time": utc_now_iso(),
+        "mode": DAILY_WRONG_REVIEW_MODE,
+    })
     del attempts[5000:]
 
 
@@ -2503,6 +2534,7 @@ def menu(stdscr: curses.window, title: str, options: List[Tuple[str, str]], subt
     selected = 0
     set_cursor_visibility(0)
     stdscr.keypad(True)
+
     while True:
         stdscr.clear()
         height, _ = stdscr.getmaxyx()
@@ -3282,55 +3314,56 @@ def create_optional_practice(
     client: FirebaseClient,
     session: AuthSession,
 ) -> bool:
-    kind = menu(stdscr, "新增練習 | 選擇類型", [(key, label) for key, label in OPTIONAL_PRACTICE_LABELS.items()])
-    if not kind:
-        return False
-    learned_ids = set(state.get("learnedWordIds") or [])
-    task: Dict[str, Any] = {
-        "id": str(uuid.uuid4()), "kind": kind, "title": OPTIONAL_PRACTICE_LABELS[kind],
-        "direction": "ko-zh", "createdAt": utc_now_iso(),
-    }
-    if kind == "words":
-        setup = optional_word_practice_setup(stdscr, cards, questions, state)
-        if not setup:
+    while True:
+        kind = menu(stdscr, "新增練習 | 選擇類型", [(key, label) for key, label in OPTIONAL_PRACTICE_LABELS.items()])
+        if not kind:
             return False
-        active_cards, config = setup
-        active_ids = {card.id for card in active_cards}
-        pool_ids = [question.id for question in questions if question.kind == "term" and question.item_id in active_ids]
-        count = int(config["count"])
-        task["direction"] = config["direction"]
-        task["answerMode"] = config["answer_mode"]
-    elif kind in ("listening", "reading"):
-        pool_ids = [
-            question.id for question in questions
-            if question.kind == "example" and question.item_id not in learned_ids
-        ]
-        count = 10
-    else:
-        eligible_notes = [note for note in grammar_notes if note.category == NOTE_CATEGORY_GRAMMAR and note.examples]
-        if not eligible_notes:
-            wait_message(stdscr, "無法新增練習", "目前沒有包含完整例句的文法筆記。")
-            return False
-        selected_id = menu(stdscr, "新增練習 | 選擇文法筆記", [(note.id, f"{note.title} · {len(note.examples)} 題") for note in eligible_notes])
-        if not selected_id:
-            return False
-        note = next(entry for entry in eligible_notes if entry.id == selected_id)
-        pool_ids = [question.id for question in grammar_practice_questions([note])]
-        count = len(pool_ids)
-        task["title"] = f"文法例句練習 · {note.title}"
-    try:
-        updated = client.update_optional_practice(
-            session,
-            lambda current: add_optional_practice_task(current, task, pool_ids, count),
-        )
-    except ValueError as exc:
-        wait_message(stdscr, "無法新增練習", str(exc))
-        return False
-    except RuntimeError as exc:
-        wait_message(stdscr, "新增練習失敗", friendly_firebase_error(exc))
-        return False
-    grammar_review["optionalPractice"] = updated
-    return True
+        learned_ids = set(state.get("learnedWordIds") or [])
+        task: Dict[str, Any] = {
+            "id": str(uuid.uuid4()), "kind": kind, "title": OPTIONAL_PRACTICE_LABELS[kind],
+            "direction": "ko-zh", "createdAt": utc_now_iso(),
+        }
+        if kind == "words":
+            setup = optional_word_practice_setup(stdscr, cards, questions, state)
+            if not setup:
+                continue
+            active_cards, config = setup
+            active_ids = {card.id for card in active_cards}
+            pool_ids = [question.id for question in questions if question.kind == "term" and question.item_id in active_ids]
+            count = int(config["count"])
+            task["direction"] = config["direction"]
+            task["answerMode"] = config["answer_mode"]
+        elif kind in ("listening", "reading"):
+            pool_ids = [
+                question.id for question in questions
+                if question.kind == "example" and question.item_id not in learned_ids
+            ]
+            count = 10
+        else:
+            eligible_notes = [note for note in grammar_notes if note.category == NOTE_CATEGORY_GRAMMAR and note.examples]
+            if not eligible_notes:
+                wait_message(stdscr, "無法新增練習", "目前沒有包含完整例句的文法筆記。")
+                continue
+            selected_id = menu(stdscr, "新增練習 | 選擇文法筆記", [(note.id, f"{note.title} · {len(note.examples)} 題") for note in eligible_notes])
+            if not selected_id:
+                continue
+            note = next(entry for entry in eligible_notes if entry.id == selected_id)
+            pool_ids = [question.id for question in grammar_practice_questions([note])]
+            count = len(pool_ids)
+            task["title"] = f"文法例句練習 · {note.title}"
+        try:
+            updated = client.update_optional_practice(
+                session,
+                lambda current: add_optional_practice_task(current, task, pool_ids, count),
+            )
+        except ValueError as exc:
+            wait_message(stdscr, "無法新增練習", str(exc))
+            continue
+        except RuntimeError as exc:
+            wait_message(stdscr, "新增練習失敗", friendly_firebase_error(exc))
+            continue
+        grammar_review["optionalPractice"] = updated
+        return True
 
 
 def run_optional_practice_menu(
@@ -3371,63 +3404,79 @@ def run_optional_practice_menu(
         task = next((entry for entry in optional_state["tasks"] if str(entry.get("id")) == selected_id), None)
         if not task:
             continue
-        action = menu(stdscr, str(task.get("title") or "自選練習"), [("start", "開始／繼續"), ("remove", "移除這組練習")])
-        if action == "remove":
-            try:
-                grammar_review["optionalPractice"] = client.update_optional_practice(
-                    session, lambda current: remove_optional_practice_task(current, selected_id)
-                )
-            except RuntimeError as exc:
-                wait_message(stdscr, "移除失敗", friendly_firebase_error(exc))
-            continue
-        if action != "start":
-            continue
-        active_questions = task_questions.get(selected_id) or []
-        if not active_questions:
-            wait_message(stdscr, "沒有可練習題目", "題目可能已刪除或已加入「已學習」，請移除此題組後重新新增。")
-            continue
+        while True:
+            action = menu(stdscr, str(task.get("title") or "自選練習"), [("start", "開始／繼續"), ("remove", "移除這組練習")])
+            if action == "remove":
+                try:
+                    grammar_review["optionalPractice"] = client.update_optional_practice(
+                        session, lambda current: remove_optional_practice_task(current, selected_id)
+                    )
+                except RuntimeError as exc:
+                    wait_message(stdscr, "移除失敗", friendly_firebase_error(exc))
+                break
+            if action != "start":
+                break
+            current_task = next(
+                (entry for entry in optional_practice_state(grammar_review)["tasks"] if str(entry.get("id")) == selected_id),
+                None,
+            )
+            if not current_task:
+                break
+            answered = set(current_task.get("answeredIds") or [])
+            active_questions = [
+                question_by_id[item]
+                for item in (current_task.get("ids") or [])
+                if item not in answered and item in question_by_id
+            ]
+            if current_task.get("kind") != "grammar":
+                active_questions = [question for question in active_questions if question.item_id not in learned_ids]
+            if not active_questions:
+                wait_message(stdscr, "沒有可練習題目", "題目可能已刪除或已加入「已學習」，請移除此題組後重新新增。")
+                continue
 
-        def save_result(question: Question, correct: bool) -> None:
-            grammar_review["optionalPractice"] = client.update_optional_practice(
-                session,
-                lambda current: answer_optional_practice_task(current, selected_id, question.id, correct),
-            )
-
-        kind = str(task.get("kind") or "")
-        if kind in ("listening", "grammar"):
-            completed = run_daily_recognition(
-                stdscr, active_questions, cards, state, client, session,
-                grammar_mode=kind == "grammar", title_override=str(task.get("title") or "自選練習"),
-                on_result=save_result,
-            )
-        else:
-            completed = run_practice(
-                stdscr,
-                str(task.get("title") or "自選練習"),
-                active_questions,
-                {
-                    "direction": "ko-zh" if kind == "reading" else str(task.get("direction") or "ko-zh"),
-                    "answer_mode": "self-grade" if kind == "reading" else str(task.get("answerMode") or "self-grade"),
-                    "source": "term" if kind == "words" else "example",
-                    "starred": False, "random": False, "record_results": False,
-                    "daily_review": False, "on_result": save_result,
-                    "auto_prompt_audio": kind != "reading",
-                    "auto_answer_audio": kind != "reading",
-                    "enforce_answer_length": kind == "words" and task.get("direction") == "zh-ko" and task.get("answerMode") == "typing",
-                    "require_answer_before_next": True,
-                },
-                state, client, session,
-            )
-        if completed and any(
-            str(entry.get("id")) == selected_id
-            for entry in optional_practice_state(grammar_review)["tasks"]
-        ):
-            try:
+            def save_result(question: Question, correct: bool) -> None:
                 grammar_review["optionalPractice"] = client.update_optional_practice(
-                    session, lambda current: remove_optional_practice_task(current, selected_id)
+                    session,
+                    lambda current: answer_optional_practice_task(current, selected_id, question.id, correct),
                 )
-            except RuntimeError as exc:
-                wait_message(stdscr, "完成狀態同步失敗", friendly_firebase_error(exc))
+
+            kind = str(current_task.get("kind") or "")
+            if kind in ("listening", "grammar"):
+                completed = run_daily_recognition(
+                    stdscr, active_questions, cards, state, client, session,
+                    grammar_mode=kind == "grammar", title_override=str(current_task.get("title") or "自選練習"),
+                    on_result=save_result,
+                )
+            else:
+                completed = run_practice(
+                    stdscr,
+                    str(current_task.get("title") or "自選練習"),
+                    active_questions,
+                    {
+                        "direction": "ko-zh" if kind == "reading" else str(current_task.get("direction") or "ko-zh"),
+                        "answer_mode": "self-grade" if kind == "reading" else str(current_task.get("answerMode") or "self-grade"),
+                        "source": "term" if kind == "words" else "example",
+                        "starred": False, "random": False, "record_results": False,
+                        "daily_review": False, "on_result": save_result,
+                        "auto_prompt_audio": kind != "reading",
+                        "auto_answer_audio": kind != "reading",
+                        "enforce_answer_length": kind == "words" and current_task.get("direction") == "zh-ko" and current_task.get("answerMode") == "typing",
+                        "require_answer_before_next": True,
+                    },
+                    state, client, session,
+                )
+            if completed:
+                if any(
+                    str(entry.get("id")) == selected_id
+                    for entry in optional_practice_state(grammar_review)["tasks"]
+                ):
+                    try:
+                        grammar_review["optionalPractice"] = client.update_optional_practice(
+                            session, lambda current: remove_optional_practice_task(current, selected_id)
+                        )
+                    except RuntimeError as exc:
+                        wait_message(stdscr, "完成狀態同步失敗", friendly_firebase_error(exc))
+                break
 
 
 def due_task_menu(
@@ -3645,6 +3694,22 @@ def run_grammar_recall_practice(
             pass
     set_cursor_visibility(0)
     stdscr.keypad(True)
+
+    def finish_round() -> bool:
+        mistakes = practice_mistake_questions(
+            questions,
+            (question_id for question_id, correct in graded.items() if not correct),
+        )
+        while practice_mistake_review_menu(stdscr, title, mistakes):
+            if run_grammar_recall_practice(
+                stdscr,
+                f"{title} | 錯題重測",
+                list(mistakes),
+                notebook_label,
+            ):
+                return True
+        return True
+
     while True:
         question = questions[index]
         is_graded = question.id in graded
@@ -3728,8 +3793,7 @@ def run_grammar_recall_practice(
                 message = "請先公佈答案並選擇答對或答錯。"
                 continue
             if index == len(questions) - 1:
-                wait_message(stdscr, "完成", f"這組{notebook_label}例句練習已完成。")
-                return True
+                return finish_round()
             index += 1
             revealed = questions[index].id in graded
             message = ""
@@ -3760,8 +3824,7 @@ def run_grammar_recall_practice(
             if not is_graded:
                 message = "請先公佈答案並選擇答對或答錯。"
             elif index == len(questions) - 1:
-                wait_message(stdscr, "完成", f"這組{notebook_label}例句練習已完成。")
-                return True
+                return finish_round()
             else:
                 index += 1
                 revealed = questions[index].id in graded
@@ -3783,32 +3846,36 @@ def run_grammar_practice(
         wait_message(stdscr, f"{notebook_label}例句練習", f"所選{notebook_label}沒有完整例句。")
         return
     title = notes[0].title if len(notes) == 1 else f"已選 {len(notes)} 篇{notebook_label}"
-    config = grammar_practice_setup_menu(stdscr, title, notebook_label)
-    if not config:
-        return
-    active_questions = list(questions)
-    if config["random"]:
-        random.shuffle(active_questions)
-    if config["direction"] == "ko-zh":
-        run_grammar_recall_practice(stdscr, title, active_questions, notebook_label)
-        return
-    run_practice(
-        stdscr,
-        title,
-        active_questions,
-        {
-            "direction": "zh-ko",
-            "answer_mode": config["answer_mode"],
-            "source": "all",
-            "starred": False,
-            "random": False,
-            "record_results": False,
-            "allow_star": False,
-        },
-        state,
-        client,
-        session,
-    )
+    while True:
+        config = grammar_practice_setup_menu(stdscr, title, notebook_label)
+        if not config:
+            return
+        active_questions = list(questions)
+        if config["random"]:
+            random.shuffle(active_questions)
+        if config["direction"] == "ko-zh":
+            if run_grammar_recall_practice(stdscr, title, active_questions, notebook_label):
+                return
+            continue
+        completed = run_practice(
+            stdscr,
+            title,
+            active_questions,
+            {
+                "direction": "zh-ko",
+                "answer_mode": config["answer_mode"],
+                "source": "all",
+                "starred": False,
+                "random": False,
+                "record_results": False,
+                "allow_star": False,
+            },
+            state,
+            client,
+            session,
+        )
+        if completed:
+            return
 
 
 def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[str, Any], client: FirebaseClient, session: AuthSession) -> None:
@@ -4129,6 +4196,30 @@ def run_daily_recognition(
             pass
     set_cursor_visibility(0)
     stdscr.keypad(True)
+
+    def finish_round() -> bool:
+        if not optional_mode:
+            wait_message(stdscr, "完成", f"今天的{title}已完成。")
+            return True
+        mistakes = practice_mistake_questions(
+            questions,
+            (question_id for question_id, correct in results.items() if not correct),
+        )
+        while practice_mistake_review_menu(stdscr, title, mistakes):
+            if run_daily_recognition(
+                stdscr,
+                list(mistakes),
+                all_cards,
+                state,
+                client,
+                session,
+                grammar_mode=grammar_mode,
+                title_override=f"{title} | 錯題重測",
+                on_result=lambda _question, _correct: None,
+            ):
+                return True
+        return True
+
     while True:
         question = questions[idx]
         card = question.source
@@ -4233,8 +4324,7 @@ def run_daily_recognition(
                 message = "請先翻面並選擇答對或答錯。"
                 continue
             if idx == len(questions) - 1:
-                wait_message(stdscr, "完成", f"{title}已完成。" if optional_mode else f"今天的{title}已完成。")
-                return True
+                return finish_round()
             idx += 1
             revealed = questions[idx].id in results
             word_visible = revealed
@@ -4344,13 +4434,81 @@ def run_daily_recognition(
                 message = "請先翻面並選擇答對或答錯。"
                 continue
             if idx == len(questions) - 1:
-                wait_message(stdscr, "完成", f"{title}已完成。" if optional_mode else f"今天的{title}已完成。")
-                return True
+                return finish_round()
             idx += 1
             revealed = questions[idx].id in results
             word_visible = revealed
             message = ""
             scroll_offset = 0
+
+
+def practice_mistake_questions(
+    questions: Iterable[Question],
+    wrong_question_ids: Iterable[str],
+) -> List[Question]:
+    wrong_ids = set(wrong_question_ids)
+    seen: set[str] = set()
+    result: List[Question] = []
+    for question in questions:
+        if question.id not in wrong_ids:
+            continue
+        review_key = (
+            f"grammar:{question.id}"
+            if question.kind == "grammar-example"
+            else f"word:{question.item_id or question.source.id or question.id}"
+        )
+        if review_key in seen:
+            continue
+        seen.add(review_key)
+        result.append(question)
+    return result
+
+
+def practice_mistake_review_menu(
+    stdscr: curses.window,
+    title: str,
+    questions: List[Question],
+    allow_retry: bool = True,
+) -> bool:
+    if not questions:
+        wait_message(stdscr, "測驗完成", "這一輪沒有答錯的題目。")
+        return False
+    scroll_offset = 0
+    set_cursor_visibility(0)
+    while True:
+        stdscr.erase()
+        height, width = stdscr.getmaxyx()
+        draw_line(stdscr, 1, 2, f"錯誤單字檢討 | {title} | {len(questions)} 題", curses.A_BOLD)
+        controls = "Enter=只重測錯題 Esc=結束" if allow_retry else "Enter/Esc=結束"
+        draw_line(stdscr, 2, 2, f"{controls} ↑↓=捲動", curses.A_DIM)
+        lines: List[str] = []
+        for index, question in enumerate(questions, 1):
+            korean = question.ko if question.kind == "grammar-example" else question.source.ko or question.ko
+            chinese = question.zh if question.kind == "grammar-example" else question.source.zh or question.zh
+            lines.extend(_split_by_cell_width(f"{index}. {korean} / {chinese}", max(1, width - 4)))
+        visible_rows = max(1, height - 4)
+        max_scroll = max(0, len(lines) - visible_rows)
+        scroll_offset = min(scroll_offset, max_scroll)
+        for row, line in enumerate(lines[scroll_offset:scroll_offset + visible_rows], 3):
+            draw_line(stdscr, row, 2, line)
+        if max_scroll:
+            draw_line(
+                stdscr,
+                height - 1,
+                2,
+                f"內容 {scroll_offset + 1}-{min(len(lines), scroll_offset + visible_rows)}/{len(lines)}",
+                curses.A_DIM,
+            )
+        update_curses_screen(stdscr)
+        key = read_terminal_key(stdscr, wide=True)
+        if key in ("\x1b", 27):
+            return False
+        if key == curses.KEY_UP:
+            scroll_offset = max(0, scroll_offset - 1)
+        elif key == curses.KEY_DOWN:
+            scroll_offset = min(max_scroll, scroll_offset + 1)
+        elif key in ("\n", "\r", curses.KEY_ENTER, 10, 13):
+            return allow_retry
 
 
 def run_practice(stdscr: curses.window, title: str, questions: List[Question], config: Dict[str, Any], state: Dict[str, Any], client: FirebaseClient, session: AuthSession) -> bool:
@@ -4370,6 +4528,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
     pending_word_audio = False
     spoken_question_id = ""
     scroll_offset = 0
+    wrong_question_ids: set[str] = set()
     ok_attr = curses.A_BOLD
     wrong_attr = curses.A_REVERSE | curses.A_BOLD
     wrong_result_attr = curses.A_BOLD
@@ -4383,6 +4542,43 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
     daily_review = config.get("daily_review", False)
     on_result = config.get("on_result")
     auto_answer_audio = config.get("auto_answer_audio", True)
+
+    def remember_result(target: Question, correct: bool) -> None:
+        if correct:
+            wrong_question_ids.discard(target.id)
+        else:
+            wrong_question_ids.add(target.id)
+
+    def finish_round() -> bool:
+        set_cursor_visibility(0)
+        mistakes = practice_mistake_questions(questions, wrong_question_ids)
+        if daily_review:
+            practice_mistake_review_menu(stdscr, title, mistakes, allow_retry=False)
+            return True
+        if not config.get("allow_mistake_retry", True):
+            if config.get("show_mistake_review", True):
+                practice_mistake_review_menu(stdscr, title, mistakes, allow_retry=False)
+            else:
+                wait_message(stdscr, "完成", "這組題目已完成。")
+            return True
+        while practice_mistake_review_menu(stdscr, title, mistakes):
+            retry_config = {
+                **config,
+                "record_results": should_record_results and on_result is None,
+                "on_result": None,
+                "daily_review": False,
+            }
+            if run_practice(
+                stdscr,
+                f"{config.get('_base_title') or title} | 錯題重測",
+                list(mistakes),
+                {**retry_config, "_base_title": config.get("_base_title") or title},
+                state,
+                client,
+                session,
+            ):
+                return True
+        return True
     if curses.has_colors():
         curses.start_color()
         try:
@@ -4561,9 +4757,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         if key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13):
             if graded:
                 if idx == len(questions) - 1:
-                    wait_message(stdscr, "完成", "這組題目已完成。")
-                    set_cursor_visibility(0)
-                    return True
+                    return finish_round()
                 idx += 1
                 user_input = ""
                 input_cursor = 0
@@ -4620,6 +4814,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             partial = None
             graded = True
             last_correct = correct
+            remember_result(question, correct)
             retry_diff = False
             if should_record_results:
                 message = "答對，已記錄。按 Enter 或 6 進入下一題。" if correct else "答錯，已記錄。按 Enter 或 6 進入下一題。"
@@ -4732,6 +4927,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                         continue
                 graded = True
                 last_correct = correct
+                remember_result(question, correct)
                 result_label = "答對" if correct else "答錯"
                 record_suffix = "已記錄" if should_record_results else "未紀錄"
                 message = f"{result_label}，{record_suffix}。按 Enter 或 6 進入下一題。"
@@ -4790,9 +4986,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                     message = "請先送出這一題的答案。"
                     continue
                 if idx == len(questions) - 1 and graded:
-                    wait_message(stdscr, "完成", "這組題目已完成。")
-                    set_cursor_visibility(0)
-                    return True
+                    return finish_round()
                 idx = min(len(questions) - 1, idx + 1)
                 user_input = ""
                 input_cursor = 0
@@ -4827,21 +5021,23 @@ def run_collection(
     session: AuthSession,
     allow_result_recording: bool = False,
 ) -> None:
-    mode = menu(stdscr, f"{title} | 模式", [("study", "學習模式"), ("practice", "測驗模式")])
-    if not mode:
-        return
-    if mode == "study":
-        starred = menu(stdscr, f"{title} | 學習篩選", [("all", "全部卡片"), ("starred", "有星號")])
-        if not starred:
+    while True:
+        mode = menu(stdscr, f"{title} | 模式", [("study", "學習模式"), ("practice", "測驗模式")])
+        if not mode:
             return
-        active = [card for card in cards if starred == "all" or card.is_starred]
-        run_study(stdscr, title, active, state, client, session)
-    else:
-        config = setup_menu(stdscr, title, allow_result_recording=allow_result_recording)
-        if not config:
-            return
-        active_questions = filtered_questions(questions, config)
-        run_practice(stdscr, title, active_questions, config, state, client, session)
+        if mode == "study":
+            starred = menu(stdscr, f"{title} | 學習篩選", [("all", "全部卡片"), ("starred", "有星號")])
+            if not starred:
+                continue
+            active = [card for card in cards if starred == "all" or card.is_starred]
+            run_study(stdscr, title, active, state, client, session)
+        else:
+            config = setup_menu(stdscr, title, allow_result_recording=allow_result_recording)
+            if not config:
+                continue
+            active_questions = filtered_questions(questions, config)
+            if run_practice(stdscr, title, active_questions, config, state, client, session):
+                return
 
 
 def run_notebook(
@@ -4950,17 +5146,22 @@ def run_notebook(
             active_questions = [question for question in questions if question.item_id in active_ids]
             title = f"單字本篩選結果 ({len(active_cards)} 張)"
             if row == 6:
-                starred = menu(stdscr, f"{title} | 學習篩選", [("all", "全部卡片"), ("starred", "有星號")])
-                if starred:
+                while True:
+                    starred = menu(stdscr, f"{title} | 學習篩選", [("all", "全部卡片"), ("starred", "有星號")])
+                    if not starred:
+                        break
                     study_cards = [card for card in active_cards if starred == "all" or card.is_starred]
                     run_study(stdscr, title, study_cards, state, client, session)
             else:
-                practice_config = setup_menu(stdscr, title, allow_result_recording=True)
-                if practice_config:
+                while True:
+                    practice_config = setup_menu(stdscr, title, allow_result_recording=True)
+                    if not practice_config:
+                        break
                     practice_questions = filtered_questions(active_questions, practice_config)
                     if not practice_config["random"]:
                         practice_questions = order_questions_by_cards(practice_questions, active_cards)
-                    run_practice(stdscr, title, practice_questions, practice_config, state, client, session)
+                    if run_practice(stdscr, title, practice_questions, practice_config, state, client, session):
+                        break
             set_cursor_visibility(0)
 
 
@@ -5014,6 +5215,156 @@ def run_folder_notebook(
             session,
             allow_result_recording=True,
         )
+
+
+def run_calendar(
+    stdscr: curses.window,
+    cards: List[Card],
+    questions: List[Question],
+    state: Dict[str, Any],
+    client: FirebaseClient,
+    session: AuthSession,
+) -> None:
+    while True:
+        selected_date = date_menu(stdscr, cards)
+        if not selected_date:
+            return
+        day_cards = [card for card in cards if card.date == selected_date]
+        day_questions = [question for question in questions if question.date == selected_date]
+        run_collection(stdscr, selected_date, day_cards, day_questions, state, client, session)
+
+
+def run_due_reviews(
+    stdscr: curses.window,
+    state: Dict[str, Any],
+    questions: List[Question],
+    client: FirebaseClient,
+    session: AuthSession,
+) -> None:
+    def mark_today_complete() -> None:
+        if daily_due_questions(state, questions):
+            return
+        completed = state.setdefault("completedReviewDates", [])
+        today = today_string()
+        if today in completed:
+            return
+        snapshot = _clone_json(state)
+        completed.append(today)
+        completed.sort()
+        save_review_state_or_restore(
+            stdscr,
+            client,
+            session,
+            state,
+            snapshot,
+            "完成紀錄儲存失敗",
+        )
+
+    while True:
+        task = due_task_menu(stdscr, state, questions)
+        if not task:
+            return
+        task_type, selected = task
+        if task_type == DAILY_WRONG_REVIEW_MODE:
+            def save_wrong_review_result(question: Question, correct: bool) -> None:
+                snapshot = _clone_json(state)
+                record_daily_wrong_review_answer(state, question, correct)
+                try:
+                    client.save_review_state(session, state)
+                except RuntimeError:
+                    state.clear()
+                    state.update(snapshot)
+                    raise
+
+            leave_task = False
+            while not leave_task:
+                answer_setup = translation_answer_mode_menu(stdscr, "今日答錯題目 | 選擇測驗方式")
+                if not answer_setup:
+                    break
+                direction, answer_mode = answer_setup
+                while True:
+                    order_mode = menu(
+                        stdscr,
+                        "今日答錯題目 | 選擇出題順序",
+                        [("alphabetical", "韓文字母順序"), ("random", "隨機打亂順序")],
+                    )
+                    if not order_mode:
+                        break
+                    while True:
+                        active_wrong_review = list(selected)
+                        if order_mode == "random":
+                            random.shuffle(active_wrong_review)
+                        completed_wrong_review = run_practice(
+                            stdscr,
+                            "今日答錯題目",
+                            active_wrong_review,
+                            {
+                                "direction": direction,
+                                "answer_mode": answer_mode,
+                                "source": "term",
+                                "starred": False,
+                                "random": False,
+                                "record_results": False,
+                                "on_result": save_wrong_review_result,
+                                "allow_mistake_retry": False,
+                                "show_mistake_review": False,
+                                "enforce_answer_length": direction == "zh-ko" and answer_mode == "typing",
+                                "daily_review": False,
+                            },
+                            state,
+                            client,
+                            session,
+                        )
+                        if not completed_wrong_review:
+                            break
+                        remaining_wrong = daily_wrong_term_questions(state, questions)
+                        if not remaining_wrong:
+                            wait_message(stdscr, "今日答錯題目", "所有錯題都已經答對。")
+                            leave_task = True
+                            break
+                        replay = menu(
+                            stdscr,
+                            "今日答錯題目已完成",
+                            [
+                                ("again", f"只重測仍答錯的 {len(remaining_wrong)} 題"),
+                                ("back", "返回今日複習題"),
+                            ],
+                            "這組練習不會寫入熟悉分數或間隔排程。",
+                        )
+                        if replay == "again":
+                            selected = remaining_wrong
+                            continue
+                        leave_task = True
+                        break
+                    if leave_task:
+                        break
+        else:
+            while True:
+                answer_setup = translation_answer_mode_menu(stdscr, "每日單字測驗 | 選擇測驗方式")
+                if not answer_setup:
+                    break
+                direction, answer_mode = answer_setup
+                completed_review = run_practice(
+                    stdscr,
+                    "今日全部複習" if task_type == DAILY_MIXED_MODE else f"{task_type} 複習",
+                    selected,
+                    {
+                        "direction": direction,
+                        "answer_mode": answer_mode,
+                        "source": "term",
+                        "starred": False,
+                        "random": True,
+                        "record_results": True,
+                        "enforce_answer_length": direction == "zh-ko" and answer_mode == "typing",
+                        "daily_review": True,
+                    },
+                    state,
+                    client,
+                    session,
+                )
+                if completed_review:
+                    break
+        mark_today_complete()
 
 
 def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: AuthSession) -> None:
@@ -5098,99 +5449,9 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
             )
             continue
         if choice == "due":
-            task = due_task_menu(stdscr, state, questions)
-            if task:
-                task_type, selected = task
-                if task_type == DAILY_WRONG_REVIEW_MODE:
-                    answer_setup = translation_answer_mode_menu(stdscr, "今日答錯題目 | 選擇測驗方式")
-                    if not answer_setup:
-                        continue
-                    direction, answer_mode = answer_setup
-                    order_mode = menu(
-                        stdscr,
-                        "今日答錯題目 | 選擇出題順序",
-                        [("alphabetical", "韓文字母順序"), ("random", "隨機打亂順序")],
-                    )
-                    if not order_mode:
-                        continue
-                    active_wrong_review = list(selected)
-                    if order_mode == "random":
-                        random.shuffle(active_wrong_review)
-                    while True:
-                        completed_wrong_review = run_practice(
-                            stdscr,
-                            "今日答錯題目",
-                            active_wrong_review,
-                            {
-                                "direction": direction,
-                                "answer_mode": answer_mode,
-                                "source": "term",
-                                "starred": False,
-                                "random": False,
-                                "record_results": False,
-                                "enforce_answer_length": direction == "zh-ko" and answer_mode == "typing",
-                                "daily_review": False,
-                            },
-                            state,
-                            client,
-                            session,
-                        )
-                        if not completed_wrong_review:
-                            break
-                        replay = menu(
-                            stdscr,
-                            "今日答錯題目已完成",
-                            [("again", "再練一次"), ("back", "返回主選單")],
-                            "這組練習不會寫入熟悉分數或間隔排程。",
-                        )
-                        if replay != "again":
-                            break
-                        if order_mode == "random":
-                            random.shuffle(active_wrong_review)
-                else:
-                    answer_setup = translation_answer_mode_menu(stdscr, "每日單字測驗 | 選擇測驗方式")
-                    if not answer_setup:
-                        continue
-                    direction, answer_mode = answer_setup
-                    run_practice(
-                        stdscr,
-                        "今日全部複習" if task_type == DAILY_MIXED_MODE else f"{task_type} 複習",
-                        selected,
-                        {
-                            "direction": direction,
-                            "answer_mode": answer_mode,
-                            "source": "term",
-                            "starred": False,
-                            "random": True,
-                            "record_results": True,
-                            "enforce_answer_length": direction == "zh-ko" and answer_mode == "typing",
-                            "daily_review": True,
-                        },
-                        state,
-                        client,
-                        session,
-                    )
-                if not daily_due_questions(state, questions):
-                    completed = state.setdefault("completedReviewDates", [])
-                    today = today_string()
-                    if today not in completed:
-                        snapshot = _clone_json(state)
-                        completed.append(today)
-                        completed.sort()
-                        save_review_state_or_restore(
-                            stdscr,
-                            client,
-                            session,
-                            state,
-                            snapshot,
-                            "完成紀錄儲存失敗",
-                        )
+            run_due_reviews(stdscr, state, questions, client, session)
         elif choice == "calendar":
-            selected_date = date_menu(stdscr, cards)
-            if selected_date:
-                day_cards = [card for card in cards if card.date == selected_date]
-                day_questions = [question for question in questions if question.date == selected_date]
-                run_collection(stdscr, selected_date, day_cards, day_questions, state, client, session)
+            run_calendar(stdscr, cards, questions, state, client, session)
         elif choice == "notebook":
             run_notebook(stdscr, cards, questions, state, client, session)
         elif choice == "folders":

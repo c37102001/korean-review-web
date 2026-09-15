@@ -137,6 +137,7 @@ const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
 const DAILY_RECOGNITION_LIMIT = 50;
 const DAILY_RECOGNITION_MODE = 'daily-recognition';
 const DAILY_GRAMMAR_MODE = 'daily-grammar';
+const DAILY_WRONG_REVIEW_MODE = 'daily-wrong-review';
 const CONTENT_SCHEMA_VERSION = 2;
 const FIRESTORE_SCHEMA_VERSION = 3;
 const MAX_ATOMIC_RECORD_WRITES = 450;
@@ -2375,11 +2376,20 @@ function dailyWrongTermQuestions(store, questions, date = todayString()) {
       .filter((question) => question.kind === 'term')
       .map((question) => [question.id, question]),
   );
-  const wrongIds = new Set(
-    (store.attempts || [])
-      .filter((attempt) => attemptDate(attempt) === date && attempt.correct === false)
-      .map((attempt) => attempt.questionId),
-  );
+  const wrongIds = new Set();
+  [...(store.attempts || [])]
+    .filter((attempt) => attemptDate(attempt) === date)
+    .sort((left, right) => String(left.time || '').localeCompare(String(right.time || '')))
+    .forEach((attempt) => {
+      const questionId = String(attempt.questionId || '');
+      if (!questionId) return;
+      if (attempt.mode === DAILY_WRONG_REVIEW_MODE) {
+        if (attempt.correct) wrongIds.delete(questionId);
+        else wrongIds.add(questionId);
+        return;
+      }
+      if (attempt.correct === false) wrongIds.add(questionId);
+    });
   return [...wrongIds]
     .map((questionId) => termById.get(questionId))
     .filter(Boolean)
@@ -2670,6 +2680,21 @@ function recordAnswer(store, question, correct) {
 
 function recordDailyReviewAnswer(store, question, correct, direction = 'zh-ko') {
   return recordAnswer(store, question, correct);
+}
+
+function recordDailyWrongReviewAnswer(store, question, correct) {
+  const now = new Date().toISOString();
+  return {
+    ...store,
+    attempts: [{
+      id: createId(),
+      questionId: question.id,
+      correct,
+      date: todayString(),
+      time: now,
+      mode: DAILY_WRONG_REVIEW_MODE,
+    }, ...(store.attempts || [])].slice(0, 5000),
+  };
 }
 
 function recordDailyRoundAnswer(store, question, correct, {
@@ -3084,6 +3109,7 @@ function App() {
       dailyReview: !!options.dailyReview,
       grammarOnly: !!options.grammarOnly,
       repeatable: !!options.repeatable,
+      wrongReview: !!options.wrongReview,
       allowAlphabeticalOrder: !!options.allowAlphabeticalOrder,
       mode: options.mode || '',
       grammarNote: options.grammarNote || null,
@@ -3614,7 +3640,7 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
                 <button className="primary small" onClick={() => onPractice(
                   wrongReview,
                   '今日答錯題目',
-                  { dueOnly: true, repeatable: true, allowAlphabeticalOrder: true },
+                  { dueOnly: true, repeatable: true, wrongReview: true, allowAlphabeticalOrder: true },
                 )}>開始</button>
               </div>
             )}
@@ -5749,6 +5775,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const [sessionFinished, setSessionFinished] = useState(false);
   const [wrongQuestionIds, setWrongQuestionIds] = useState([]);
   const wrongQuestionIdsRef = useRef(new Set());
+  const [mistakeRetryRound, setMistakeRetryRound] = useState(false);
   const [completionError, setCompletionError] = useState('');
   const [completionSaving, setCompletionSaving] = useState(false);
   const [markedLearnedIds, setMarkedLearnedIds] = useState(() => new Set());
@@ -5815,6 +5842,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const resetSession = () => {
     clearSessionMistakes();
     setSessionFinished(false);
+    setMistakeRetryRound(false);
     setStarted(false);
     setQuestionQueue([]);
     setIndex(0);
@@ -5846,6 +5874,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     setQuestionQueue(nextQuestions);
     clearSessionMistakes();
     setSessionFinished(false);
+    setMistakeRetryRound(false);
     setStarted(true);
     setIndex(0);
     setInput('');
@@ -5857,6 +5886,26 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     setDirectLearnedError('');
     setDirectUnfamiliarError('');
     setRecognitionWordVisible(false);
+  };
+  const startMistakeRetry = (mistakeQuestions) => {
+    if (!mistakeQuestions.length) return;
+    const nextQuestions = randomOrder
+      ? shuffleItems(mistakeQuestions, Date.now())
+      : mistakeQuestions;
+    setQuestionQueue(nextQuestions);
+    clearSessionMistakes();
+    setSessionFinished(false);
+    setMistakeRetryRound(true);
+    setStarted(true);
+    setIndex(0);
+    setInput('');
+    setResult(null);
+    setRevealed(false);
+    setGraded(false);
+    setLastCorrect(null);
+    setTypedAttempts(0);
+    setRecognitionWordVisible(false);
+    setCompletionError('');
   };
 
   useEffect(() => {
@@ -5993,6 +6042,22 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   // Self-directed tests never alter long-term accuracy. Daily listening rounds
   // still update their dedicated rotation state in the recognition branch.
   const submit = async (correct) => {
+    if (set.wrongReview) {
+      updateStore((current) => recordDailyWrongReviewAnswer(current, question, correct));
+      rememberSessionResult(question, correct);
+      if (soundEnabled) playResultSound(correct);
+      goNext();
+      return;
+    }
+    if (mistakeRetryRound) {
+      if (shouldRecordResults) {
+        updateStore((current) => recordDailyReviewAnswer(current, question, correct, activeDirection));
+      }
+      rememberSessionResult(question, correct);
+      if (soundEnabled) playResultSound(correct);
+      goNext();
+      return;
+    }
     if (optionalMode) {
       if (optionalSavingRef.current) return;
       optionalSavingRef.current = true;
@@ -6019,7 +6084,9 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   // away (no manual 答對/答錯 choice) but keeps the question on screen so the
   // outcome is visible until the user presses Enter for the next one.
   const finalizeTypedGrade = (correct) => {
-    if (shouldRecordResults) {
+    if (set.wrongReview) {
+      updateStore((current) => recordDailyWrongReviewAnswer(current, question, correct));
+    } else if (shouldRecordResults) {
       updateStore((current) => recordAnswer(current, question, correct));
     }
     rememberSessionResult(question, correct);
@@ -6172,8 +6239,13 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
           <span className="eyebrow">Test complete</span>
           <h1>{`${set.label} 已完成`}</h1>
           <p>這一組的 {questionQueue.length} 題已全部作答。</p>
-          <PracticeMistakeReview questions={mistakeQuestions} />
-          {set.repeatable && (
+          <PracticeMistakeReview
+            questions={mistakeQuestions}
+            onRetry={!set.dailyReview && mistakeQuestions.length
+              ? () => startMistakeRetry(mistakeQuestions)
+              : null}
+          />
+          {set.repeatable && !set.wrongReview && (
             <button className="primary wide" onClick={startSession}><RotateCcw size={18} /> 再練一次</button>
           )}
           {completionSaving && <p>正在儲存今日文法進度...</p>}
@@ -6395,7 +6467,7 @@ function PracticeDecisionBar({ canClassify, isLearned, isUnfamiliar, learnedSavi
   );
 }
 
-function PracticeMistakeReview({ questions = [] }) {
+function PracticeMistakeReview({ questions = [], onRetry = null }) {
   return (
     <section className="practice-mistake-review" aria-label="錯誤題目檢討">
       <div className="practice-mistake-review-head">
@@ -6403,7 +6475,14 @@ function PracticeMistakeReview({ questions = [] }) {
           <span className="eyebrow">Review</span>
           <h2>錯誤單字檢討</h2>
         </div>
-        <strong>{questions.length} 個</strong>
+        <div className="practice-mistake-review-actions">
+          <strong>{questions.length} 個</strong>
+          {onRetry && (
+            <button type="button" className="primary small" onClick={onRetry}>
+              <RotateCcw size={16} /> 重測錯題
+            </button>
+          )}
+        </div>
       </div>
       {questions.length ? (
         <div className="practice-mistake-grid">
@@ -8996,6 +9075,7 @@ export {
   recordAnswer,
   recordDailyReviewAnswer,
   recordDailyRecognitionAnswer,
+  recordDailyWrongReviewAnswer,
   recordsFromSnapshot,
   resolveImportConflictDraft,
   shouldInitializeDailyRecognition,

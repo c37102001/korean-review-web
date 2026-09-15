@@ -196,6 +196,102 @@ class OptionalPracticeTests(unittest.TestCase):
         ))
         self.assertTrue(any("youtube:player_client=android_vr" in profile for profile in profiles))
 
+    def test_collection_escape_returns_to_its_mode_menu_before_parent(self):
+        card, question = self.card_and_question()
+        menu_results = iter(["study", "all", None])
+        menu_titles = []
+
+        def choose(_screen, title, *_args, **_kwargs):
+            menu_titles.append(title)
+            return next(menu_results)
+
+        with patch.object(terminal, "menu", side_effect=choose), \
+                patch.object(terminal, "run_study") as study:
+            terminal.run_collection(
+                object(), "測試資料夾", [card], [question], {}, object(), object()
+            )
+
+        study.assert_called_once()
+        self.assertEqual(menu_titles, [
+            "測試資料夾 | 模式",
+            "測試資料夾 | 學習篩選",
+            "測試資料夾 | 模式",
+        ])
+
+    def test_calendar_escape_returns_to_date_list_after_collection(self):
+        card, question = self.card_and_question()
+        with patch.object(terminal, "date_menu", side_effect=[card.date, None]) as dates, \
+                patch.object(terminal, "run_collection") as collection:
+            terminal.run_calendar(
+                object(), [card], [question], {}, object(), object()
+            )
+
+        self.assertEqual(dates.call_count, 2)
+        collection.assert_called_once()
+
+    def test_daily_practice_escape_returns_through_answer_setup_then_task_list(self):
+        _, question = self.card_and_question()
+        with patch.object(
+            terminal,
+            "due_task_menu",
+            side_effect=[(terminal.DAILY_MIXED_MODE, [question]), None],
+        ) as tasks, patch.object(
+            terminal,
+            "translation_answer_mode_menu",
+            side_effect=[("ko-zh", "self-grade"), None],
+        ) as setup, patch.object(
+            terminal,
+            "run_practice",
+            return_value=False,
+        ) as practice, patch.object(
+            terminal,
+            "daily_due_questions",
+            return_value=[question],
+        ):
+            terminal.run_due_reviews(object(), {}, [question], object(), object())
+
+        practice.assert_called_once()
+        self.assertEqual(setup.call_count, 2)
+        self.assertEqual(tasks.call_count, 2)
+
+    def test_daily_wrong_review_correct_answers_remove_only_the_review_item(self):
+        card, question = self.card_and_question()
+        state = {
+            "stats": {question.id: {"correct": 2, "wrong": 1}},
+            "progress": {question.id: {"nextDue": "2026-09-20"}},
+            "attempts": [{
+                "id": "wrong",
+                "questionId": question.id,
+                "correct": False,
+                "date": "2026-09-15",
+                "time": "2026-09-15T01:00:00Z",
+            }],
+        }
+        original_stats = dict(state["stats"])
+        original_progress = dict(state["progress"])
+
+        with patch.object(terminal, "today_string", return_value="2026-09-15"):
+            terminal.record_daily_wrong_review_answer(state, question, True)
+            remaining = terminal.daily_wrong_term_questions(state, [question])
+
+        self.assertEqual(remaining, [])
+        self.assertEqual(state["stats"], original_stats)
+        self.assertEqual(state["progress"], original_progress)
+        self.assertEqual(state["attempts"][0]["mode"], terminal.DAILY_WRONG_REVIEW_MODE)
+
+    def test_mistake_retry_keeps_only_one_question_for_each_wrong_word(self):
+        card, term = self.card_and_question()
+        example = terminal.Question(
+            "example", card.id, card.date, "example", "날씨가 좋아요.", "天氣很好。", card
+        )
+
+        mistakes = terminal.practice_mistake_questions(
+            [term, example],
+            [term.id, example.id],
+        )
+
+        self.assertEqual([question.id for question in mistakes], [term.id])
+
 
 if __name__ == "__main__":
     unittest.main()

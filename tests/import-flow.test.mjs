@@ -460,6 +460,30 @@ test('today wrong review contains only unique term questions failed on that date
   );
 });
 
+test('today wrong review keeps only questions still wrong after each review round', () => {
+  const first = { id: 'term-a', itemId: 'card-a', date: '2026-08-19', kind: 'term', ko: '하다', source: { index: 0 } };
+  const second = { id: 'term-b', itemId: 'card-b', date: '2026-08-19', kind: 'term', ko: '가다', source: { index: 1 } };
+  const reviewStore = {
+    stats: { 'term-a': { correct: 2, wrong: 1 } },
+    progress: { 'term-a': { nextDue: '2026-09-01' } },
+    attempts: [
+      { id: 'wrong-a', questionId: 'term-a', correct: false, date: '2026-08-19', time: '2026-08-19T01:00:00Z' },
+      { id: 'wrong-b', questionId: 'term-b', correct: false, date: '2026-08-19', time: '2026-08-19T01:01:00Z' },
+      { id: 'review-a', questionId: 'term-a', correct: true, date: '2026-08-19', time: '2026-08-19T02:00:00Z', mode: 'daily-wrong-review' },
+      { id: 'review-b', questionId: 'term-b', correct: false, date: '2026-08-19', time: '2026-08-19T02:01:00Z', mode: 'daily-wrong-review' },
+    ],
+  };
+
+  assert.deepEqual(
+    helpers.dailyWrongTermQuestions(reviewStore, [first, second], '2026-08-19').map((question) => question.id),
+    ['term-b'],
+  );
+  const next = helpers.recordDailyWrongReviewAnswer(reviewStore, first, true);
+  assert.deepEqual(next.stats, reviewStore.stats);
+  assert.deepEqual(next.progress, reviewStore.progress);
+  assert.equal(next.attempts[0].mode, 'daily-wrong-review');
+});
+
 test('learned words are excluded from both daily terms and example listening', () => {
   const questions = [
     { id: 'term-a', itemId: 'card-a', kind: 'term' },
