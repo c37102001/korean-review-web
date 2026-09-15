@@ -3469,7 +3469,7 @@ def setup_menu(
     allow_examples: bool = True,
     allow_result_recording: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    direction = "zh-ko"
+    direction = "ko-zh"
     source = "term"
     starred = False
     random_order = True
@@ -3549,9 +3549,9 @@ def translation_answer_mode_menu(
         stdscr,
         title,
         [
+            ("ko-zh:self-grade", "韓翻中 · 心中作答後自行評分"),
             ("zh-ko:typing", "中翻韓 · 打字輸入韓文"),
             ("zh-ko:self-grade", "中翻韓 · 心中作答後自行評分"),
-            ("ko-zh:self-grade", "韓翻中 · 心中作答後自行評分"),
         ],
         "心中作答模式會先公佈答案，再使用 1（答錯）或 2（答對）自評。",
     )
@@ -3566,7 +3566,7 @@ def grammar_practice_setup_menu(
     title: str,
     notebook_label: str = "文法筆記",
 ) -> Optional[Dict[str, Any]]:
-    direction = "zh-ko"
+    direction = "ko-zh"
     answer_mode = "typing"
     random_order = True
     row = 0
@@ -3816,6 +3816,7 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
     show_details = False
     show_chinese = False
     example_index = 0
+    scroll_offset = 0
     message = ""
     spoken_card_id = ""
     auto_playing = False
@@ -3823,6 +3824,7 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
     auto_card_id = ""
     auto_steps: List[Tuple[str, int, str, int]] = []
     auto_step_index = 0
+    cards_by_id = {card.id: card for card in cards}
     set_cursor_visibility(0)
     while True:
         if not cards:
@@ -3843,51 +3845,76 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
         if auto_step and auto_step[1] >= 0:
             example_index = auto_step[1]
         clear_with_default_background(stdscr)
+        height, width = stdscr.getmaxyx()
         draw_line(
             stdscr,
             1,
             2,
-            f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回 A=自動:{'開' if auto_playing else '關'} 1/2/3=重複:{repeat_count} {auto_audio_control_label()} 0=星號 *=不熟悉 5=中文 9=單字 7=例句 +=下一例句 8=詳情 4/6=上下張",
+            f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回 A=自動:{'開' if auto_playing else '關'} 1/2/3=重複:{repeat_count} {auto_audio_control_label()} 0=星號 *=不熟悉 5=中文 9=單字 7=例句 +=下一例句 8=詳情 ↑↓=捲動 4/6=上下張",
             curses.A_BOLD,
         )
         folder_notice, display_message = folder_prompt_notice(message)
-        y = draw_wrapped(stdscr, 2, 2, stdscr.getmaxyx()[1] - 4, f"{'★' if card.is_starred else '☆'} {card.ko}{folder_notice}", curses.A_BOLD)
-        if show_chinese and auto_face != "front":
-            y = draw_wrapped(stdscr, y, 2, stdscr.getmaxyx()[1] - 4, card.zh)
-        if examples and auto_face != "front":
-            draw_line(stdscr, y, 2, "例句:", curses.A_DIM)
-            y += 1
-            for current_index, example in enumerate(examples):
-                visible_parts = [example.get("ko", "")]
-                if show_chinese:
-                    visible_parts.append(example.get("zh", ""))
-                text = " / ".join(part for part in visible_parts if part)
-                marker = "▶ " if current_index == example_index else "  "
-                attr = curses.A_BOLD if current_index == example_index else curses.A_DIM
-                y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, marker + text, attr)
-        if show_details and auto_face != "front":
-            for meaning in card.meanings:
+        detail_lines: List[Tuple[str, int, int]] = []
+
+        def append_detail(text: str, indent: int = 0, attr: int = 0) -> None:
+            line_width = max(1, width - 4 - indent)
+            for line in _split_by_cell_width(str(text), line_width):
+                detail_lines.append((line, indent, attr))
+
+        append_detail(f"{'★' if card.is_starred else '☆'} {card.ko}{folder_notice}", attr=curses.A_BOLD)
+        on_back = auto_face != "front"
+        show_full_details = show_chinese or show_details
+        if on_back and show_chinese and card.zh:
+            append_detail(f"中文: {card.zh}", attr=curses.A_BOLD)
+        if on_back and show_full_details and card.meanings:
+            append_detail("意思與句型:", attr=curses.A_DIM)
+            for meaning_index, meaning in enumerate(card.meanings, 1):
                 detail_parts = []
                 if show_chinese and meaning.get("zh"):
                     detail_parts.append(str(meaning.get("zh")))
                 if meaning.get("pattern"):
                     detail_parts.append(str(meaning.get("pattern")))
                 if detail_parts:
-                    y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, f"- {' · '.join(detail_parts)}")
+                    append_detail(f"{meaning_index}. {' · '.join(detail_parts)}", indent=2)
+        if on_back and examples:
+            append_detail("例句:", attr=curses.A_DIM)
+            for current_index, example in enumerate(examples):
+                marker = "▶" if current_index == example_index else " "
+                attr = curses.A_BOLD if current_index == example_index else 0
+                append_detail(f"{marker} {current_index + 1}. {example.get('ko', '')}", indent=2, attr=attr)
+                if show_chinese and example.get("zh"):
+                    append_detail(str(example.get("zh")), indent=5, attr=curses.A_DIM)
+        if on_back and show_full_details and card.notes:
+            append_detail("筆記:", attr=curses.A_DIM)
             for note in card.notes:
-                y = draw_wrapped(stdscr, y, 4, stdscr.getmaxyx()[1] - 6, f"筆記: {note}", curses.A_DIM)
+                append_detail(note, indent=2, attr=curses.A_DIM)
+        if on_back and show_full_details and card.related:
+            related_words = [cards_by_id[item_id].ko for item_id in card.related if item_id in cards_by_id]
+            if related_words:
+                append_detail(f"相關詞: {'、'.join(related_words)}", attr=curses.A_DIM)
+
+        visible_rows = max(1, height - 3)
+        max_scroll = max(0, len(detail_lines) - visible_rows)
+        scroll_offset = min(scroll_offset, max_scroll)
+        for row, (line, indent, attr) in enumerate(
+            detail_lines[scroll_offset:scroll_offset + visible_rows],
+            2,
+        ):
+            draw_line(stdscr, row, 2 + indent, line, attr)
+
+        footer_parts = []
         if display_message:
-            draw_line(stdscr, y, 2, display_message, curses.A_BOLD)
+            footer_parts.append(display_message)
         if auto_step:
             face_label = "正面" if auto_face == "front" else "反面"
-            draw_line(
-                stdscr,
-                min(stdscr.getmaxyx()[0] - 2, y + 1),
-                2,
-                f"自動播放 · 第 {auto_step[3]}/{repeat_count} 次 · {face_label}",
-                curses.A_DIM,
+            footer_parts.append(f"自動播放 · 第 {auto_step[3]}/{repeat_count} 次 · {face_label}")
+        if max_scroll:
+            footer_parts.append(
+                f"內容 {scroll_offset + 1}-{min(len(detail_lines), scroll_offset + visible_rows)}/{len(detail_lines)}"
             )
-        stdscr.refresh()
+        if footer_parts:
+            draw_line(stdscr, height - 1, 2, "  ".join(footer_parts), curses.A_DIM)
+        update_curses_screen(stdscr)
         if auto_step:
             spoken_card_id = card.id
             if auto_step[2]:
@@ -3905,6 +3932,18 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             key = read_terminal_key_with_timeout(stdscr, 420 if auto_step[2] else 900, wide=True)
             if key == "\x1b":
                 return
+            if key == curses.KEY_UP:
+                auto_playing = False
+                auto_steps = []
+                scroll_offset = max(0, scroll_offset - 1)
+                message = "已暫停完整自動播放。"
+                continue
+            if key == curses.KEY_DOWN:
+                auto_playing = False
+                auto_steps = []
+                scroll_offset = min(max_scroll, scroll_offset + 1)
+                message = "已暫停完整自動播放。"
+                continue
             if key in ("a", "A"):
                 auto_playing = False
                 message = "已暫停完整自動播放。"
@@ -3929,6 +3968,7 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
                 continue
             if key == "5":
                 show_chinese = not show_chinese
+                scroll_offset = 0
                 message = "已顯示中文。" if show_chinese else "已隱藏中文。"
             elif key == "4":
                 idx = max(0, idx - 1)
@@ -3937,6 +3977,7 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
                 example_index = 0
                 auto_card_id = ""
                 auto_steps = []
+                scroll_offset = 0
                 message = ""
                 continue
             elif key == "6":
@@ -3946,6 +3987,7 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
                 example_index = 0
                 auto_card_id = ""
                 auto_steps = []
+                scroll_offset = 0
                 message = ""
                 continue
             elif key == curses.KEY_RESIZE and not _AUTO_PLAY_AUDIO:
@@ -3961,6 +4003,7 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
                 auto_card_id = ""
                 auto_steps = []
                 auto_step_index = 0
+                scroll_offset = 0
                 message = ""
             continue
         if _AUTO_PLAY_AUDIO and spoken_card_id != card.id:
@@ -3974,6 +4017,12 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
         key = read_terminal_key(stdscr, wide=True)
         if key == "\x1b":
             return
+        if key == curses.KEY_UP:
+            scroll_offset = max(0, scroll_offset - 1)
+            continue
+        if key == curses.KEY_DOWN:
+            scroll_offset = min(max_scroll, scroll_offset + 1)
+            continue
         if key in ("a", "A"):
             if not _AUTO_PLAY_AUDIO:
                 message = "請先按 . 開啟自動語音，再啟動完整自動播放。"
@@ -4007,8 +4056,10 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             )
         elif key == "8":
             show_details = not show_details
+            scroll_offset = 0
         elif key == "5":
             show_chinese = not show_chinese
+            scroll_offset = 0
             message = "已顯示中文。" if show_chinese else "已隱藏中文。"
         elif key == "9":
             message = (
@@ -4031,12 +4082,14 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             show_details = False
             show_chinese = False
             example_index = 0
+            scroll_offset = 0
             message = ""
         elif key == "6":
             idx = min(len(cards) - 1, idx + 1)
             show_details = False
             show_chinese = False
             example_index = 0
+            scroll_offset = 0
             message = ""
 
 

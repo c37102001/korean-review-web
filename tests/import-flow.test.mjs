@@ -411,9 +411,30 @@ test('daily reviews always record while notebook and folder tests require opt-in
 });
 
 test('Chinese-to-Korean supports typing and self-grading while Korean-to-Chinese is always self-graded', () => {
+  assert.equal(helpers.initialPracticeDirection({}), 'ko-zh');
+  assert.equal(helpers.initialPracticeDirection({ direction: 'zh-ko' }), 'zh-ko');
   assert.equal(helpers.isSelfGradeAnswerMode('zh-ko', 'typing'), false);
   assert.equal(helpers.isSelfGradeAnswerMode('zh-ko', 'self-grade'), true);
   assert.equal(helpers.isSelfGradeAnswerMode('ko-zh', 'typing'), true);
+});
+
+test('session mistake review keeps every wrong word once and preserves grammar examples', () => {
+  const word = { id: 'word-a', ko: '가다', zh: '去' };
+  const grammar = { id: 'grammar-a', title: '文法', ko: '文法', zh: '' };
+  const questions = [
+    { id: 'term-a', itemId: 'word-a', kind: 'term', source: word },
+    { id: 'example-a', itemId: 'word-a', kind: 'example', source: word },
+    { id: 'grammar-example-a', itemId: 'grammar-a', kind: 'grammar-example', source: grammar },
+    { id: 'term-b', itemId: 'word-b', kind: 'term', source: { id: 'word-b', ko: '오다', zh: '來' } },
+  ];
+
+  assert.deepEqual(
+    helpers.practiceMistakeReviewQuestions(
+      questions,
+      ['term-a', 'example-a', 'grammar-example-a'],
+    ).map((question) => question.id),
+    ['term-a', 'grammar-example-a'],
+  );
 });
 
 test('today wrong review contains only unique term questions failed on that date', () => {
@@ -1018,6 +1039,24 @@ test('familiarity score is correct answers minus wrong answers', () => {
   assert.equal(helpers.familiarityLevel(3), '熟悉');
   assert.equal(helpers.familiarityLevel(4), '熟悉');
   assert.equal(helpers.familiarityLevel(5), '已熟悉');
+});
+
+test('unfamiliar practice selects the lowest-scoring 30 unique words', () => {
+  const questions = [];
+  const stats = {};
+  for (let index = 0; index < 35; index += 1) {
+    const id = `word-${index}`;
+    questions.push({ id, itemId: id, kind: 'term', ko: `단어${index}`, source: { id, ko: `단어${index}` } });
+    questions.push({ id: `${id}-example`, itemId: id, kind: 'example', ko: `예문${index}`, source: { id, ko: `단어${index}` } });
+    stats[id] = { correct: index, wrong: 0, total: index };
+    stats[`${id}-example`] = { correct: 0, wrong: index === 34 ? 100 : 0, total: index === 34 ? 100 : 0 };
+  }
+
+  const selected = helpers.lowestFamiliarityTermQuestions({ stats }, questions, 30);
+  assert.equal(selected.length, 30);
+  assert.equal(new Set(selected.map((question) => question.itemId)).size, 30);
+  assert.equal(selected[0].itemId, 'word-34');
+  assert.equal(selected.some((question) => question.itemId === 'word-33'), false);
 });
 
 test('familiarity filtering supports multiple levels and precise negative scores', () => {

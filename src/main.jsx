@@ -33,6 +33,7 @@ import {
   Link2,
   LogOut,
   Minus,
+  MoreHorizontal,
   NotebookPen,
   Pencil,
   Pin,
@@ -41,6 +42,7 @@ import {
   Plus,
   RotateCcw,
   Search,
+  Settings,
   Shuffle,
   Sparkles,
   Star,
@@ -166,6 +168,40 @@ async function copyText(text) {
   const copied = document.execCommand('copy');
   textarea.remove();
   if (!copied) throw new Error('瀏覽器不支援複製');
+}
+
+function ActionMenu({ label = '更多', icon: MenuIcon = MoreHorizontal, children, className = '' }) {
+  const detailsRef = useRef(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOutside = (event) => {
+      if (!detailsRef.current?.contains(event.target)) detailsRef.current?.removeAttribute('open');
+    };
+    const closeWithEscape = (event) => {
+      if (event.key === 'Escape') detailsRef.current?.removeAttribute('open');
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeWithEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeWithEscape);
+    };
+  }, [open]);
+
+  return (
+    <details ref={detailsRef} className={`action-menu ${className}`.trim()} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary><MenuIcon size={18} /><span>{label}</span><ChevronDown className="action-menu-chevron" size={15} /></summary>
+      <div className="action-menu-popover" onClick={(event) => {
+        if (event.target.closest('button, a') && !event.target.closest('[data-menu-keep-open]')) {
+          detailsRef.current?.removeAttribute('open');
+        }
+      }}>
+        {children}
+      </div>
+    </details>
+  );
 }
 
 function loadYoutubeIframeApi() {
@@ -2163,6 +2199,43 @@ function getStats(store, id) {
   return { ...stats, score, level: familiarityLevel(score) };
 }
 
+function rankTermQuestionsByFamiliarity(store, questions = []) {
+  const questionIdsByItem = new Map();
+  questions.forEach((question) => {
+    if (!question?.itemId) return;
+    const ids = questionIdsByItem.get(question.itemId) || [];
+    ids.push(question.id);
+    questionIdsByItem.set(question.itemId, ids);
+  });
+  const seenItems = new Set();
+  return questions
+    .filter((question) => {
+      if (question.kind !== 'term' || seenItems.has(question.itemId)) return false;
+      seenItems.add(question.itemId);
+      return true;
+    })
+    .map((question) => ({
+      question,
+      score: aggregateItemStats(store, questionIdsByItem.get(question.itemId) || [question.id]).score,
+    }))
+    .sort((left, right) => (
+      left.score - right.score
+      || compareQuestionsByKoreanAlphabet(left.question, right.question)
+    ));
+}
+
+function lowestFamiliarityTermQuestions(store, questions = [], limit = 30) {
+  return rankTermQuestionsByFamiliarity(store, questions)
+    .slice(0, Math.max(0, limit))
+    .map(({ question }) => question);
+}
+
+function unfamiliarTermQuestionCount(store, questions = []) {
+  return rankTermQuestionsByFamiliarity(store, questions)
+    .filter(({ score }) => score < 0)
+    .length;
+}
+
 function familiarityScore(stats = {}) {
   const correct = Number(stats.correct) || 0;
   const wrong = Number.isFinite(Number(stats.wrong))
@@ -3422,7 +3495,8 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
   const tasks = groupTasks(store, due, today);
   const answeredToday = store.attempts.filter((attempt) => attemptDate(attempt) === today);
   const correctToday = answeredToday.filter((attempt) => attempt.correct).length;
-  const weak = questions.filter((question) => getStats(store, question.id).level === '不熟悉').slice(0, 6);
+  const weak = lowestFamiliarityTermQuestions(store, questions, 30);
+  const unfamiliarCount = unfamiliarTermQuestionCount(store, questions);
   const mastered = questions.filter((question) => getStats(store, question.id).level === '已熟悉').length;
   const progress = totalPending ? Math.max(0, Math.round((answeredToday.length / (answeredToday.length + totalPending)) * 100)) : 100;
   const startNextDailyTask = () => {
@@ -3434,48 +3508,50 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
       <div className="hero">
         <div>
           <span className="eyebrow">Today · {dateLabel(today)}</span>
-          <h1>今天也來練一點韓文</h1>
-          <p>
-            今日有 {due.length} 題到期單字；完成單字測驗即可取得火焰。
-          </p>
-          <div className="actions">
-            <button className="primary" disabled={!totalPending} onClick={startNextDailyTask}><Dumbbell size={18} /> 開始今日測驗</button>
-            <button onClick={() => setAddOpen(true)}><Plus size={18} /> 快速新增單字</button>
+          <h1>今天練韓文</h1>
+          <p>{due.length} 題單字待複習，完成即可取得火焰。</p>
+          <div className="actions home-actions">
+            <button className="primary" disabled={!totalPending} onClick={startNextDailyTask}><Dumbbell size={18} /> 今日測驗</button>
+            <button onClick={() => setAddOpen(true)}><Plus size={18} /> 新增單字</button>
             <button onClick={() => setPracticeCreatorOpen(true)} disabled={optionalPractice.loading}><Plus size={18} /> 新增練習</button>
-            <button onClick={() => setVoiceSettingsOpen(true)}><Volume2 size={18} /> 語音設定</button>
-            <div className="font-scale-control" aria-label="網頁字體大小">
-              <span>字體 {fontScale}%</span>
-              <button type="button" onClick={() => onFontScaleChange((current) => Math.max(FONT_SCALE_MIN, current - 5))} disabled={fontScale <= FONT_SCALE_MIN} title="縮小字體" aria-label="縮小字體"><Minus size={18} /></button>
-              <button type="button" onClick={() => onFontScaleChange((current) => Math.min(FONT_SCALE_MAX, current + 5))} disabled={fontScale >= FONT_SCALE_MAX} title="放大字體" aria-label="放大字體"><Plus size={18} /></button>
-            </div>
-            <label className={`manual-offline-toggle ${offlineMode.manual ? 'active' : ''}`} title="開啟後只使用本機快取，所有修改會在關閉時同步">
-              <span>{offlineMode.manual ? <WifiOff size={18} /> : <Wifi size={18} />} 主動離線</span>
-              <input
-                type="checkbox"
-                role="switch"
-                checked={offlineMode.manual}
-                disabled={offlineMode.switching || offlineMode.preparing}
-                onChange={(event) => offlineMode.toggleManual(event.target.checked).catch(() => {})}
-                aria-label="主動離線模式"
-              />
-              <i aria-hidden="true" />
-            </label>
-            <button
-              onClick={() => offlineMode.prepare().catch(() => {})}
-              disabled={offlineMode.preparing || offlineMode.switching || !offlineMode.online || offlineMode.manual}
-              title={offlineMode.ready?.completedAt ? `上次更新：${new Date(offlineMode.ready.completedAt).toLocaleString('zh-TW')}` : '下載所有文字資料供離線使用'}
-            >
-              <CloudDownload size={18} /> {offlineMode.preparing ? '準備中...' : offlineMode.ready ? '更新離線資料' : '準備離線使用'}
-            </button>
-            {offlineMode.ready && (
+            <ActionMenu label="設定" icon={Settings} className="home-settings-menu">
+              <button type="button" onClick={() => setVoiceSettingsOpen(true)}><Volume2 size={18} /> 語音</button>
+              <div className="font-scale-control menu-control" aria-label="網頁字體大小" data-menu-keep-open>
+                <span>字體 {fontScale}%</span>
+                <button type="button" data-menu-keep-open onClick={() => onFontScaleChange((current) => Math.max(FONT_SCALE_MIN, current - 5))} disabled={fontScale <= FONT_SCALE_MIN} title="縮小字體" aria-label="縮小字體"><Minus size={18} /></button>
+                <button type="button" data-menu-keep-open onClick={() => onFontScaleChange((current) => Math.min(FONT_SCALE_MAX, current + 5))} disabled={fontScale >= FONT_SCALE_MAX} title="放大字體" aria-label="放大字體"><Plus size={18} /></button>
+              </div>
+              <label className={`manual-offline-toggle menu-control ${offlineMode.manual ? 'active' : ''}`} title="開啟後只使用本機快取，所有修改會在關閉時同步">
+                <span>{offlineMode.manual ? <WifiOff size={18} /> : <Wifi size={18} />} 主動離線</span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={offlineMode.manual}
+                  disabled={offlineMode.switching || offlineMode.preparing}
+                  onChange={(event) => offlineMode.toggleManual(event.target.checked).catch(() => {})}
+                  aria-label="主動離線模式"
+                />
+                <i aria-hidden="true" />
+              </label>
               <button
-                onClick={() => offlineMode.prepare({ forceFull: true }).catch(() => {})}
+                type="button"
+                onClick={() => offlineMode.prepare().catch(() => {})}
                 disabled={offlineMode.preparing || offlineMode.switching || !offlineMode.online || offlineMode.manual}
-                title="忽略既有快取，從 Firebase 完整重新下載所有文字資料"
+                title={offlineMode.ready?.completedAt ? `上次更新：${new Date(offlineMode.ready.completedAt).toLocaleString('zh-TW')}` : '下載所有文字資料供離線使用'}
               >
-                <RotateCcw size={18} /> 完整重建離線資料
+                <CloudDownload size={18} /> {offlineMode.preparing ? '準備中...' : offlineMode.ready ? '更新離線資料' : '下載離線資料'}
               </button>
-            )}
+              {offlineMode.ready && (
+                <button
+                  type="button"
+                  onClick={() => offlineMode.prepare({ forceFull: true }).catch(() => {})}
+                  disabled={offlineMode.preparing || offlineMode.switching || !offlineMode.online || offlineMode.manual}
+                  title="忽略既有快取，從 Firebase 完整重新下載所有文字資料"
+                >
+                  <RotateCcw size={18} /> 重新下載全部
+                </button>
+              )}
+            </ActionMenu>
           </div>
         </div>
         <div className="hero-meter">
@@ -3488,12 +3564,12 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
         <Stat icon={<Target />} label="待測驗" value={`${totalPending} 題`} />
         <Stat icon={<Check />} label="今日答對" value={`${correctToday}/${answeredToday.length || 0}`} />
         <Stat icon={<Trophy />} label="已熟悉" value={`${mastered} 題`} />
-        <Stat icon={<Flame />} label="不熟悉" value={`${weak.length} 題`} />
+        <Stat icon={<Flame />} label="不熟悉" value={`${unfamiliarCount} 題`} />
       </div>
 
       {addOpen && (
         <AddItemsModal
-          title="快速新增今天的單字"
+          title="新增單字"
           date={today}
           lockedDate
           allItems={items}
@@ -3573,10 +3649,14 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
             {!tasks.length && !practiceTasks.length && !wrongReview.length && <div className="empty">目前沒有待完成任務</div>}
           </div>
         </div>
-        <div className="panel">
-          <div className="panel-title"><h2>不熟悉清單</h2><span>依答題紀錄更新</span></div>
-          {weak.length ? weak.map((question) => <MiniQuestion key={question.id} question={question} store={store} />) : <div className="empty">還沒有被標記為不熟悉的內容。</div>}
-          <button className="wide" disabled={!weak.length} onClick={() => onPractice(weak, '不熟悉加強')}>測驗不熟悉內容</button>
+        <div className="panel weak-practice-panel">
+          <button
+            className="primary wide"
+            disabled={!weak.length}
+            onClick={() => onPractice(weak, '不熟悉加強', { dueOnly: true, direction: 'ko-zh' })}
+          >
+            <Flame size={18} /> 測驗不熟悉內容 · {weak.length} 題
+          </button>
         </div>
       </div>
     </section>
@@ -3694,12 +3774,14 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, folde
       <div className="topbar">
         <div><span className="eyebrow">Notes · {dateLabel(date)}</span><h1>日期筆記</h1></div>
         <div className="actions notebook-actions">
-          <button className="danger-soft" disabled={!items.length} onClick={deleteDateItems}>刪除這天所有單字</button>
-          <button disabled={!items.length} onClick={() => setExportOpen(true)}><Download size={18} /> 匯出這天單字</button>
-          <button disabled={!items.length} onClick={() => setJsonEditOpen(true)}><Pencil size={18} /> 修改 JSON 內容</button>
-          <button disabled={!questions.length} onClick={() => onPractice(questions, `${date} 測驗`)}><Dumbbell size={18} /> 開始測驗</button>
-          <button disabled={!items.length} onClick={() => onStudy(items, `${date} 學習`)}><BookOpen size={18} /> 開始學習</button>
-          <button className="add-date-button" onClick={() => setAddOpen(true)}><Plus size={18} /> 新增單字</button>
+          <button className="add-date-button" onClick={() => setAddOpen(true)}><Plus size={18} /> 新增</button>
+          <button disabled={!items.length} onClick={() => onStudy(items, `${date} 學習`)}><BookOpen size={18} /> 學習</button>
+          <button className="primary" disabled={!questions.length} onClick={() => onPractice(questions, `${date} 測驗`)}><Dumbbell size={18} /> 測驗</button>
+          <ActionMenu>
+            <button disabled={!items.length} onClick={() => setExportOpen(true)}><Download size={18} /> 匯出 JSON</button>
+            <button disabled={!items.length} onClick={() => setJsonEditOpen(true)}><Pencil size={18} /> 修改 JSON</button>
+            <button className="danger-soft" disabled={!items.length} onClick={deleteDateItems}><Trash2 size={18} /> 刪除本日單字</button>
+          </ActionMenu>
         </div>
       </div>
       {exportOpen && <ExportJsonModal items={items} title={`匯出 ${date} JSON`} onClose={() => setExportOpen(false)} />}
@@ -3717,7 +3799,7 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, folde
       )}
       {addOpen && (
         <AddItemsModal
-          title="新增這一天的單字"
+          title="新增單字"
           date={date}
           lockedDate
           allItems={allItems}
@@ -4164,8 +4246,8 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
       <div className="panel-title">
         <div><h2>{title}</h2><span>{isEditing ? '修改後會覆蓋這筆單字資料' : '可貼上整份 JSON，或手動新增一筆'}</span></div>
         {!importCompleted && <div className="segmented compact">
-          <button type="button" disabled={saving} className={mode === 'manual' ? 'active' : ''} onClick={() => switchMode('manual')}>手動填寫</button>
-          <button type="button" disabled={saving} className={mode === 'json' ? 'active' : ''} onClick={() => switchMode('json')}>{isEditing ? '修改 JSON' : '貼上 JSON'}</button>
+          <button type="button" disabled={saving} className={mode === 'manual' ? 'active' : ''} onClick={() => switchMode('manual')}>表單</button>
+          <button type="button" disabled={saving} className={mode === 'json' ? 'active' : ''} onClick={() => switchMode('json')}>JSON</button>
         </div>}
       </div>
 
@@ -4200,6 +4282,7 @@ function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateR
             requiredFolderIds={isEditing ? [] : requiredFolderIds}
             onToggle={toggleFolder}
             title={isEditing ? '所屬資料夾' : '加入資料夾'}
+            wide={false}
           />
         )}
         {mode === 'manual' ? (
@@ -5609,6 +5692,24 @@ function isSelfGradeAnswerMode(direction, answerMode = 'typing') {
   return direction === 'ko-zh' || answerMode === 'self-grade';
 }
 
+function initialPracticeDirection(practiceSet = {}) {
+  return practiceSet.direction || 'ko-zh';
+}
+
+function practiceMistakeReviewQuestions(questions = [], wrongQuestionIds = []) {
+  const wrongIds = new Set(wrongQuestionIds);
+  const seen = new Set();
+  return questions.filter((question) => {
+    if (!wrongIds.has(question.id)) return false;
+    const reviewKey = question.kind === 'grammar-example'
+      ? `grammar:${question.id}`
+      : `word:${question.itemId || question.source?.id || question.id}`;
+    if (seen.has(reviewKey)) return false;
+    seen.add(reviewKey);
+    return true;
+  });
+}
+
 function shouldAutoPronouncePracticePrompt({ started, recognitionMode, grammarMode, activeDirection, autoPronounce, recognitionWordVisible, revealed, graded, question }) {
   if (!started || !question || revealed || graded) return false;
   if (recognitionMode || grammarMode) return !recognitionWordVisible;
@@ -5618,7 +5719,7 @@ function shouldAutoPronouncePracticePrompt({ started, recognitionMode, grammarMo
 function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onToggleLearned, onToggleUnfamiliar }) {
   const optionalMode = Boolean(set.optionalKind);
   const readingMode = set.optionalKind === 'reading';
-  const [direction, setDirection] = useState(optionalMode ? set.direction : 'zh-ko');
+  const [direction, setDirection] = useState(() => initialPracticeDirection(set));
   const [source, setSource] = useState('term');
   const [starredOnly, setStarredOnly] = useState(false);
   const [randomOrder, setRandomOrder] = useState(true);
@@ -5631,7 +5732,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const dailyWordMode = Boolean(set.dailyReview && !recognitionMode && !grammarMode);
   const configurableWordMode = Boolean(dailyWordMode || set.repeatable);
   const fixedSource = set.termOnly || set.dueOnly || grammarPracticeMode;
-  const activeDirection = recognitionMode || grammarMode || readingMode ? 'ko-zh' : optionalMode ? direction : set.dueOnly && !configurableWordMode ? 'zh-ko' : direction;
+  const activeDirection = recognitionMode || grammarMode || readingMode ? 'ko-zh' : direction;
   const shouldRecordResults = shouldRecordPracticeResults({ ...set, recordResults });
   const canChooseResultRecording = Boolean(set.allowResultRecording && !set.dailyReview);
   const selfGradeMode = isSelfGradeAnswerMode(activeDirection, answerMode);
@@ -5646,6 +5747,8 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const [lastCorrect, setLastCorrect] = useState(null);
   const [typedAttempts, setTypedAttempts] = useState(0);
   const [sessionFinished, setSessionFinished] = useState(false);
+  const [wrongQuestionIds, setWrongQuestionIds] = useState([]);
+  const wrongQuestionIdsRef = useRef(new Set());
   const [completionError, setCompletionError] = useState('');
   const [completionSaving, setCompletionSaving] = useState(false);
   const [markedLearnedIds, setMarkedLearnedIds] = useState(() => new Set());
@@ -5663,6 +5766,17 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const [answerSpeechError, setAnswerSpeechError] = useState('');
   const [optionalSaving, setOptionalSaving] = useState(false);
   const optionalSavingRef = useRef(false);
+  const clearSessionMistakes = () => {
+    wrongQuestionIdsRef.current = new Set();
+    setWrongQuestionIds([]);
+  };
+  const rememberSessionResult = (targetQuestion, correct) => {
+    if (correct || !targetQuestion?.id) return;
+    const next = new Set(wrongQuestionIdsRef.current);
+    next.add(targetQuestion.id);
+    wrongQuestionIdsRef.current = next;
+    setWrongQuestionIds([...next]);
+  };
   const sourceQuestions = useMemo(() => {
     const starredSet = new Set(store.starred || []);
     const applyStarFilter = (list) => (starredOnly ? list.filter((q) => starredSet.has(q.itemId)) : list);
@@ -5699,6 +5813,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     setRemovedUnfamiliarIds((current) => new Set([...current].filter((id) => unfamiliarWordIds.has(id))));
   }, [unfamiliarWordIds]);
   const resetSession = () => {
+    clearSessionMistakes();
     setSessionFinished(false);
     setStarted(false);
     setQuestionQueue([]);
@@ -5729,6 +5844,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
       return;
     }
     setQuestionQueue(nextQuestions);
+    clearSessionMistakes();
     setSessionFinished(false);
     setStarted(true);
     setIndex(0);
@@ -5748,6 +5864,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     if (questionQueue.length) return;
     const nextQuestions = optionalMode || recognitionMode || grammarMode ? sourceQuestions : shuffleReviewQuestionsByKind(sourceQuestions);
     setQuestionQueue(nextQuestions);
+    clearSessionMistakes();
     setStarted(!!nextQuestions.length);
     setIndex(0);
     setInput('');
@@ -5871,8 +5988,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
       }
     }
     if (nextIndex < queue.length) setIndex(nextIndex);
-    else if (set.dueOnly) finishSession();
-    else resetSession();
+    else finishSession();
   };
   // Self-directed tests never alter long-term accuracy. Daily listening rounds
   // still update their dedicated rotation state in the recognition branch.
@@ -5884,6 +6000,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
       setCompletionError('');
       try {
         await set.onOptionalAnswer(question.id, correct);
+        rememberSessionResult(question, correct);
         goNext();
       } catch (error) { setCompletionError(error.message || '練習進度儲存失敗，請重試'); }
       finally { optionalSavingRef.current = false; setOptionalSaving(false); }
@@ -5894,6 +6011,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     } else if (shouldRecordResults) {
       updateStore((current) => recordDailyReviewAnswer(current, question, correct, activeDirection));
     }
+    rememberSessionResult(question, correct);
     if (soundEnabled) playResultSound(correct);
     goNext();
   };
@@ -5904,6 +6022,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     if (shouldRecordResults) {
       updateStore((current) => recordAnswer(current, question, correct));
     }
+    rememberSessionResult(question, correct);
     setGraded(true);
     setLastCorrect(correct);
     if (soundEnabled) playResultSound(correct);
@@ -6045,6 +6164,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   }
 
   if (sessionFinished) {
+    const mistakeQuestions = practiceMistakeReviewQuestions(questionQueue, wrongQuestionIds);
     return (
       <section className="page practice-start">
         <div className="panel start-panel practice-complete-panel">
@@ -6052,6 +6172,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
           <span className="eyebrow">Test complete</span>
           <h1>{`${set.label} 已完成`}</h1>
           <p>這一組的 {questionQueue.length} 題已全部作答。</p>
+          <PracticeMistakeReview questions={mistakeQuestions} />
           {set.repeatable && (
             <button className="primary wide" onClick={startSession}><RotateCcw size={18} /> 再練一次</button>
           )}
@@ -6271,6 +6392,43 @@ function PracticeDecisionBar({ canClassify, isLearned, isUnfamiliar, learnedSavi
       </div>
       {(learnedError || unfamiliarError) && <small className="form-error">{learnedError || unfamiliarError}</small>}
     </div>
+  );
+}
+
+function PracticeMistakeReview({ questions = [] }) {
+  return (
+    <section className="practice-mistake-review" aria-label="錯誤題目檢討">
+      <div className="practice-mistake-review-head">
+        <div>
+          <span className="eyebrow">Review</span>
+          <h2>錯誤單字檢討</h2>
+        </div>
+        <strong>{questions.length} 個</strong>
+      </div>
+      {questions.length ? (
+        <div className="practice-mistake-grid">
+          {questions.map((question) => {
+            const grammarExample = question.kind === 'grammar-example';
+            const korean = grammarExample ? question.ko : question.source?.ko || question.ko;
+            const chinese = grammarExample ? question.zh : question.source?.zh || question.zh;
+            return (
+              <article className="practice-mistake-card" key={question.id}>
+                <div className="practice-mistake-word">
+                  <h3>{korean}</h3>
+                  <KoreanSpeakButton text={korean} />
+                </div>
+                <p>{chinese}</p>
+                {question.kind === 'example' && question.ko !== korean && (
+                  <small><strong>{question.ko}</strong><span>{question.zh}</span></small>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="practice-no-mistakes"><Check size={20} /> 這次沒有答錯的單字</div>
+      )}
+    </section>
   );
 }
 
@@ -6660,12 +6818,12 @@ function NoteCategorySection({ category, notes, query, loading, collapsed, onTog
         <div className="bulk-selection-summary">
           <ListChecks size={19} />
           <strong>{selectedIds.length ? `已選 ${selectedIds.length} 個${meta.item}` : `選取${meta.singular}`}</strong>
-          <button type="button" className="text-link" disabled={!filteredIds.length} onClick={toggleFiltered}>{allFilteredSelected ? '取消選取搜尋結果' : '選取搜尋結果'}</button>
-          {!!selectedIds.length && <button type="button" className="text-link muted-link" onClick={() => setSelectedIds([])}>清除選取</button>}
+          <button type="button" className="text-link" disabled={!filteredIds.length} onClick={toggleFiltered}>{allFilteredSelected ? '取消本頁' : '選取本頁'}</button>
+          {!!selectedIds.length && <button type="button" className="text-link muted-link" onClick={() => setSelectedIds([])}>清除</button>}
         </div>
-        <div className="bulk-action-buttons">
-          <button type="button" className="primary" disabled={!selectedQuestions.length} onClick={() => startGrammarPractice(selectedNotes, `已選 ${selectedNotes.length} 個${meta.item}`)}><Dumbbell size={17} /> 練習 {selectedQuestions.length || 0} 個例句</button>
-        </div>
+        {!!selectedIds.length && <div className="bulk-action-buttons">
+          <button type="button" className="primary" disabled={!selectedQuestions.length} onClick={() => startGrammarPractice(selectedNotes, `已選 ${selectedNotes.length} 個${meta.item}`)}><Dumbbell size={17} /> 練習 ({selectedQuestions.length || 0})</button>
+        </div>}
       </div>
       {actionError && <div className="form-error">{actionError}</div>}
       {loading ? (
@@ -6904,11 +7062,13 @@ function ReadingTestsPage({ tests, error, onSave, onSaveMany, onDelete, onOpen }
       <div className="topbar">
         <div><span className="eyebrow">Reading Practice</span><h1>閱讀測驗</h1></div>
         <div className="actions notebook-actions">
-          <button type="button" className={`learned-visibility-button ${hideLearned ? 'active' : ''}`} aria-pressed={hideLearned} title={`${hideLearned ? '目前隱藏' : '目前顯示'} ${learnedCount} 個已學習題目`} onClick={() => setHideLearned((current) => !current)}>
-            {hideLearned ? <EyeOff size={18} /> : <Eye size={18} />}{hideLearned ? '隱藏已學習' : '顯示已學習'}
-          </button>
-          <button type="button" onClick={copyJsonFormat}><Copy size={18} /> {formatCopied ? '已複製格式' : '複製 JSON 格式'}</button>
-          <button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 匯入閱讀題</button>
+          <button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 匯入題目</button>
+          <ActionMenu>
+            <button type="button" className={`learned-visibility-button ${hideLearned ? 'active' : ''}`} aria-pressed={hideLearned} title={`${hideLearned ? '目前隱藏' : '目前顯示'} ${learnedCount} 個已學習題目`} onClick={() => setHideLearned((current) => !current)}>
+              {hideLearned ? <EyeOff size={18} /> : <Eye size={18} />}{hideLearned ? '隱藏已學習' : '顯示已學習'}
+            </button>
+            <button type="button" onClick={copyJsonFormat}><Copy size={18} /> {formatCopied ? '已複製格式' : '複製 JSON 格式'}</button>
+          </ActionMenu>
         </div>
       </div>
       <label className="search grammar-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋韓文文章、題目、選項或中文翻譯" /></label>
@@ -7198,7 +7358,7 @@ function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onUp
       <div className="topbar">
         <div><span className="eyebrow">Reading Practice</span><h1>閱讀題</h1></div>
         <div className="actions notebook-actions">
-          <button type="button" className={`learned-visibility-button ${test.learned ? 'active' : ''}`} aria-pressed={test.learned} onClick={toggleLearned}>{test.learned ? <Check size={18} /> : <BookOpen size={18} />}{test.learned ? '已學習' : '標記已學習'}</button>
+          <button type="button" className={`learned-visibility-button ${test.learned ? 'active' : ''}`} aria-pressed={test.learned} title={test.learned ? '取消已學習' : '標記已學習'} onClick={toggleLearned}>{test.learned ? <Check size={18} /> : <BookOpen size={18} />}已學習</button>
           <button type="button" onClick={() => setEditing(true)}><Pencil size={17} /> 編輯</button>
           <button type="button" className="delete-icon-button" onClick={deleteTest}><Trash2 size={17} /> 刪除</button>
         </div>
@@ -7357,17 +7517,19 @@ function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, onOpen }) {
       <div className="topbar">
         <div><span className="eyebrow">YouTube Subtitles</span><h1>YT 字幕</h1></div>
         <div className="actions notebook-actions">
-          <button
-            type="button"
-            className={`learned-visibility-button ${hideLearned ? 'active' : ''}`}
-            aria-pressed={hideLearned}
-            title={`${hideLearned ? '目前隱藏' : '目前顯示'} ${learnedCount} 個已學習字幕檔案`}
-            onClick={() => setHideLearned((current) => !current)}
-          >
-            {hideLearned ? <EyeOff size={18} /> : <Eye size={18} />}
-            {hideLearned ? '隱藏已學習' : '顯示已學習'}
-          </button>
-          <button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 新增字幕筆記</button>
+          <button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 新增字幕</button>
+          <ActionMenu>
+            <button
+              type="button"
+              className={`learned-visibility-button ${hideLearned ? 'active' : ''}`}
+              aria-pressed={hideLearned}
+              title={`${hideLearned ? '目前隱藏' : '目前顯示'} ${learnedCount} 個已學習字幕檔案`}
+              onClick={() => setHideLearned((current) => !current)}
+            >
+              {hideLearned ? <EyeOff size={18} /> : <Eye size={18} />}
+              {hideLearned ? '隱藏已學習' : '顯示已學習'}
+            </button>
+          </ActionMenu>
         </div>
       </div>
       <label className="search grammar-search">
@@ -8015,7 +8177,7 @@ function WordFolderTags({ itemId, folders = [] }) {
   );
 }
 
-function FolderPickerDropdown({ folders, selectedFolderIds, requiredFolderIds = [], onToggle, showCounts = false, title = '加入資料夾' }) {
+function FolderPickerDropdown({ folders, selectedFolderIds, requiredFolderIds = [], onToggle, showCounts = false, title = '加入資料夾', wide = true }) {
   const selectedSet = new Set(selectedFolderIds);
   const requiredSet = new Set(requiredFolderIds);
   const orderedFolders = selectedFoldersFirst(folders, selectedFolderIds);
@@ -8027,7 +8189,7 @@ function FolderPickerDropdown({ folders, selectedFolderIds, requiredFolderIds = 
     : '尚未選擇';
 
   return (
-    <details className="wide-field folder-picker-dropdown">
+    <details className={`${wide ? 'wide-field ' : ''}folder-picker-dropdown`}>
       <summary>
         <span className="folder-picker-dropdown-title"><Folder size={17} /><strong>{title}</strong><small>選填</small></span>
         <span className="folder-picker-dropdown-summary">{summary}</span>
@@ -8121,7 +8283,7 @@ function FolderAssignmentModal({ folders, wordIds, onAssign, onCreateFolderAndAs
         {error && <div className="form-error">{error}</div>}
         <div className="form-actions">
           <button type="button" onClick={() => onClose(false)} disabled={saving}>取消</button>
-          <button className="primary" disabled={!selectedFolderIds.length || saving}>{savingAction === 'existing' ? '加入中' : '加入所選資料夾'}</button>
+          <button className="primary" disabled={!selectedFolderIds.length || saving}>{savingAction === 'existing' ? '加入中' : '加入所選'}</button>
         </div>
       </form>
     </div>
@@ -8168,14 +8330,14 @@ function BulkWordActions({ selectedIds, visibleIds, folders, onSelectionChange, 
         <div className="bulk-selection-summary">
           <ListChecks size={19} />
           <strong>{selectedIds.length ? `已選 ${selectedIds.length} 個` : '批次選取'}</strong>
-          <button type="button" className="text-link" disabled={!visibleIds.length || !!busyAction} onClick={toggleVisible}>{allVisibleSelected ? '取消選取本頁' : '選取本頁'}</button>
-          {!!selectedIds.length && <button type="button" className="text-link muted-link" disabled={!!busyAction} onClick={() => onSelectionChange([])}>清除選取</button>}
+          <button type="button" className="text-link" disabled={!visibleIds.length || !!busyAction} onClick={toggleVisible}>{allVisibleSelected ? '取消本頁' : '選取本頁'}</button>
+          {!!selectedIds.length && <button type="button" className="text-link muted-link" disabled={!!busyAction} onClick={() => onSelectionChange([])}>清除</button>}
         </div>
-        <div className="bulk-action-buttons">
+        {!!selectedIds.length && <div className="bulk-action-buttons">
           <button type="button" disabled={!selectedIds.length || !!busyAction} onClick={() => setAssignOpen(true)}><FolderInput size={17} /> 加入資料夾</button>
-          {currentFolder && <button type="button" disabled={!selectedIds.length || !!busyAction} onClick={removeFromFolder}><X size={17} /> {busyAction === 'remove' ? '移除中' : '僅從這個資料夾移除'}</button>}
-          <button type="button" className="danger-soft" disabled={!selectedIds.length || !!busyAction} onClick={permanentlyDelete}><Trash2 size={17} /> {busyAction === 'delete' ? '刪除中' : '永久刪除單字'}</button>
-        </div>
+          {currentFolder && <button type="button" disabled={!selectedIds.length || !!busyAction} onClick={removeFromFolder} title="只從目前資料夾移除，保留單字卡"><X size={17} /> {busyAction === 'remove' ? '移除中' : '移出資料夾'}</button>}
+          <button type="button" className="danger-soft" disabled={!selectedIds.length || !!busyAction} onClick={permanentlyDelete} title="從單字本與所有資料夾永久刪除"><Trash2 size={17} /> {busyAction === 'delete' ? '刪除中' : '永久刪除'}</button>
+        </div>}
       </div>
       {error && <div className="form-error bulk-action-error">{error}</div>}
       {assignOpen && (
@@ -8466,13 +8628,15 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
       <div className="topbar">
         <div><span className="eyebrow">Folder · {folderTagLabel(folder)} · {folderItems.length} 個單字</span><h1>{folder.name}</h1></div>
         <div className="actions notebook-actions">
-          <button onClick={() => setRenameOpen(true)}><Pencil size={18} /> {isSystemFolder(folder) ? '編輯標籤' : '編輯資料夾'}</button>
-          <button onClick={() => setExportOpen(true)} disabled={!folderItems.length}><Download size={18} /> 匯出 JSON</button>
-          <button onClick={() => setAddExistingOpen(true)}><Link2 size={18} /> 加入現有單字</button>
-          <button onClick={() => setAddOpen(true)}><Plus size={18} /> 新增單字</button>
+          <button onClick={() => setAddOpen(true)}><Plus size={18} /> 新增</button>
           <button onClick={() => onStudy(folderItems, `${folder.name} 學習`)} disabled={!folderItems.length}><BookOpen size={18} /> 學習</button>
           <button className="primary" onClick={() => onPractice(folderQuestions, `${folder.name} 測驗`, { allowResultRecording: true })} disabled={!folderQuestions.length}><Dumbbell size={18} /> 測驗</button>
-          {!isSystemFolder(folder) && <button className="danger-soft" onClick={deleteFolder}><Trash2 size={17} /> 刪除資料夾</button>}
+          <ActionMenu>
+            <button onClick={() => setAddExistingOpen(true)}><Link2 size={18} /> 加入現有單字</button>
+            <button onClick={() => setRenameOpen(true)}><Pencil size={18} /> {isSystemFolder(folder) ? '編輯標籤' : '編輯資料夾'}</button>
+            <button onClick={() => setExportOpen(true)} disabled={!folderItems.length}><Download size={18} /> 匯出 JSON</button>
+            {!isSystemFolder(folder) && <button className="danger-soft" onClick={deleteFolder}><Trash2 size={17} /> 刪除資料夾</button>}
+          </ActionMenu>
         </div>
       </div>
       <div className="word-search-tools folder-word-search">
@@ -8617,21 +8781,23 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
       <div className="topbar">
         <div><span className="eyebrow">Notebook</span><h1>單字本</h1></div>
         <div className="actions notebook-actions">
-          <button
-            type="button"
-            className={`learned-visibility-button ${showLearned ? 'active' : ''}`}
-            aria-pressed={showLearned}
-            title={`${showLearned ? '目前顯示' : '目前隱藏'} ${learnedWordIds.size} 個已學習單字`}
-            onClick={() => setShowLearned((current) => !current)}
-          >
-            {showLearned ? <Eye size={18} /> : <EyeOff size={18} />}
-            {showLearned ? '顯示已學習' : '隱藏已學習'}
-          </button>
-          <button onClick={() => setExportOpen(true)}><Download size={18} /> 匯出 JSON</button>
-          <button onClick={() => setJsonEditOpen(true)}><Pencil size={18} /> 修改 JSON</button>
-          <button className="add-date-button" onClick={() => setAddOpen(true)}><Plus size={18} /> 新增單字</button>
-          <button onClick={() => onStudy(enriched, '篩選結果')}><BookOpen size={18} /> 學習篩選結果</button>
-          <button className="primary" onClick={() => onPractice(practiceQuestions, '篩選結果測驗', { allowResultRecording: true })}><Dumbbell size={18} /> 測驗篩選結果</button>
+          <button className="add-date-button" onClick={() => setAddOpen(true)}><Plus size={18} /> 新增</button>
+          <button onClick={() => onStudy(enriched, '篩選結果')} disabled={!enriched.length} title="學習目前篩選出的單字"><BookOpen size={18} /> 學習</button>
+          <button className="primary" onClick={() => onPractice(practiceQuestions, '篩選結果測驗', { allowResultRecording: true })} disabled={!practiceQuestions.length} title="測驗目前篩選出的單字"><Dumbbell size={18} /> 測驗</button>
+          <ActionMenu>
+            <button
+              type="button"
+              className={`learned-visibility-button ${showLearned ? 'active' : ''}`}
+              aria-pressed={showLearned}
+              title={`${showLearned ? '目前顯示' : '目前隱藏'} ${learnedWordIds.size} 個已學習單字`}
+              onClick={() => setShowLearned((current) => !current)}
+            >
+              {showLearned ? <Eye size={18} /> : <EyeOff size={18} />}
+              {showLearned ? '顯示已學習' : '隱藏已學習'}
+            </button>
+            <button onClick={() => setExportOpen(true)}><Download size={18} /> 匯出 JSON</button>
+            <button onClick={() => setJsonEditOpen(true)}><Pencil size={18} /> 修改 JSON</button>
+          </ActionMenu>
         </div>
       </div>
       {exportOpen && <ExportJsonModal items={items} onClose={() => setExportOpen(false)} />}
@@ -8666,9 +8832,9 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
           onClear={() => setSelectedFolderIds([])}
         />
         <select value={sort} onChange={(e) => setSort(e.target.value)}>
-          <option value="default">最新加入優先</option>
-          <option value="alphabetical">韓文字母順序</option>
-          <option value="score">熟悉分數低優先</option>
+          <option value="default">最新</option>
+          <option value="alphabetical">韓文字母</option>
+          <option value="score">低分優先</option>
         </select>
       </div>
       {addOpen && (
@@ -8749,11 +8915,6 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
   );
 }
 
-function MiniQuestion({ question, store }) {
-  const stats = getStats(store, question.id);
-  return <div className="mini"><strong>{question.ko}</strong><span>{question.zh}</span><MasteryBadge level={stats.level} /></div>;
-}
-
 function WordCard({ item, folders = [], onEdit, onDelete, onOpen, isStarred = false, onToggleStar, selectable = false, selected = false, onToggleSelected }) {
   return (
     <article className={`word-card clickable-card ${selected ? 'selected-word-card' : ''}`} onClick={() => onOpen(item)}>
@@ -8792,6 +8953,7 @@ export {
   matchesFamiliarityLevels,
   folderFilterWordIds,
   folderMembershipChanges,
+  initialPracticeDirection,
   formatSingleWordJson,
   parseSingleWordEditJson,
   selectedFoldersFirst,
@@ -8815,6 +8977,7 @@ export {
   isUnfamiliarFolder,
   isSystemFolder,
   itemMatchesSearch,
+  lowestFamiliarityTermQuestions,
   compareItemsByKoreanAlphabet,
   normalizeKoreanKey,
   normalizeRecords,
@@ -8825,6 +8988,7 @@ export {
   parseYoutubeSubtitleSrt,
   parsePairLines,
   practiceAnswerSpeech,
+  practiceMistakeReviewQuestions,
   formatReadingTestsJson,
   normalizeReadingTest,
   nextRecognitionRevealState,
