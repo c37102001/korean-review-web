@@ -942,7 +942,199 @@ terminal_app/ui/
 - Emulator suite 新增穩態增量讀取預算與多 client merge，所有 fixture 使用獨立測試 project。
 - CI 分開呈現 Web、Terminal、architecture、Emulator 與 build 的失敗範圍，部署不接觸測試帳號。
 
-## 20. 每階段的固定執行流程
+## 20. 後續收尾計畫（Phase 15～18）
+
+Phase 1～14 已完成資料層、domain、共用元件、entry、bundle 與 CI 的主要邊界；但目前仍有三個大型 owner，且視覺回歸尚未真正自動化。以下階段是這輪架構重構的收尾工作，不應以「把原檔整份搬到另一個檔案」取代責任拆分。
+
+### Phase 15：Web App orchestration 完整拆分
+
+**狀態：待實作**
+
+目前問題：
+
+- `src/app/App.jsx` 約 2,400 行，仍同時負責 authentication、offline lifecycle、資料組裝、頁面 routing、modal state 與大量 mutation callbacks。
+- feature page 雖已抽離一部分，仍有不少頁面與對話框只能透過 App 的大量 props 運作。
+- 修改單一流程時仍可能影響其他不相關頁面，且 App 很難用小型 fixture 測試。
+
+目標結構：
+
+```text
+src/app/
+├── App.jsx
+├── AppRouter.jsx
+├── AppProviders.jsx
+├── controllers/
+│   ├── useAuthController.js
+│   ├── useOfflineController.js
+│   └── useDialogController.js
+└── pages/
+    ├── HomePage.jsx
+    └── CalendarPage.jsx
+
+src/features/
+├── word-library/pages/
+├── folders/pages/
+└── word-import/dialogs/
+```
+
+工作：
+
+- `App.jsx` 只保留 provider composition、route selection 與全域 error boundary。
+- authentication、speech preferences、offline preparation/sync 各自移入 controller/provider。
+- 首頁、日曆、單字本、資料夾及其 detail page 由 feature 擁有，不在 App 內宣告大型 page component。
+- 新增／編輯／匯入／刪除 modal 移到對應 feature，由 typed dialog state 或明確 action 開啟。
+- mutation callback 優先呼叫 service/repository command，避免 UI 組裝 Firestore payload。
+- 刪除所有搬移後的舊 implementation，不保留 re-export 以外的雙軌版本。
+
+驗收：
+
+- `src/app/App.jsx` <= 500 行，且不直接 import `firebase/auth` 或 `firebase/firestore`。
+- App 不包含超過 80 行的 page/modal component。
+- feature pages 可用 fake controller/repository render，不需初始化 Firebase。
+- 現有 navigation、離線模式、登入與所有 modal 行為維持不變。
+- architecture test 阻止 App 再次直接取得 Firestore SDK。
+
+建議 commit：`refactor web app orchestration`
+
+### Phase 16：Terminal screens 真正拆分
+
+**狀態：待實作**
+
+目前問題：
+
+- `terminal_review_practice.py` 已是小型相容入口，但 `terminal_app/app.py` 仍約 4,600 行。
+- Phase 12 建立了 navigation contract、screen protocol 與 scroll model，但大多數 curses 畫面尚未搬入 `terminal_app/ui/screens/`。
+- screen、domain command、audio lifecycle 與 repository 呼叫仍可能在同一函式中交錯。
+
+目標結構：
+
+```text
+terminal_app/
+├── app.py
+├── services.py
+└── ui/
+    ├── navigation.py
+    ├── primitives.py
+    ├── controllers/
+    │   ├── answer_details.py
+    │   ├── audio_controls.py
+    │   └── classification.py
+    └── screens/
+        ├── home.py
+        ├── calendar.py
+        ├── notebook.py
+        ├── folders.py
+        ├── study.py
+        ├── practice.py
+        ├── notes.py
+        └── subtitles.py
+```
+
+工作：
+
+- 依序搬移 home、collection menus、study、practice、notes、subtitles，每次只移動一個可驗證流程。
+- screen 只接收 application service/domain data，不直接知道 REST payload、cache path 或 subprocess。
+- Study／Practice 共用 answer details、scroll、audio 與 classification controllers。
+- 所有 screen 以 `ScreenResult` 回傳 push/back/complete/exit，不以巢狀函式直接跳轉多層。
+- `terminal_app/app.py` 最終只負責 CLI parsing、dependency injection、login 與 top-level loop。
+- compatibility entry 的 import/monkeypatch 行為及既有 `--offline`、`--sync` 介面不得改變。
+
+驗收：
+
+- `terminal_app/app.py` <= 600 行；個別 screen 建議 <= 700 行。
+- 每個 screen 都有 fake window、fake service 測試 Esc、上下移動／捲動、完成 callback 與錯誤狀態。
+- domain、repository 與 audio tests 不 import curses；screen tests 不連網、不播放實際音訊。
+- Terminal 全套測試及 Web／Terminal review contract parity tests 通過。
+- file-size report 對 `terminal_app/app.py` 的限制由 warning 改成 failure。
+
+建議 commit：`extract terminal screen modules`
+
+### Phase 17：Session UI 分拆與共用互動元件
+
+**狀態：待實作**
+
+目前問題：
+
+- `src/features/sessions/SessionPages.jsx` 約 1,200 行，Study 與 Practice 雖已有 feature owner，仍集中在同一大型檔案。
+- 卡片導航、語音、答案詳情、分類按鈕與結果檢討存在高度相似的 UI lifecycle。
+
+目標結構：
+
+```text
+src/features/sessions/
+├── shared/
+│   ├── SessionToolbar.jsx
+│   ├── SessionWordDetails.jsx
+│   ├── ClassificationActions.jsx
+│   ├── useSessionAudio.js
+│   └── useCardNavigation.js
+├── study/
+│   ├── StudyPage.jsx
+│   ├── StudyCard.jsx
+│   └── useStudyController.js
+└── practice/
+    ├── PracticePage.jsx
+    ├── PracticePrompt.jsx
+    ├── AnswerPanel.jsx
+    ├── MistakeReview.jsx
+    └── usePracticeController.js
+```
+
+工作：
+
+- Study 與 Practice 維持不同 controller，不以大量 boolean props 合併成一個萬用頁面。
+- 抽取真正共享的 presentation 與 interaction hooks；SRS 寫入仍由 session policy 決定。
+- 語音取消、wake lock、鍵盤操作、mobile double-tap 與 scroll behavior 都由單一 hook/owner 管理。
+- 錯題檢討、重練與完成畫面拆成可獨立測試元件。
+
+驗收：
+
+- 不再存在 `SessionPages.jsx` 聚合實作；入口檔只允許小型 exports。
+- Study/Practice page 各 <= 500 行，共用元件不依賴具體 session kind 的隱性條件。
+- 每個 keyboard/touch/audio action 都有 controller test，daily 與 optional persistence policy 維持隔離。
+- file-size report 對 session page 上限改成 failure。
+
+建議 commit：`split study and practice session ui`
+
+### Phase 18：CSS ownership 與自動化視覺回歸收尾
+
+**狀態：待實作**
+
+目前問題：
+
+- CSS 已依區域拆檔，但主要是保留原 cascade 的結構性拆分，仍需確認 selector 是否由正確 feature 擁有。
+- responsive rules 仍集中於 `responsive.css`，同一元件的 desktop/mobile 規則可能分散。
+- 尚未建立可重現的 Playwright authenticated fixture 與 screenshot baselines。
+
+工作：
+
+- 將 responsive rules 移回其元件／feature stylesheet，合併重複 media queries。
+- 清除深層 page ancestor override；canonical component 只由自身 class、variant 或 data attribute 控制。
+- 建立完全不連 production Firebase 的 fixture，以 repository fakes 提供固定單字、資料夾、筆記、字幕及測驗資料。
+- 建立 360px、390px、desktop baselines：WordCard、單字本、資料夾、Study、Practice、YT reader、筆記與閱讀測驗。
+- 加入 overflow、按鈕重疊、文字截斷與核心互動 assertions，不只比較 screenshot。
+- 視覺測試獨立成 CI job，失敗時上傳 diff artifacts。
+
+驗收：
+
+- 同一 canonical component 的基礎 selector 只存在於一個 owner stylesheet。
+- 360px 與 390px 無非預期水平 overflow、控制項重疊或韓文單字被 action icons 擠成直排。
+- Playwright fixture 不含 production API key/account，不產生任何 Firestore quota。
+- screenshot baselines 可在 CI 穩定重現，差異會阻止 merge。
+- 本機具備 Java 時完整跑過 Emulator suite，並確認 CI 的 Emulator 與 visual jobs 均成功。
+
+建議 commit：`add visual regression and css ownership`
+
+## 21. 後續階段執行原則
+
+1. 先為待搬流程增加 characterization test，再搬 owner；不可先刪除後憑印象重寫。
+2. 大型檔案減少的行數必須在同一 commit 中可追蹤到新 owner，不能以移除功能換取行數。
+3. 每個 Phase 完成後獨立 non-amend commit，並記錄實際行數、bundle 與測試結果。
+4. Phase 15～17 每完成一個子頁面就刪除原 implementation，禁止長期維持兩套 caller。
+5. Phase 18 的 screenshot update 必須人工檢視，不可因 CI 失敗直接無條件更新 baseline。
+6. 若拆分只形成另一個超過門檻的大檔案，該 Phase 不視為完成。
+
+## 22. 每階段的固定執行流程
 
 1. 先建立 characterization test，紀錄搬移前輸出與互動。
 2. 建立新 owner，先搬 pure logic，再搬 controller，最後搬 UI。
@@ -952,7 +1144,7 @@ terminal_app/ui/
 6. 更新本指南中該 Phase 的 checklist 與實際差異。
 7. 一個 Phase 完成後自動建立一個 non-amend commit，再開始下一階段。
 
-## 21. Definition of Done
+## 23. Definition of Done
 
 整體模組化重構只有在以下條件全數達成後才算完成：
 
@@ -964,3 +1156,7 @@ terminal_app/ui/
 - desktop/mobile 核心流程有自動化視覺與互動回歸。
 - Firestore Emulator 證明正常啟動、增量同步與單次作答符合 read/write budget。
 - 架構 boundary tests 與 CI 能阻止責任重新集中到入口檔。
+- `src/app/App.jsx` <= 500 行，且不直接依賴 Firebase SDK。
+- `terminal_app/app.py` <= 600 行，所有主要 screen 有獨立 owner 與 fake-based tests。
+- Study 與 Practice 不再集中於單一大型 `SessionPages.jsx`。
+- CSS selector ownership 與 360px／390px／desktop Playwright baselines 已由 CI 強制執行。
