@@ -2,11 +2,29 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { createRoot } from 'react-dom/client';
 import { useOptionalPractice } from './practice/optionalPractice.js';
 import { EditIconButton, KoreanSpeakButton, StarButton } from './components/actions/ContentActionButtons.jsx';
+import { FolderPickerDropdown } from './features/word-library/components/BulkWordActions.jsx';
+import { GroupedFolderMultiSelect, MultiSelectFilter, SearchScopeControl } from './features/word-library/components/WordCollectionFilters.jsx';
+import { WordCollectionView } from './features/word-library/components/WordCollectionView.jsx';
 import {
-  WordCard,
   WordDetailCard,
   WordDetails,
 } from './features/word-library/components/WordPresentation.jsx';
+import {
+  aggregateItemStats,
+  compareItemsByKoreanAlphabet,
+  FAMILIARITY_FILTER_OPTIONS,
+  familiarityLevel,
+  familiarityScore,
+  filterItemsByFolderSelection,
+  folderFilterWordIds,
+  folderMembershipChanges,
+  itemMatchesSearch,
+  matchesFamiliarityLevels,
+  selectedFoldersFirst,
+  wordFolderIds,
+} from './features/word-library/collection/model.js';
+import { useWordCollection } from './features/word-library/hooks/useWordCollection.js';
+import { useWordCollectionDialogs } from './features/word-library/hooks/useWordCollectionDialogs.js';
 import {
   ArrowDown,
   ArrowUp,
@@ -2226,110 +2244,6 @@ function unfamiliarTermQuestionCount(store, questions = []) {
     .length;
 }
 
-function familiarityScore(stats = {}) {
-  const correct = Number(stats.correct) || 0;
-  const wrong = Number.isFinite(Number(stats.wrong))
-    ? Number(stats.wrong)
-    : Math.max(0, (Number(stats.total) || 0) - correct);
-  return correct - wrong;
-}
-
-function familiarityLevel(score) {
-  if (score < 0) return '不熟悉';
-  if (score >= 5) return '已熟悉';
-  if (score >= 3) return '熟悉';
-  return '學習中';
-}
-
-const FAMILIARITY_FILTER_OPTIONS = [
-  { value: 'score-negative-1', label: '熟悉度 -1' },
-  { value: 'score-negative-2', label: '熟悉度 -2' },
-  { value: 'score-negative-3', label: '熟悉度 -3' },
-  { value: 'score-negative-4-or-less', label: '熟悉度 -4 以下' },
-  { value: '學習中', label: '學習中' },
-  { value: '熟悉', label: '熟悉' },
-  { value: '已熟悉', label: '已熟悉' },
-];
-
-function familiarityFilterValue(level, score) {
-  if (level !== '不熟悉') return level;
-  if (score === -1) return 'score-negative-1';
-  if (score === -2) return 'score-negative-2';
-  if (score === -3) return 'score-negative-3';
-  return 'score-negative-4-or-less';
-}
-
-function matchesFamiliarityLevels(level, selectedLevels = [], score = 0) {
-  return !selectedLevels.length || selectedLevels.includes(familiarityFilterValue(level, score));
-}
-
-function folderFilterWordIds(folders = [], selectedFolderIds = []) {
-  if (!selectedFolderIds.length) return null;
-  const selected = new Set(selectedFolderIds);
-  return new Set(
-    folders
-      .filter((folder) => selected.has(folder.id))
-      .flatMap((folder) => folder.wordIds || []),
-  );
-}
-
-const UNFILED_FOLDER_FILTER_ID = '__unfiled__';
-
-function filterItemsByFolderSelection(items = [], folders = [], selectedFolderIds = []) {
-  if (!selectedFolderIds.length) return items;
-  const selected = new Set(selectedFolderIds);
-  const selectedFolderWordIds = folderFilterWordIds(
-    folders,
-    selectedFolderIds.filter((folderId) => folderId !== UNFILED_FOLDER_FILTER_ID),
-  ) || new Set();
-  const allFolderWordIds = selected.has(UNFILED_FOLDER_FILTER_ID)
-    ? new Set(folders.flatMap((folder) => folder.wordIds || []))
-    : null;
-
-  return items.filter((item) => (
-    selectedFolderWordIds.has(item.id)
-    || (allFolderWordIds && !allFolderWordIds.has(item.id))
-  ));
-}
-
-function wordFolderIds(folders = [], wordId) {
-  if (!wordId) return [];
-  return folders
-    .filter((folder) => (folder.wordIds || []).includes(wordId))
-    .map((folder) => folder.id);
-}
-
-function selectedFoldersFirst(folders = [], selectedFolderIds = []) {
-  const selected = new Set(selectedFolderIds);
-  return folders
-    .map((folder, index) => ({ folder, index }))
-    .sort((left, right) => (
-      Number(selected.has(right.folder.id)) - Number(selected.has(left.folder.id))
-      || left.index - right.index
-    ))
-    .map(({ folder }) => folder);
-}
-
-function folderMembershipChanges(folders = [], wordId, desiredFolderIds = []) {
-  const currentSet = new Set(wordFolderIds(folders, wordId));
-  const desiredSet = new Set(desiredFolderIds);
-  return {
-    add: [...desiredSet].filter((folderId) => !currentSet.has(folderId)),
-    remove: [...currentSet].filter((folderId) => !desiredSet.has(folderId)),
-  };
-}
-
-function aggregateItemStats(store, questionIds) {
-  const stats = questionIds.map((id) => getStats(store, id));
-  const total = stats.reduce((sum, current) => sum + (current.total || 0), 0);
-  const correct = stats.reduce((sum, current) => sum + (current.correct || 0), 0);
-  const wrong = stats.reduce((sum, current) => (
-    sum + (Number.isFinite(Number(current.wrong)) ? Number(current.wrong) : Math.max(0, (current.total || 0) - (current.correct || 0)))
-  ), 0);
-  const score = correct - wrong;
-  return { total, correct, wrong, score, level: familiarityLevel(score) };
-}
-
 function getProgress(store, question) {
   const saved = store.progress[question.id];
   if (saved) return saved;
@@ -3789,65 +3703,34 @@ function CalendarPage({ store, items, selectedDate, setSelectedDate, onOpenNotes
 }
 
 function NotesPage({ store, updateStore, items, questions, date, allItems, folders = [], onAssignFolders, onCreateFolderAndAssign, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords }) {
-  const [addOpen, setAddOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [jsonEditOpen, setJsonEditOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState(null);
-  const [viewingItem, setViewingItem] = useState(null);
-  const [selectedIds, setSelectedIds] = useState([]);
-  const [selectedFolderIds, setSelectedFolderIds] = useState([]);
   const starredSet = new Set(store.starred || []);
-  const itemQuestionIds = useMemo(
-    () => new Map(items.map((item) => [item.id, questions.filter((question) => question.itemId === item.id).map((question) => question.id)])),
-    [items, questions],
-  );
-  const enrichedItems = useMemo(() => items.map((item) => ({
-    ...item,
-    ...aggregateItemStats(store, itemQuestionIds.get(item.id) || [item.id]),
-  })), [items, itemQuestionIds, store]);
-  const filteredItems = useMemo(
-    () => filterItemsByFolderSelection(enrichedItems, folders, selectedFolderIds),
-    [enrichedItems, folders, selectedFolderIds],
-  );
-  const filteredItemIds = useMemo(() => new Set(filteredItems.map((item) => item.id)), [filteredItems]);
-  const filteredQuestions = questions.filter((question) => filteredItemIds.has(question.itemId));
-  const unfiledCount = useMemo(() => {
-    const assignedWordIds = new Set(folders.flatMap((folder) => folder.wordIds || []));
-    return items.filter((item) => !assignedWordIds.has(item.id)).length;
-  }, [items, folders]);
-  const toggleSelected = (itemId) => setSelectedIds((current) => (
-    current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]
-  ));
-  const toggleFolderFilter = (folderId) => setSelectedFolderIds((current) => (
-    current.includes(folderId) ? current.filter((id) => id !== folderId) : [...current, folderId]
-  ));
-  const toggleFolderTag = (folderIds) => setSelectedFolderIds((current) => toggleFolderGroupSelection(current, folderIds));
+  const collection = useWordCollection({
+    items,
+    questions,
+    store,
+    folders,
+    sourceKey: date,
+    resetFolderFiltersOnSourceChange: true,
+  });
+  const dialogs = useWordCollectionDialogs(date);
+  const toggleFolderTag = (folderIds) => collection.setSelectedFolderIds((current) => toggleFolderGroupSelection(current, folderIds));
   const deleteDateItems = async () => {
     if (!items.length) return;
     const confirmed = window.confirm(`確定要刪除 ${date} 的 ${items.length} 筆單字嗎？這不會刪除其他日期的單字。`);
     if (!confirmed) return;
     await onDeleteRecords(items.map((item) => item.id));
-    setSelectedIds([]);
+    collection.setSelectedIds([]);
   };
-  useEffect(() => {
-    setSelectedIds([]);
-    setSelectedFolderIds([]);
-  }, [date]);
-
-  useEffect(() => {
-    const availableFolderIds = new Set([UNFILED_FOLDER_FILTER_ID, ...folders.map((folder) => folder.id)]);
-    setSelectedFolderIds((current) => current.filter((folderId) => availableFolderIds.has(folderId)));
-  }, [folders]);
-
-  useEffect(() => setSelectedIds([]), [selectedFolderIds]);
   return (
     <section className="page">
       <div className="topbar">
         <div><span className="eyebrow">Notes · {dateLabel(date)}</span><h1>日期筆記</h1></div>
         <div className="actions notebook-actions">
-          <button className="add-date-button" onClick={() => setAddOpen(true)}><Plus size={18} /> 新增</button>
-          <button disabled={!filteredItems.length} onClick={() => onStudy(filteredItems, `${date} 學習`)}><BookOpen size={18} /> 學習</button>
-          <button className="primary" disabled={!filteredQuestions.length} onClick={() => onPractice(filteredQuestions, `${date} 測驗`)}><Dumbbell size={18} /> 測驗</button>
+          <button className="add-date-button" onClick={dialogs.openAdd}><Plus size={18} /> 新增</button>
+          <button disabled={!collection.filteredItems.length} onClick={() => onStudy(collection.filteredItems, `${date} 學習`)}><BookOpen size={18} /> 學習</button>
+          <button className="primary" disabled={!collection.filteredQuestions.length} onClick={() => onPractice(collection.filteredQuestions, `${date} 測驗`)}><Dumbbell size={18} /> 測驗</button>
           <ActionMenu>
             <button disabled={!items.length} onClick={() => setExportOpen(true)}><Download size={18} /> 匯出 JSON</button>
             <button disabled={!items.length} onClick={() => setJsonEditOpen(true)}><Pencil size={18} /> 修改 JSON</button>
@@ -3868,7 +3751,7 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, folde
           onClose={() => setJsonEditOpen(false)}
         />
       )}
-      {addOpen && (
+      {dialogs.addOpen && (
         <AddItemsModal
           title="新增單字"
           date={date}
@@ -3879,77 +3762,63 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, folde
           onUpdateRecord={onUpdateRecord}
           onWriteRecords={onUpdateRecords}
           onEditExisting={(item) => {
-            setAddOpen(false);
-            setEditingItem(item);
+            dialogs.closeAdd();
+            dialogs.openEditor(item);
           }}
-          onClose={() => setAddOpen(false)}
+          onClose={dialogs.closeAdd}
         />
       )}
-      {editingItem && (
+      {dialogs.editingWord && (
         <AddItemsModal
           title="編輯單字"
-          date={editingItem.date}
+          date={dialogs.editingWord.date}
           lockedDate
-          editItem={editingItem}
+          editItem={dialogs.editingWord}
           allItems={allItems}
           folders={folders}
           onUpdateRecord={onUpdateRecord}
           onDeleteRecord={onDeleteRecord}
-          onClose={() => setEditingItem(null)}
+          onClose={dialogs.closeEditor}
         />
       )}
-      {viewingItem && (
+      {dialogs.viewingWord && (
         <ItemDetailModal
-          item={viewingItem}
+          item={dialogs.viewingWord}
           allItems={allItems}
-          isStarred={starredSet.has(viewingItem.id)}
-          onToggleStar={() => toggleStarredItem(updateStore, viewingItem.id)}
-          onOpenItem={setViewingItem}
-          onEdit={(item) => {
-            setViewingItem(null);
-            setEditingItem(item);
-          }}
+          isStarred={starredSet.has(dialogs.viewingWord.id)}
+          onToggleStar={() => toggleStarredItem(updateStore, dialogs.viewingWord.id)}
+          onOpenItem={dialogs.openViewer}
+          onEdit={dialogs.editFromViewer}
           onDelete={onDeleteRecord}
-          onClose={() => setViewingItem(null)}
+          onClose={dialogs.closeViewer}
         />
       )}
       <div className="date-folder-filter-row">
         <GroupedFolderMultiSelect
           folders={folders}
-          selectedValues={selectedFolderIds}
-          onToggle={toggleFolderFilter}
+          selectedValues={collection.selectedFolderIds}
+          onToggle={collection.toggleFolder}
           onToggleGroup={toggleFolderTag}
-          onClear={() => setSelectedFolderIds([])}
+          onClear={() => collection.setSelectedFolderIds([])}
           includeUnfiled
-          unfiledCount={unfiledCount}
+          unfiledCount={collection.unfiledCount}
         />
-        <span>{selectedFolderIds.length ? `顯示 ${filteredItems.length} / ${items.length} 筆` : `共 ${items.length} 筆`}</span>
+        <span>{collection.selectedFolderIds.length ? `顯示 ${collection.totalCount} / ${items.length} 筆` : `共 ${items.length} 筆`}</span>
       </div>
-      <BulkWordActions
-        selectedIds={selectedIds}
-        visibleIds={filteredItems.map((item) => item.id)}
+      <WordCollectionView
+        collection={collection}
         folders={folders}
-        onSelectionChange={setSelectedIds}
+        starredIds={starredSet}
+        onToggleStar={(word) => toggleStarredItem(updateStore, word.id)}
+        onSpeak={speakText}
+        onOpen={dialogs.openViewer}
+        onEdit={dialogs.openEditor}
+        onDelete={onDeleteRecord}
         onAssignFolders={onAssignFolders}
         onCreateFolderAndAssign={onCreateFolderAndAssign}
         onDeleteRecords={onDeleteRecords}
+        emptyMessage="這個日期沒有符合資料夾篩選的單字"
       />
-      {filteredItems.length ? <div className="word-grid">{filteredItems.map((item) => (
-        <WordCard
-          key={item.id}
-          word={item}
-          folders={folders}
-          onOpen={setViewingItem}
-          onEdit={setEditingItem}
-          onDelete={onDeleteRecord}
-          onSpeak={speakText}
-          isStarred={starredSet.has(item.id)}
-          onToggleStar={() => toggleStarredItem(updateStore, item.id)}
-          selectable
-          selected={selectedIds.includes(item.id)}
-          onToggleSelected={toggleSelected}
-        />
-      ))}</div> : <div className="empty">這個日期沒有符合資料夾篩選的單字</div>}
     </section>
   );
 }
@@ -4778,229 +4647,11 @@ function downloadNotebookJson(jsonText) {
   URL.revokeObjectURL(url);
 }
 
-function itemSearchText(item) {
-  return [
-    item.ko,
-    item.zh,
-    item.pos,
-    item.date,
-    ...(item.notes || []),
-    ...(item.meanings || []).flatMap((meaning) => [meaning.zh, meaning.pattern, ...(meaning.examples || []).flatMap((example) => [example.ko, example.zh])]),
-    ...(item.related || []),
-  ].filter(Boolean).join(' ').toLowerCase();
-}
-
-function itemMatchesSearch(item, query, scope = 'all') {
-  const normalizedQuery = normalizeKoreanKey(query).toLocaleLowerCase();
-  if (!normalizedQuery) return true;
-  if (scope === 'word') {
-    const wordAndMeanings = [
-      item.ko,
-      ...(item.meanings || []).map((meaning) => meaning.zh),
-    ].filter(Boolean).join(' ').normalize('NFC').toLocaleLowerCase();
-    return wordAndMeanings.includes(normalizedQuery);
-  }
-  return itemSearchText(item).normalize('NFC').includes(normalizedQuery);
-}
-
-const koreanWordCollator = new Intl.Collator('ko-KR', {
-  sensitivity: 'base',
-  numeric: true,
-});
-
-function compareItemsByKoreanAlphabet(left, right) {
-  const koreanOrder = koreanWordCollator.compare(
-    String(left?.ko || '').normalize('NFC'),
-    String(right?.ko || '').normalize('NFC'),
-  );
-  if (koreanOrder) return koreanOrder;
-
-  const chineseOrder = String(left?.zh || '').localeCompare(String(right?.zh || ''), 'zh-TW');
-  if (chineseOrder) return chineseOrder;
-  return String(left?.id || '').localeCompare(String(right?.id || ''));
-}
-
 function compareQuestionsByKoreanAlphabet(left, right) {
   return compareItemsByKoreanAlphabet(
     left?.source || left,
     right?.source || right,
   ) || String(left?.id || '').localeCompare(String(right?.id || ''));
-}
-
-function SearchScopeControl({ value, onChange }) {
-  return (
-    <div className="search-scope segmented" aria-label="搜尋範圍">
-      <button type="button" className={value === 'word' ? 'active' : ''} aria-pressed={value === 'word'} onClick={() => onChange('word')}>單字</button>
-      <button type="button" className={value === 'all' ? 'active' : ''} aria-pressed={value === 'all'} onClick={() => onChange('all')}>全部</button>
-    </div>
-  );
-}
-
-function MultiSelectFilter({ label, options, selectedValues, onToggle, onClear }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef(null);
-  const selectedSet = new Set(selectedValues);
-  const selectedOptions = options.filter((option) => selectedSet.has(option.value));
-  const summary = !selectedOptions.length
-    ? '全部'
-    : selectedOptions.length === 1
-      ? selectedOptions[0].label
-      : `已選 ${selectedOptions.length} 項`;
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const closeOnOutside = (event) => {
-      if (!rootRef.current?.contains(event.target)) setOpen(false);
-    };
-    const closeOnEscape = (event) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('pointerdown', closeOnOutside);
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('pointerdown', closeOnOutside);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [open]);
-
-  return (
-    <div className={`multi-select-filter ${open ? 'open' : ''}`} ref={rootRef}>
-      <button
-        type="button"
-        className="multi-select-trigger"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <span><small>{label}</small><strong>{summary}</strong></span>
-        <ChevronDown size={17} />
-      </button>
-      {open && (
-        <div className="multi-select-menu" role="group" aria-label={`${label}篩選`}>
-          <div className="multi-select-menu-head">
-            <strong>{label}</strong>
-            {!!selectedValues.length && <button type="button" className="text-link" onClick={onClear}>清除</button>}
-          </div>
-          <div className="multi-select-options">
-            {options.map((option) => (
-              <label key={option.value} className={selectedSet.has(option.value) ? 'selected' : ''}>
-                <input type="checkbox" checked={selectedSet.has(option.value)} onChange={() => onToggle(option.value)} />
-                <span>{option.label}</span>
-                {option.count !== undefined && <small>{option.count}</small>}
-              </label>
-            ))}
-            {!options.length && <span className="muted-note">沒有可選項目</span>}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function IndeterminateCheckbox({ checked, indeterminate, onChange }) {
-  const inputRef = useRef(null);
-  useEffect(() => {
-    if (inputRef.current) inputRef.current.indeterminate = indeterminate;
-  }, [indeterminate]);
-  return <input ref={inputRef} type="checkbox" checked={checked} onChange={onChange} />;
-}
-
-function GroupedFolderMultiSelect({ folders, selectedValues, onToggle, onToggleGroup, onClear, includeUnfiled = false, unfiledCount = 0 }) {
-  const [open, setOpen] = useState(false);
-  const [expandedGroups, setExpandedGroups] = useState(new Set());
-  const rootRef = useRef(null);
-  const selectedSet = new Set(selectedValues);
-  const groups = groupFoldersByTag(folders);
-  const summary = !selectedValues.length ? '全部' : `已選 ${selectedValues.length} 項`;
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const closeOnOutside = (event) => {
-      if (!rootRef.current?.contains(event.target)) setOpen(false);
-    };
-    const closeOnEscape = (event) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('pointerdown', closeOnOutside);
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('pointerdown', closeOnOutside);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [open]);
-
-  const toggleExpanded = (label) => setExpandedGroups((current) => {
-    const next = new Set(current);
-    if (next.has(label)) next.delete(label);
-    else next.add(label);
-    return next;
-  });
-
-  return (
-    <div className={`multi-select-filter ${open ? 'open' : ''}`} ref={rootRef}>
-      <button type="button" className="multi-select-trigger" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
-        <span><small>資料夾</small><strong>{summary}</strong></span>
-        <ChevronDown size={17} />
-      </button>
-      {open && (
-        <div className="multi-select-menu grouped-folder-menu" role="group" aria-label="資料夾篩選">
-          <div className="multi-select-menu-head">
-            <strong>依標籤選擇資料夾</strong>
-            {!!selectedValues.length && <button type="button" className="text-link" onClick={onClear}>清除</button>}
-          </div>
-          {includeUnfiled && (
-            <div className="multi-select-options folder-special-options">
-              <label className={selectedSet.has(UNFILED_FOLDER_FILTER_ID) ? 'selected' : ''}>
-                <input
-                  type="checkbox"
-                  checked={selectedSet.has(UNFILED_FOLDER_FILTER_ID)}
-                  onChange={() => onToggle(UNFILED_FOLDER_FILTER_ID)}
-                />
-                <span>無資料夾</span>
-                <small>{unfiledCount}</small>
-              </label>
-            </div>
-          )}
-          <div className="folder-filter-groups">
-            {groups.map((group) => {
-              const folderIds = group.folders.map((folder) => folder.id);
-              const selectedCount = folderIds.filter((id) => selectedSet.has(id)).length;
-              const expanded = expandedGroups.has(group.label);
-              return (
-                <section className="folder-filter-group" key={group.label}>
-                  <div className="folder-filter-group-head">
-                    <button type="button" className="folder-group-toggle" aria-expanded={expanded} onClick={() => toggleExpanded(group.label)} title={expanded ? '收合資料夾' : '展開資料夾'}>
-                      <ChevronRight size={16} />
-                    </button>
-                    <label>
-                      <IndeterminateCheckbox
-                        checked={selectedCount === folderIds.length && folderIds.length > 0}
-                        indeterminate={selectedCount > 0 && selectedCount < folderIds.length}
-                        onChange={() => onToggleGroup(folderIds)}
-                      />
-                      <span>{group.label}</span>
-                      <small>{selectedCount ? `${selectedCount} / ${folderIds.length}` : folderIds.length}</small>
-                    </label>
-                  </div>
-                  {expanded && (
-                    <div className="multi-select-options folder-group-options">
-                      {group.folders.map((folder) => (
-                        <label key={folder.id} className={selectedSet.has(folder.id) ? 'selected' : ''}>
-                          <input type="checkbox" checked={selectedSet.has(folder.id)} onChange={() => onToggle(folder.id)} />
-                          <span>{folder.name}</span>
-                          <small>{(folder.wordIds || []).length}</small>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </section>
-              );
-            })}
-            {!groups.length && <span className="muted-note">沒有資料夾</span>}
-          </div>
-        </div>
-      )}
-    </div>
-  );
 }
 
 function ItemDetailModal({ item, allItems = [], onEdit, onDelete, onOpenItem, onClose, isStarred = false, onToggleStar }) {
@@ -8076,185 +7727,6 @@ function GrammarDetailModal({ note, category, onEdit, onDelete, onPractice, onCl
   );
 }
 
-function FolderPickerDropdown({ folders, selectedFolderIds, requiredFolderIds = [], onToggle, showCounts = false, title = '加入資料夾', wide = true }) {
-  const selectedSet = new Set(selectedFolderIds);
-  const requiredSet = new Set(requiredFolderIds);
-  const orderedFolders = selectedFoldersFirst(folders, selectedFolderIds);
-  const selectedNames = folders
-    .filter((folder) => selectedSet.has(folder.id))
-    .map((folder) => folder.name);
-  const summary = selectedNames.length
-    ? selectedNames.length <= 2 ? selectedNames.join('、') : `已選 ${selectedNames.length} 個資料夾`
-    : '尚未選擇';
-
-  return (
-    <details className={`${wide ? 'wide-field ' : ''}folder-picker-dropdown`}>
-      <summary>
-        <span className="folder-picker-dropdown-title"><Folder size={17} /><strong>{title}</strong><small>選填</small></span>
-        <span className="folder-picker-dropdown-summary">{summary}</span>
-        <ChevronDown size={17} className="folder-picker-chevron" />
-      </summary>
-      <div className="folder-picker-dropdown-menu">
-        {orderedFolders.map((folder) => {
-          const required = requiredSet.has(folder.id);
-          return (
-            <label className={selectedSet.has(folder.id) ? 'selected' : ''} key={folder.id}>
-              <input
-                type="checkbox"
-                checked={selectedSet.has(folder.id)}
-                disabled={required}
-                onChange={() => onToggle(folder.id)}
-              />
-              <Folder size={16} />
-              <span><strong>{folder.name}</strong>{showCounts && <small>{folder.wordIds.length} 個單字</small>}</span>
-              {required && <small className="folder-required-label">目前資料夾</small>}
-            </label>
-          );
-        })}
-      </div>
-    </details>
-  );
-}
-
-function FolderAssignmentModal({ folders, wordIds, onAssign, onCreateFolderAndAssign, onClose }) {
-  const [selectedFolderIds, setSelectedFolderIds] = useState([]);
-  const [newFolderName, setNewFolderName] = useState('');
-  const [newFolderTag, setNewFolderTag] = useState('');
-  const [savingAction, setSavingAction] = useState('');
-  const [error, setError] = useState('');
-  const toggleFolder = (folderId) => setSelectedFolderIds((current) => (
-    current.includes(folderId) ? current.filter((id) => id !== folderId) : [...current, folderId]
-  ));
-  const submit = async (event) => {
-    event.preventDefault();
-    if (!selectedFolderIds.length) return;
-    setSavingAction('existing');
-    setError('');
-    try {
-      await onAssign(selectedFolderIds, wordIds);
-      onClose(true);
-    } catch (saveError) {
-      setError(saveError.message || '加入資料夾失敗');
-      setSavingAction('');
-    }
-  };
-  const createAndAssign = async () => {
-    if (!newFolderName.trim()) return;
-    setSavingAction('create');
-    setError('');
-    try {
-      await onCreateFolderAndAssign(newFolderName, wordIds, selectedFolderIds, newFolderTag);
-      onClose(true);
-    } catch (saveError) {
-      setError(saveError.message || '建立資料夾失敗');
-      setSavingAction('');
-    }
-  };
-  const saving = !!savingAction;
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="assign-folder-title">
-      <form className="modal-panel folder-assignment-modal" onSubmit={submit}>
-        <button type="button" className="modal-close" disabled={saving} onClick={() => onClose(false)} aria-label="關閉"><X size={18} /></button>
-        <span className="eyebrow">Batch organize</span>
-        <h2 id="assign-folder-title">將 {wordIds.length} 個單字加入資料夾</h2>
-        <p>可以同時選擇多個資料夾；原本已存在的關聯不會重複。</p>
-        {folders.length ? (
-          <FolderPickerDropdown
-            folders={folders}
-            selectedFolderIds={selectedFolderIds}
-            onToggle={toggleFolder}
-            showCounts
-          />
-        ) : <div className="empty small-empty">還沒有資料夾，可以直接在下方建立。</div>}
-        <section className="create-folder-during-assignment">
-          <div>
-            <FolderPlus size={20} />
-            <span><strong>建立新資料夾</strong><small>新資料夾會立即加入這 {wordIds.length} 個單字</small></span>
-          </div>
-          <div className="create-folder-inline-form">
-            <input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); createAndAssign(); } }} maxLength={60} placeholder="輸入新資料夾名稱" disabled={saving} />
-            <input value={newFolderTag} onChange={(event) => setNewFolderTag(event.target.value)} maxLength={40} placeholder="標籤（選填）" list="assignment-folder-tag-options" disabled={saving} />
-            <button type="button" className="soft-button" disabled={!newFolderName.trim() || saving} onClick={createAndAssign}>{savingAction === 'create' ? '建立中' : '建立並加入'}</button>
-          </div>
-          <datalist id="assignment-folder-tag-options">{[...new Set(folders.map((folder) => folder.tag).filter(Boolean))].map((tag) => <option value={tag} key={tag} />)}</datalist>
-          {!!selectedFolderIds.length && <small>也會同時加入上方已勾選的 {selectedFolderIds.length} 個資料夾。</small>}
-        </section>
-        {error && <div className="form-error">{error}</div>}
-        <div className="form-actions">
-          <button type="button" onClick={() => onClose(false)} disabled={saving}>取消</button>
-          <button className="primary" disabled={!selectedFolderIds.length || saving}>{savingAction === 'existing' ? '加入中' : '加入所選'}</button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-function BulkWordActions({ selectedIds, visibleIds, folders, onSelectionChange, onAssignFolders, onCreateFolderAndAssign, onDeleteRecords, currentFolder, onRemoveFromCurrentFolder }) {
-  const [assignOpen, setAssignOpen] = useState(false);
-  const [busyAction, setBusyAction] = useState('');
-  const [error, setError] = useState('');
-  const selectedSet = new Set(selectedIds);
-  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedSet.has(id));
-  const toggleVisible = () => {
-    if (allVisibleSelected) {
-      const visibleSet = new Set(visibleIds);
-      onSelectionChange(selectedIds.filter((id) => !visibleSet.has(id)));
-    } else {
-      onSelectionChange([...new Set([...selectedIds, ...visibleIds])]);
-    }
-  };
-  const runAction = async (action, handler) => {
-    setBusyAction(action);
-    setError('');
-    try {
-      await handler();
-      onSelectionChange([]);
-    } catch (actionError) {
-      setError(actionError.message || '批次操作失敗');
-    } finally {
-      setBusyAction('');
-    }
-  };
-  const removeFromFolder = () => {
-    if (!window.confirm(`確定要將所選 ${selectedIds.length} 個單字從「${currentFolder.name}」移除嗎？單字本中的卡片會保留。`)) return;
-    runAction('remove', () => onRemoveFromCurrentFolder(currentFolder.id, selectedIds));
-  };
-  const permanentlyDelete = () => {
-    if (!window.confirm(`確定要永久刪除所選 ${selectedIds.length} 個單字嗎？這些卡片也會從單字本與所有資料夾刪除，且無法復原。`)) return;
-    runAction('delete', () => onDeleteRecords(selectedIds));
-  };
-  return (
-    <>
-      <div className={`bulk-word-actions ${selectedIds.length ? 'has-selection' : ''}`}>
-        <div className="bulk-selection-summary">
-          <ListChecks size={19} />
-          <strong>{selectedIds.length ? `已選 ${selectedIds.length} 個` : '批次選取'}</strong>
-          <button type="button" className="text-link" disabled={!visibleIds.length || !!busyAction} onClick={toggleVisible}>{allVisibleSelected ? '取消本頁' : '選取本頁'}</button>
-          {!!selectedIds.length && <button type="button" className="text-link muted-link" disabled={!!busyAction} onClick={() => onSelectionChange([])}>清除</button>}
-        </div>
-        {!!selectedIds.length && <div className="bulk-action-buttons">
-          <button type="button" disabled={!selectedIds.length || !!busyAction} onClick={() => setAssignOpen(true)}><FolderInput size={17} /> 加入資料夾</button>
-          {currentFolder && <button type="button" disabled={!selectedIds.length || !!busyAction} onClick={removeFromFolder} title="只從目前資料夾移除，保留單字卡"><X size={17} /> {busyAction === 'remove' ? '移除中' : '移出資料夾'}</button>}
-          <button type="button" className="danger-soft" disabled={!selectedIds.length || !!busyAction} onClick={permanentlyDelete} title="從單字本與所有資料夾永久刪除"><Trash2 size={17} /> {busyAction === 'delete' ? '刪除中' : '永久刪除'}</button>
-        </div>}
-      </div>
-      {error && <div className="form-error bulk-action-error">{error}</div>}
-      {assignOpen && (
-        <FolderAssignmentModal
-          folders={folders}
-          wordIds={selectedIds}
-          onAssign={onAssignFolders}
-          onCreateFolderAndAssign={onCreateFolderAndAssign}
-          onClose={(completed) => {
-            setAssignOpen(false);
-            if (completed) onSelectionChange([]);
-          }}
-        />
-      )}
-    </>
-  );
-}
-
 function FolderNameModal({ folder, tagSuggestions = [], onSave, onClose }) {
   const [name, setName] = useState(folder?.name || '');
   const [tag, setTag] = useState(folder?.tag || '');
@@ -8482,39 +7954,31 @@ function AddExistingWordsModal({ folder, items, onAdd, onClose }) {
 }
 
 function FolderDetailPage({ folder, folders, store, updateStore, items, questions, onSaveFolder, onDeleteFolder, onAddWords, onAssignFolders, onCreateFolderAndAssign, onRemoveWords, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords, onBack }) {
-  const [query, setQuery] = useState('');
-  const [searchScope, setSearchScope] = useState('word');
-  const [pageNumber, setPageNumber] = useState(1);
-  const [addOpen, setAddOpen] = useState(false);
   const [addExistingOpen, setAddExistingOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState(null);
-  const [viewingItem, setViewingItem] = useState(null);
-  const [selectedIds, setSelectedIds] = useState([]);
   const starredSet = new Set(store.starred || []);
-  const toggleSelected = (itemId) => setSelectedIds((current) => (
-    current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]
-  ));
-
-  useEffect(() => setPageNumber(1), [query, searchScope, folder?.id]);
-  useEffect(() => setSelectedIds([]), [folder?.id]);
+  const itemById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+  const sourceFolderWordIds = folder?.wordIds || [];
+  const folderItems = useMemo(
+    () => sourceFolderWordIds.map((id) => itemById.get(id)).filter(Boolean),
+    [sourceFolderWordIds, itemById],
+  );
+  const staleIds = sourceFolderWordIds.filter((id) => !itemById.has(id));
+  const collection = useWordCollection({
+    items: folderItems,
+    questions,
+    store,
+    folders,
+    sourceKey: folder?.id || '',
+    pageSize: 30,
+  });
+  const dialogs = useWordCollectionDialogs(folder?.id || '');
+  const folderItemIds = new Set(folderItems.map((item) => item.id));
+  const folderQuestions = questions.filter((question) => folderItemIds.has(question.itemId));
 
   if (!folder) return <section className="page"><div className="empty">找不到這個資料夾，可能已在其他裝置刪除。</div></section>;
 
-  const itemById = new Map(items.map((item) => [item.id, item]));
-  const folderItems = folder.wordIds.map((id) => itemById.get(id)).filter(Boolean);
-  const staleIds = folder.wordIds.filter((id) => !itemById.has(id));
-  const itemQuestionIds = new Map(folderItems.map((item) => [item.id, questions.filter((question) => question.itemId === item.id).map((question) => question.id)]));
-  const enriched = folderItems.map((item) => {
-    const stats = aggregateItemStats(store, itemQuestionIds.get(item.id) || [item.id]);
-    return { ...item, ...stats };
-  }).filter((item) => itemMatchesSearch(item, query, searchScope));
-  const pageSize = 30;
-  const pageCount = Math.max(1, Math.ceil(enriched.length / pageSize));
-  const pagedItems = enriched.slice((pageNumber - 1) * pageSize, pageNumber * pageSize);
-  const folderItemIds = new Set(folderItems.map((item) => item.id));
-  const folderQuestions = questions.filter((question) => folderItemIds.has(question.itemId));
   const deleteFolder = async () => {
     if (isSystemFolder(folder)) return;
     if (!window.confirm(`確定要刪除資料夾「${folder.name}」嗎？其中 ${folderItems.length} 個單字仍會保留在單字本。`)) return;
@@ -8527,7 +7991,7 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
       <div className="topbar">
         <div><span className="eyebrow">Folder · {folderTagLabel(folder)} · {folderItems.length} 個單字</span><h1>{folder.name}</h1></div>
         <div className="actions notebook-actions">
-          <button onClick={() => setAddOpen(true)}><Plus size={18} /> 新增</button>
+          <button onClick={dialogs.openAdd}><Plus size={18} /> 新增</button>
           <button onClick={() => onStudy(folderItems, `${folder.name} 學習`)} disabled={!folderItems.length}><BookOpen size={18} /> 學習</button>
           <button className="primary" onClick={() => onPractice(folderQuestions, `${folder.name} 測驗`, { allowResultRecording: true })} disabled={!folderQuestions.length}><Dumbbell size={18} /> 測驗</button>
           <ActionMenu>
@@ -8539,14 +8003,14 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
         </div>
       </div>
       <div className="word-search-tools folder-word-search">
-        <label className="search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchScope === 'word' ? '搜尋韓文單字或中文意思' : '搜尋這個資料夾中的全部卡片內容'} /></label>
-        <SearchScopeControl value={searchScope} onChange={setSearchScope} />
+        <label className="search"><Search size={18} /><input value={collection.query} onChange={(event) => collection.setQuery(event.target.value)} placeholder={collection.searchScope === 'word' ? '搜尋韓文單字或中文意思' : '搜尋這個資料夾中的全部卡片內容'} /></label>
+        <SearchScopeControl value={collection.searchScope} onChange={collection.setSearchScope} />
       </div>
       {!!staleIds.length && <button className="text-link" onClick={() => onRemoveWords(folder.id, staleIds)}>清理 {staleIds.length} 個不存在的單字 reference</button>}
       {exportOpen && <ExportJsonModal items={folderItems} title={`匯出 ${folder.name} JSON`} onClose={() => setExportOpen(false)} />}
       {renameOpen && <FolderNameModal folder={folder} tagSuggestions={[...new Set(folders.map((entry) => entry.tag).filter(Boolean))]} onSave={onSaveFolder} onClose={() => setRenameOpen(false)} />}
       {addExistingOpen && <AddExistingWordsModal folder={folder} items={items} onAdd={onAddWords} onClose={() => setAddExistingOpen(false)} />}
-      {addOpen && (
+      {dialogs.addOpen && (
         <AddItemsModal
           title={`新增單字到 ${folder.name}`}
           date={todayString()}
@@ -8557,129 +8021,77 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
           onAddRecords={onAddRecords}
           onUpdateRecord={onUpdateRecord}
           onWriteRecords={onUpdateRecords}
-          onEditExisting={(item) => { setAddOpen(false); setViewingItem(item); }}
-          onClose={() => setAddOpen(false)}
+          onEditExisting={(item) => { dialogs.closeAdd(); dialogs.openViewer(item); }}
+          onClose={dialogs.closeAdd}
         />
       )}
-      {editingItem && <AddItemsModal title="編輯單字" date={editingItem.date} lockedDate editItem={editingItem} allItems={items} folders={folders} onUpdateRecord={onUpdateRecord} onClose={() => setEditingItem(null)} />}
-      {viewingItem && (
+      {dialogs.editingWord && <AddItemsModal title="編輯單字" date={dialogs.editingWord.date} lockedDate editItem={dialogs.editingWord} allItems={items} folders={folders} onUpdateRecord={onUpdateRecord} onClose={dialogs.closeEditor} />}
+      {dialogs.viewingWord && (
         <ItemDetailModal
-          item={viewingItem}
+          item={dialogs.viewingWord}
           allItems={items}
-          isStarred={starredSet.has(viewingItem.id)}
-          onToggleStar={() => toggleStarredItem(updateStore, viewingItem.id)}
-          onOpenItem={setViewingItem}
-          onEdit={(item) => { setViewingItem(null); setEditingItem(item); }}
+          isStarred={starredSet.has(dialogs.viewingWord.id)}
+          onToggleStar={() => toggleStarredItem(updateStore, dialogs.viewingWord.id)}
+          onOpenItem={dialogs.openViewer}
+          onEdit={dialogs.editFromViewer}
           onDelete={onDeleteRecord}
-          onClose={() => setViewingItem(null)}
+          onClose={dialogs.closeViewer}
         />
       )}
-      <BulkWordActions
-        selectedIds={selectedIds}
-        visibleIds={pagedItems.map((item) => item.id)}
+      <WordCollectionView
+        collection={collection}
         folders={folders}
-        onSelectionChange={setSelectedIds}
+        starredIds={starredSet}
+        onToggleStar={(word) => toggleStarredItem(updateStore, word.id)}
+        onSpeak={speakText}
+        onOpen={dialogs.openViewer}
+        onEdit={dialogs.openEditor}
+        onDelete={(itemId) => onRemoveWords(folder.id, [itemId])}
+        deleteLabel="從資料夾移除"
+        deleteConfirmMessage={(word) => `確定要將「${word.ko}」從資料夾移除嗎？單字本中的卡片不會被刪除。`}
         onAssignFolders={onAssignFolders}
         onCreateFolderAndAssign={onCreateFolderAndAssign}
         onDeleteRecords={onDeleteRecords}
         currentFolder={folder}
         onRemoveFromCurrentFolder={onRemoveWords}
+        emptyMessage={collection.query ? '找不到符合的單字' : '這個資料夾還沒有單字'}
+        showPagination
       />
-      {pagedItems.length ? <div className="word-grid">{pagedItems.map((item) => (
-        <WordCard
-          key={item.id}
-          word={item}
-          folders={folders}
-          onOpen={setViewingItem}
-          onEdit={setEditingItem}
-          onDelete={(itemId) => onRemoveWords(folder.id, [itemId])}
-          deleteLabel="從資料夾移除"
-          deleteConfirmMessage={`確定要將「${item.ko}」從資料夾移除嗎？單字本中的卡片不會被刪除。`}
-          onSpeak={speakText}
-          isStarred={starredSet.has(item.id)}
-          onToggleStar={() => toggleStarredItem(updateStore, item.id)}
-          selectable
-          selected={selectedIds.includes(item.id)}
-          onToggleSelected={toggleSelected}
-        />
-      ))}</div> : <div className="empty">{query ? '找不到符合的單字' : '這個資料夾還沒有單字'}</div>}
-      {pageCount > 1 && <div className="pagination"><button disabled={pageNumber <= 1} onClick={() => setPageNumber(pageNumber - 1)}><ChevronLeft size={18} /> 上一頁</button><span>{pageNumber} / {pageCount} · 共 {enriched.length} 筆</span><button disabled={pageNumber >= pageCount} onClick={() => setPageNumber(pageNumber + 1)}>下一頁 <ChevronRight size={18} /></button></div>}
     </section>
   );
 }
 
 function NotebookPage({ store, updateStore, items, questions, folders = [], onAssignFolders, onCreateFolderAndAssign, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords }) {
-  const [query, setQuery] = useState('');
-  const [searchScope, setSearchScope] = useState('word');
-  const [selectedLevels, setSelectedLevels] = useState([]);
-  const [selectedFolderIds, setSelectedFolderIds] = useState([]);
-  const [sort, setSort] = useState('default');
-  const [pageNumber, setPageNumber] = useState(1);
-  const [addOpen, setAddOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [jsonEditOpen, setJsonEditOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState(null);
-  const [viewingItem, setViewingItem] = useState(null);
-  const [selectedIds, setSelectedIds] = useState([]);
   const [showLearned, setShowLearned] = useState(false);
   const starredSet = new Set(store.starred || []);
-  const learnedWordIds = new Set(folders.find(isLearnedFolder)?.wordIds || []);
-  const notebookItems = showLearned ? items : items.filter((item) => !learnedWordIds.has(item.id));
-  const folderFilteredItems = filterItemsByFolderSelection(notebookItems, folders, selectedFolderIds);
-  const assignedWordIds = new Set(folders.flatMap((folder) => folder.wordIds || []));
-  const unfiledCount = notebookItems.filter((item) => !assignedWordIds.has(item.id)).length;
-  const toggleSelected = (itemId) => setSelectedIds((current) => (
-    current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]
-  ));
-  const toggleLevel = (level) => setSelectedLevels((current) => (
-    current.includes(level) ? current.filter((entry) => entry !== level) : [...current, level]
-  ));
-  const toggleFolderFilter = (folderId) => setSelectedFolderIds((current) => (
-    current.includes(folderId) ? current.filter((id) => id !== folderId) : [...current, folderId]
-  ));
-  const toggleFolderTag = (folderIds) => setSelectedFolderIds((current) => toggleFolderGroupSelection(current, folderIds));
-  const itemQuestionIds = new Map(items.map((item) => [item.id, questions.filter((q) => q.itemId === item.id).map((q) => q.id)]));
-  const enriched = folderFilteredItems.map((item) => {
-    const ids = itemQuestionIds.get(item.id) || [item.id];
-    return { ...item, ...aggregateItemStats(store, ids) };
-  }).filter((item) => {
-    const matchesQuery = itemMatchesSearch(item, query, searchScope);
-    const matchesLevel = matchesFamiliarityLevels(item.level, selectedLevels, item.score);
-    return matchesQuery && matchesLevel;
-  }).sort((a, b) => {
-    if (sort === 'alphabetical') return compareItemsByKoreanAlphabet(a, b);
-    if (sort === 'score') return a.score - b.score;
-    if (a.date !== b.date) return b.date.localeCompare(a.date);
-    if (a.order !== b.order) return b.order - a.order;
-    return a.id.localeCompare(b.id);
+  const learnedFolder = folders.find(isLearnedFolder);
+  const learnedWordIds = useMemo(() => new Set(learnedFolder?.wordIds || []), [learnedFolder]);
+  const notebookItems = useMemo(
+    () => showLearned ? items : items.filter((item) => !learnedWordIds.has(item.id)),
+    [items, learnedWordIds, showLearned],
+  );
+  const collection = useWordCollection({
+    items: notebookItems,
+    questions,
+    store,
+    folders,
+    sourceKey: `notebook-${showLearned}`,
+    defaultSort: 'latest',
+    pageSize: 30,
   });
-  const pageSize = 30;
-  const pageCount = Math.max(1, Math.ceil(enriched.length / pageSize));
-  const pagedItems = enriched.slice((pageNumber - 1) * pageSize, pageNumber * pageSize);
-  const practiceQuestions = questions.filter((question) => enriched.some((item) => item.id === question.itemId));
-
-  useEffect(() => {
-    setPageNumber(1);
-  }, [query, searchScope, selectedLevels, selectedFolderIds, sort]);
-
-  useEffect(() => {
-    const availableFolderIds = new Set([UNFILED_FOLDER_FILTER_ID, ...folders.map((folder) => folder.id)]);
-    setSelectedFolderIds((current) => current.filter((folderId) => availableFolderIds.has(folderId)));
-  }, [folders]);
-
-  useEffect(() => {
-    setPageNumber(1);
-    setSelectedIds([]);
-  }, [showLearned]);
+  const dialogs = useWordCollectionDialogs('notebook');
+  const toggleFolderTag = (folderIds) => collection.setSelectedFolderIds((current) => toggleFolderGroupSelection(current, folderIds));
 
   return (
     <section className="page">
       <div className="topbar">
         <div><span className="eyebrow">Notebook</span><h1>單字本</h1></div>
         <div className="actions notebook-actions">
-          <button className="add-date-button" onClick={() => setAddOpen(true)}><Plus size={18} /> 新增</button>
-          <button onClick={() => onStudy(enriched, '篩選結果')} disabled={!enriched.length} title="學習目前篩選出的單字"><BookOpen size={18} /> 學習</button>
-          <button className="primary" onClick={() => onPractice(practiceQuestions, '篩選結果測驗', { allowResultRecording: true })} disabled={!practiceQuestions.length} title="測驗目前篩選出的單字"><Dumbbell size={18} /> 測驗</button>
+          <button className="add-date-button" onClick={dialogs.openAdd}><Plus size={18} /> 新增</button>
+          <button onClick={() => onStudy(collection.filteredItems, '篩選結果')} disabled={!collection.filteredItems.length} title="學習目前篩選出的單字"><BookOpen size={18} /> 學習</button>
+          <button className="primary" onClick={() => onPractice(collection.filteredQuestions, '篩選結果測驗', { allowResultRecording: true })} disabled={!collection.filteredQuestions.length} title="測驗目前篩選出的單字"><Dumbbell size={18} /> 測驗</button>
           <ActionMenu>
             <button
               type="button"
@@ -8710,32 +8122,32 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
       )}
       <div className="filters">
         <div className="word-search-tools filter-search-tools">
-          <label className="search"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={searchScope === 'word' ? '搜尋韓文單字或中文意思' : '搜尋單字、例句、筆記或相關詞'} /></label>
-          <SearchScopeControl value={searchScope} onChange={setSearchScope} />
+          <label className="search"><Search size={18} /><input value={collection.query} onChange={(e) => collection.setQuery(e.target.value)} placeholder={collection.searchScope === 'word' ? '搜尋韓文單字或中文意思' : '搜尋單字、例句、筆記或相關詞'} /></label>
+          <SearchScopeControl value={collection.searchScope} onChange={collection.setSearchScope} />
         </div>
         <MultiSelectFilter
           label="熟悉度"
           options={FAMILIARITY_FILTER_OPTIONS}
-          selectedValues={selectedLevels}
-          onToggle={toggleLevel}
-          onClear={() => setSelectedLevels([])}
+          selectedValues={collection.selectedLevels}
+          onToggle={collection.toggleLevel}
+          onClear={() => collection.setSelectedLevels([])}
         />
         <GroupedFolderMultiSelect
           folders={folders}
-          selectedValues={selectedFolderIds}
-          onToggle={toggleFolderFilter}
+          selectedValues={collection.selectedFolderIds}
+          onToggle={collection.toggleFolder}
           onToggleGroup={toggleFolderTag}
-          onClear={() => setSelectedFolderIds([])}
+          onClear={() => collection.setSelectedFolderIds([])}
           includeUnfiled
-          unfiledCount={unfiledCount}
+          unfiledCount={collection.unfiledCount}
         />
-        <select value={sort} onChange={(e) => setSort(e.target.value)}>
-          <option value="default">最新</option>
+        <select value={collection.sort} onChange={(e) => collection.setSort(e.target.value)}>
+          <option value="latest">最新</option>
           <option value="alphabetical">韓文字母</option>
           <option value="score">低分優先</option>
         </select>
       </div>
-      {addOpen && (
+      {dialogs.addOpen && (
         <AddItemsModal
           title="新增單字"
           date={todayString()}
@@ -8745,71 +8157,51 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
           onUpdateRecord={onUpdateRecord}
           onWriteRecords={onUpdateRecords}
           onEditExisting={(item) => {
-            setAddOpen(false);
-            setEditingItem(item);
+            dialogs.closeAdd();
+            dialogs.openEditor(item);
           }}
-          onClose={() => setAddOpen(false)}
+          onClose={dialogs.closeAdd}
         />
       )}
-      {editingItem && (
+      {dialogs.editingWord && (
         <AddItemsModal
           title="編輯單字"
-          date={editingItem.date}
+          date={dialogs.editingWord.date}
           lockedDate
-          editItem={editingItem}
+          editItem={dialogs.editingWord}
           allItems={items}
           folders={folders}
           onUpdateRecord={onUpdateRecord}
-          onClose={() => setEditingItem(null)}
+          onClose={dialogs.closeEditor}
         />
       )}
-      {viewingItem && (
+      {dialogs.viewingWord && (
         <ItemDetailModal
-          item={viewingItem}
+          item={dialogs.viewingWord}
           allItems={items}
-          isStarred={starredSet.has(viewingItem.id)}
-          onToggleStar={() => toggleStarredItem(updateStore, viewingItem.id)}
-          onOpenItem={setViewingItem}
-          onEdit={(item) => {
-            setViewingItem(null);
-            setEditingItem(item);
-          }}
+          isStarred={starredSet.has(dialogs.viewingWord.id)}
+          onToggleStar={() => toggleStarredItem(updateStore, dialogs.viewingWord.id)}
+          onOpenItem={dialogs.openViewer}
+          onEdit={dialogs.editFromViewer}
           onDelete={onDeleteRecord}
-          onClose={() => setViewingItem(null)}
+          onClose={dialogs.closeViewer}
         />
       )}
-      <BulkWordActions
-        selectedIds={selectedIds}
-        visibleIds={pagedItems.map((item) => item.id)}
+      <WordCollectionView
+        collection={collection}
         folders={folders}
-        onSelectionChange={setSelectedIds}
+        starredIds={starredSet}
+        onToggleStar={(word) => toggleStarredItem(updateStore, word.id)}
+        onSpeak={speakText}
+        onOpen={dialogs.openViewer}
+        onEdit={dialogs.openEditor}
+        onDelete={onDeleteRecord}
         onAssignFolders={onAssignFolders}
         onCreateFolderAndAssign={onCreateFolderAndAssign}
         onDeleteRecords={onDeleteRecords}
+        emptyMessage="找不到符合的單字"
+        showPagination="always"
       />
-      <div className="word-grid">
-        {pagedItems.map((item) => (
-          <WordCard
-            key={item.id}
-            word={item}
-            folders={folders}
-            onSpeak={speakText}
-            onEdit={setEditingItem}
-            onDelete={onDeleteRecord}
-            onOpen={setViewingItem}
-            isStarred={starredSet.has(item.id)}
-            onToggleStar={() => toggleStarredItem(updateStore, item.id)}
-            selectable
-            selected={selectedIds.includes(item.id)}
-            onToggleSelected={toggleSelected}
-          />
-        ))}
-      </div>
-      <div className="pagination">
-        <button disabled={pageNumber <= 1} onClick={() => setPageNumber(pageNumber - 1)}><ChevronLeft size={18} /> 上一頁</button>
-        <span>{pageNumber} / {pageCount} · 共 {enriched.length} 筆</span>
-        <button disabled={pageNumber >= pageCount} onClick={() => setPageNumber(pageNumber + 1)}>下一頁 <ChevronRight size={18} /></button>
-      </div>
     </section>
   );
 }

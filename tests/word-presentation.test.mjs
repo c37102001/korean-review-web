@@ -8,6 +8,7 @@ import { createServer } from 'vite';
 
 let server;
 let presentation;
+let collectionView;
 
 before(async () => {
   server = await createServer({
@@ -17,6 +18,7 @@ before(async () => {
     server: { middlewareMode: true, hmr: false },
   });
   presentation = await server.ssrLoadModule('/src/features/word-library/components/WordPresentation.jsx');
+  collectionView = await server.ssrLoadModule('/src/features/word-library/components/WordCollectionView.jsx');
 });
 
 after(async () => {
@@ -85,4 +87,38 @@ test('hidden-Chinese study details keep Korean examples without leaking translat
 
   assert.match(markup, /어차피 해야 해요\./);
   assert.doesNotMatch(markup, /反正都得做。|어차피 \+ 結果|口語/);
+});
+
+test('folder collections keep remove-membership and permanent-delete actions distinct', () => {
+  const collection = {
+    pagedItems: [word],
+    selectedIds: ['word-1'],
+    setSelectedIds: () => {},
+    toggleSelected: () => {},
+    visibleIds: ['word-1'],
+    pageCount: 1,
+    pageNumber: 1,
+    setPageNumber: () => {},
+    totalCount: 1,
+  };
+  const markup = renderToStaticMarkup(React.createElement(collectionView.WordCollectionView, {
+    collection,
+    folders: [{ id: 'folder-1', name: '常用副詞', wordIds: ['word-1'] }],
+    onSpeak: () => {},
+    onOpen: () => {},
+    onEdit: () => {},
+    onDelete: () => {},
+    deleteLabel: '從資料夾移除',
+    deleteConfirmMessage: () => '只移除資料夾關聯',
+    onToggleStar: () => {},
+    onAssignFolders: () => {},
+    onCreateFolderAndAssign: () => {},
+    onDeleteRecords: () => {},
+    currentFolder: { id: 'folder-1', name: '常用副詞' },
+    onRemoveFromCurrentFolder: () => {},
+  }));
+
+  assert.match(markup, /aria-label="從資料夾移除"/);
+  assert.match(markup, /移出資料夾/);
+  assert.match(markup, /永久刪除/);
 });

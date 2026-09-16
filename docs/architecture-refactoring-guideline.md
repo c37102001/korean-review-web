@@ -487,10 +487,13 @@ src/
 
 ### Phase 2：統一單字集合控制器
 
-- 抽出 selectors、stats join、filter/sort/pagination。
-- 抽出 selection、bulk actions 與 word dialogs controller。
-- Notebook、Folder、Date 依序改用 `WordCollectionPage` configuration。
-- 每遷移一頁就刪除原頁重複 state，不保留雙軌。
+**狀態：已完成（2026-09-16）**
+
+- [x] 抽出 selectors、一次性 stats join、filter／sort／pagination。
+- [x] 抽出 selection hook、bulk actions、filters 與 word dialogs controller。
+- [x] Notebook、Folder、Date 改用同一個 `useWordCollection` 與 `WordCollectionView`，只保留來源及刪除 policy 差異。
+- [x] 刪除三頁原有的重複集合 state、逐字掃描 questions、卡片 grid 與分頁實作，不保留雙軌。
+- [x] 新增集合 selector 的組合測試，並以手機／桌面瀏覽器驗證三個入口。
 
 ### Phase 3：整理學習／測驗 session
 
