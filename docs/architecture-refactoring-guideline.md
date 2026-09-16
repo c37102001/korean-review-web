@@ -829,7 +829,7 @@ terminal_app/
 
 ### Phase 11：Terminal domain 與 audio 完整抽離
 
-**狀態：待實作**
+**狀態：已完成（2026-09-16）**
 
 工作：
 

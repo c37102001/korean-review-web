@@ -41,6 +41,10 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib import error, parse, request
 import terminal_offline
 from terminal_app.audio.tts import korean_audio_players, korean_speech_commands
+from terminal_app.audio.youtube import TerminalYoutubeAudioPlayer
+from terminal_app.audio.youtube import download_youtube_audio as _download_youtube_audio
+from terminal_app.audio.youtube import youtube_audio_cache_path as _youtube_audio_cache_path
+from terminal_app.audio.youtube import youtube_audio_download_profiles
 from terminal_app.api.auth import FirebaseAuthService
 from terminal_app.api.firestore_codec import document_id as _doc_id
 from terminal_app.api.firestore_codec import parse_fields as _parse_firestore_fields
@@ -48,6 +52,7 @@ from terminal_app.api.firestore_codec import parse_value as _parse_firestore_val
 from terminal_app.api.firestore_codec import to_value as _to_firestore_value
 from terminal_app.api.transport import JsonHttpTransport
 from terminal_app.domain.models import AuthSession, Card, GrammarNote, PartialCheckResult, Question, YoutubeSubtitle
+from terminal_app.domain.content import item_zh, normalize_grammar_notes, normalize_records, normalize_youtube_subtitles, order_questions, record_order
 from terminal_app.domain.practice import (
     add_optional_practice_task,
     answer_optional_practice_task,
@@ -55,7 +60,29 @@ from terminal_app.domain.practice import (
     optional_practice_state,
     remove_optional_practice_task,
 )
-from terminal_app.domain.review import REVIEW_INTERVALS, familiarity_score, next_review_transition
+from terminal_app.domain.review import (
+    REVIEW_INTERVALS,
+    count_korean_letters,
+    daily_due_questions,
+    daily_grammar_questions,
+    daily_recognition_questions,
+    daily_round_questions,
+    daily_wrong_term_questions,
+    due_questions,
+    familiarity_score,
+    get_progress,
+    grammar_practice_questions,
+    korean_length_warning,
+    next_review_transition,
+    normalize_text,
+    record_answer as _record_answer,
+    record_daily_recognition_answer,
+    record_daily_round_answer,
+    record_daily_wrong_review_answer,
+    seed_from_string,
+    shuffle_items,
+    toggle_star,
+)
 from terminal_app.repositories import FirestoreCollectionRepository
 from terminal_app.sync.cache import cache_path, read_cache, write_cache
 from terminal_app.sync.incremental import active_records, latest_updated_at, merge_record_changes
@@ -761,134 +788,6 @@ def add_days(date_key: str, days: int) -> str:
     return (date.fromisoformat(date_key) + timedelta(days=days)).isoformat()
 
 
-def item_zh(item: Dict[str, Any]) -> str:
-    return "；".join(str(meaning.get("zh", "")).strip() for meaning in item.get("meanings", []) if meaning.get("zh"))
-
-
-def record_order(record: Dict[str, Any]) -> int:
-    value = record.get("order")
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    created_at = str(record.get("createdAt", ""))
-    try:
-        return int(datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp() * 1_000_000)
-    except ValueError:
-        return 0
-
-
-def normalize_records(records: List[Dict[str, Any]], state: Dict[str, Any]) -> Tuple[List[Card], List[Question]]:
-    starred = set(state.get("starred") or [])
-    cards: List[Card] = []
-    questions: List[Question] = []
-    for index, record in enumerate(records):
-        item = record.get("item", {}) or {}
-        record_id = record.get("id") or record.get("_docId")
-        record_date = record.get("date")
-        if not record_id or not record_date:
-            raise ValueError(f"Record {index + 1} is missing its required id or date")
-        meanings = item.get("meanings", []) or []
-        card = Card(
-            id=record_id,
-            date=record_date,
-            ko=str(item.get("ko", "")).strip(),
-            zh=item_zh(item),
-            pos=str(item.get("pos", "")).strip(),
-            meanings=meanings,
-            notes=[str(note) for note in (item.get("notes", []) or [])],
-            related=[str(entry) for entry in (item.get("related", []) or [])],
-            created_at=str(record.get("createdAt", "")),
-            order=record_order(record),
-            index=index,
-            is_starred=(record.get("id") or record.get("_docId")) in starred,
-        )
-        if not card.ko:
-            continue
-        cards.append(card)
-        questions.append(Question(card.id, card.id, card.date, "term", card.ko, card.zh, card))
-        for meaning in meanings:
-            for ex_index, example in enumerate(meaning.get("examples", []) or []):
-                ko = str(example.get("ko", "")).strip()
-                zh = str(example.get("zh", "")).strip()
-                if not ko or not zh:
-                    continue
-                qid = str(example.get("id") or f"{card.id}-{meaning.get('id', 'meaning')}-ex-{ex_index}")
-                questions.append(Question(qid, card.id, card.date, "example", ko, zh, card))
-    cards.sort(key=lambda c: (c.date, c.order, c.id))
-    for index, card in enumerate(cards):
-        card.index = index
-    return cards, order_questions(questions)
-
-
-def normalize_grammar_notes(records: List[Dict[str, Any]]) -> List[GrammarNote]:
-    notes: List[GrammarNote] = []
-    for record in records:
-        note_id = str(record.get("id") or record.get("_docId") or "")
-        title = str(record.get("title") or "").strip()
-        if not note_id or not title:
-            continue
-        examples = []
-        for example in record.get("examples") or []:
-            ko = str(example.get("ko") or "").strip()
-            zh = str(example.get("zh") or "").strip()
-            if ko and zh:
-                examples.append({
-                    "id": str(example.get("id") or f"{note_id}-example-{len(examples)}"),
-                    "ko": ko,
-                    "zh": zh,
-                })
-        notes.append(GrammarNote(
-            id=note_id,
-            title=title,
-            notes=str(record.get("notes") or "").strip(),
-            examples=examples,
-            category=(
-                NOTE_CATEGORY_VOCABULARY
-                if record.get("category") == NOTE_CATEGORY_VOCABULARY
-                else NOTE_CATEGORY_GRAMMAR
-            ),
-            created_at=str(record.get("createdAt") or ""),
-        ))
-    return sorted(notes, key=lambda note: (note.created_at, note.id))
-
-
-def normalize_youtube_subtitles(records: List[Dict[str, Any]]) -> List[YoutubeSubtitle]:
-    subtitles: List[YoutubeSubtitle] = []
-    for record in records:
-        subtitle_id = str(record.get("id") or record.get("_docId") or "")
-        title = str(record.get("title") or "").strip()
-        if not subtitle_id or not title:
-            continue
-        entries: List[Dict[str, Any]] = []
-        for index, entry in enumerate(record.get("entries") or []):
-            ko = str(entry.get("ko") or "").strip()
-            zh = str(entry.get("zh") or "").strip()
-            if not ko or not zh:
-                continue
-            start_ms = entry.get("startMs")
-            end_ms = entry.get("endMs")
-            entries.append({
-                "id": str(entry.get("id") or f"{subtitle_id}-entry-{index}"),
-                "ko": ko,
-                "zh": zh,
-                "startMs": int(start_ms) if isinstance(start_ms, (int, float)) else None,
-                "endMs": int(end_ms) if isinstance(end_ms, (int, float)) else None,
-            })
-        subtitles.append(YoutubeSubtitle(
-            id=subtitle_id,
-            title=title,
-            youtube_url=str(record.get("youtubeUrl") or "").strip(),
-            mode=YT_SUBTITLE_MODE_SRT if record.get("mode") == YT_SUBTITLE_MODE_SRT else YT_SUBTITLE_MODE_JSON,
-            entries=entries,
-            created_at=str(record.get("createdAt") or ""),
-            updated_at=str(record.get("updatedAt") or ""),
-        ))
-    return sorted(
-        subtitles,
-        key=lambda subtitle: (subtitle.updated_at or subtitle.created_at, subtitle.title, subtitle.id),
-        reverse=True,
-    )
-
-
 def load_data(
     client: FirebaseClient,
     session: AuthSession,
@@ -1073,127 +972,6 @@ def _read_terminal_cache(uid: str) -> Optional[Dict[str, Any]]:
     return read_cache(CACHE_DIR, uid)
 
 
-def get_progress(state: Dict[str, Any], question: Question) -> Dict[str, Any]:
-    saved = (state.get("progress") or {}).get(question.id)
-    if saved:
-        return saved
-    return {
-        "stage": 0,
-        "nextDue": add_days(question.date, REVIEW_INTERVALS[0]),
-        "lastResult": None,
-        "lastAnsweredAt": None,
-    }
-
-
-def due_questions(state: Dict[str, Any], questions: List[Question], date_key: Optional[str] = None) -> List[Question]:
-    date_key = date_key or today_string()
-    return [question for question in questions if get_progress(state, question).get("nextDue", question.date) <= date_key]
-
-
-def order_questions(questions: Iterable[Question]) -> List[Question]:
-    rank = {"term": 0, "example": 1}
-    return sorted(questions, key=lambda q: (rank.get(q.kind, 99), q.date, q.source.index, q.id))
-
-
-def daily_due_questions(state: Dict[str, Any], questions: List[Question], date_key: Optional[str] = None) -> List[Question]:
-    date_key = date_key or today_string()
-    learned_word_ids = set(state.get("learnedWordIds") or [])
-    terms = [question for question in questions if question.kind == "term" and question.item_id not in learned_word_ids]
-    return order_questions(due_questions(state, terms, date_key))
-
-
-def daily_wrong_term_questions(
-    state: Dict[str, Any],
-    questions: List[Question],
-    date_key: Optional[str] = None,
-) -> List[Question]:
-    date_key = date_key or today_string()
-    learned_word_ids = set(state.get("learnedWordIds") or [])
-    term_by_id = {
-        question.id: question
-        for question in questions
-        if question.kind == "term" and question.item_id not in learned_word_ids
-    }
-    wrong_ids: set[str] = set()
-    attempts = sorted(
-        (
-            attempt for attempt in (state.get("attempts") or [])
-            if attempt_date(attempt) == date_key
-        ),
-        key=lambda attempt: str(attempt.get("time") or ""),
-    )
-    for attempt in attempts:
-        question_id = str(attempt.get("questionId") or "")
-        if not question_id:
-            continue
-        if attempt.get("mode") == DAILY_WRONG_REVIEW_MODE:
-            if attempt.get("correct") is True:
-                wrong_ids.discard(question_id)
-            elif attempt.get("correct") is False:
-                wrong_ids.add(question_id)
-        elif attempt.get("correct") is False:
-            wrong_ids.add(question_id)
-    return sorted(
-        (term_by_id[question_id] for question_id in wrong_ids if question_id in term_by_id),
-        key=lambda question: (
-            unicodedata.normalize("NFC", question.ko).casefold(),
-            question.zh,
-            question.id,
-        ),
-    )
-
-
-def daily_grammar_questions(
-    notes: List[GrammarNote],
-    review: Dict[str, Any],
-    date_key: Optional[str] = None,
-) -> Tuple[Optional[GrammarNote], List[Question]]:
-    date_key = date_key or today_string()
-    if review.get("completedDate") == date_key:
-        return None, []
-    eligible = [note for note in notes if note.category == NOTE_CATEGORY_GRAMMAR and note.examples]
-    if not eligible:
-        return None, []
-
-    last_id = str(review.get("lastCompletedGrammarId") or "")
-    last_index = next((index for index, note in enumerate(eligible) if note.id == last_id), -1)
-    if last_index >= 0:
-        note = eligible[(last_index + 1) % len(eligible)]
-    else:
-        last_created_at = str(review.get("lastCompletedCreatedAt") or "")
-        note = next(
-            (candidate for candidate in eligible if last_created_at and candidate.created_at > last_created_at),
-            eligible[0],
-        )
-
-    return note, grammar_practice_questions([note])
-
-
-def grammar_practice_questions(notes: Iterable[GrammarNote]) -> List[Question]:
-    questions: List[Question] = []
-    for note in notes:
-        source = Card(
-            id=note.id,
-            date="",
-            ko=note.title,
-            zh="",
-            pos="文法",
-            meanings=[{"zh": "", "examples": list(note.examples)}],
-            notes=[note.notes] if note.notes else [],
-        )
-        for example in note.examples:
-            questions.append(Question(
-                id=f"grammar:{note.id}:{example['id']}",
-                item_id=note.id,
-                date="",
-                kind="grammar-example",
-                ko=example["ko"],
-                zh=example["zh"],
-                source=source,
-            ))
-    return questions
-
-
 OPTIONAL_PRACTICE_LABELS = {
     "words": "單字練習",
     "listening": "單字例句聽力練習",
@@ -1202,255 +980,8 @@ OPTIONAL_PRACTICE_LABELS = {
 }
 
 
-def seed_from_string(text: str) -> int:
-    seed = 17
-    for char in text:
-        seed = ((seed * 31) + ord(char)) % 233280
-    return seed
-
-
-def shuffle_items(items: Iterable[Any], seed: int) -> List[Any]:
-    result = list(items)
-    value = seed or 1
-    for idx in range(len(result) - 1, 0, -1):
-        value = (value * 9301 + 49297) % 233280
-        swap_idx = int((value / 233280) * (idx + 1))
-        result[idx], result[swap_idx] = result[swap_idx], result[idx]
-    return result
-
-
-def daily_round_questions(
-    state: Dict[str, Any],
-    questions: List[Question],
-    state_key: str,
-    mode: str,
-    date_key: Optional[str] = None,
-    limit: int = 20,
-) -> List[Question]:
-    date_key = date_key or today_string()
-    ordered_questions = order_questions(questions)
-    if not ordered_questions:
-        return []
-
-    question_ids = {question.id for question in ordered_questions}
-    attempts = [
-        attempt for attempt in (state.get("attempts") or [])
-        if attempt.get("mode") == mode and attempt.get("questionId") in question_ids
-    ]
-    round_state = state.get(state_key)
-    if not round_state:
-        correct_ids: set[str] = set()
-        pending_wrong_ids: set[str] = set()
-        round_completed_on = ""
-        for attempt in sorted(
-            (attempt for attempt in attempts if attempt_date(attempt) < date_key),
-            key=lambda attempt: str(attempt.get("time") or ""),
-        ):
-            question_id = str(attempt.get("questionId"))
-            if attempt.get("correct"):
-                correct_ids.add(question_id)
-                pending_wrong_ids.discard(question_id)
-            else:
-                correct_ids.discard(question_id)
-                pending_wrong_ids.add(question_id)
-            if len(correct_ids) == len(question_ids):
-                round_completed_on = attempt_date(attempt)
-        round_state = {
-            "correctIds": sorted(correct_ids), "pendingWrongIds": sorted(pending_wrong_ids),
-            "roundCompletedOn": round_completed_on, "dailyDate": "", "assignmentIds": [], "answeredIds": [],
-        }
-
-    correct_ids = {item for item in round_state.get("correctIds", []) if item in question_ids}
-    pending_wrong_ids = {item for item in round_state.get("pendingWrongIds", []) if item in question_ids}
-    round_completed_on = str(round_state.get("roundCompletedOn") or "")
-    if len(correct_ids) == len(question_ids) and not round_completed_on:
-        round_completed_on = str(round_state.get("dailyDate") or date_key)
-    if round_state.get("dailyDate") != date_key and round_completed_on and round_completed_on < date_key:
-        correct_ids.clear()
-        pending_wrong_ids.clear()
-        round_completed_on = ""
-
-    attempts_today = sorted(
-        (attempt for attempt in attempts if attempt_date(attempt) == date_key),
-        key=lambda attempt: str(attempt.get("time") or ""),
-    )
-    attempted_ids = list(dict.fromkeys(str(attempt.get("questionId")) for attempt in attempts_today))
-    assignment_ids = [item for item in (round_state.get("assignmentIds") or []) if item in question_ids]
-    if round_state.get("dailyDate") != date_key or (not assignment_ids and not attempted_ids):
-        wrong = shuffle_items(
-            (question for question in ordered_questions if question.id in pending_wrong_ids),
-            seed_from_string(f"{date_key}-{mode}-wrong"),
-        )[:limit]
-        wrong_ids = {question.id for question in wrong}
-        unseen = [question for question in ordered_questions if question.id not in correct_ids and question.id not in wrong_ids]
-        assignment_ids = [question.id for question in shuffle_items(
-            wrong + shuffle_items(unseen, seed_from_string(f"{date_key}-{mode}-unseen"))[:max(0, limit - len(wrong))],
-            seed_from_string(f"{date_key}-{mode}-assignment"),
-        )]
-    assignment_limit = max(limit, len(attempted_ids))
-    assignment_ids = (attempted_ids + [item for item in assignment_ids if item not in attempted_ids])[:assignment_limit]
-    answered_ids = set(attempted_ids)
-    for attempt in attempts_today:
-        question_id = str(attempt.get("questionId"))
-        if attempt.get("correct"):
-            correct_ids.add(question_id)
-            pending_wrong_ids.discard(question_id)
-        else:
-            correct_ids.discard(question_id)
-            pending_wrong_ids.add(question_id)
-    if len(correct_ids) == len(question_ids):
-        round_completed_on = date_key
-    state[state_key] = {
-        "correctIds": sorted(correct_ids), "pendingWrongIds": sorted(pending_wrong_ids),
-        "roundCompletedOn": round_completed_on, "dailyDate": date_key,
-        "assignmentIds": assignment_ids, "answeredIds": list(answered_ids),
-    }
-    by_id = {question.id: question for question in ordered_questions}
-    return [by_id[item] for item in assignment_ids if item not in answered_ids and item in by_id]
-
-
-def daily_recognition_questions(
-    state: Dict[str, Any],
-    questions: List[Question],
-    date_key: Optional[str] = None,
-    limit: int = DAILY_RECOGNITION_LIMIT,
-) -> List[Question]:
-    learned_word_ids = set(state.get("learnedWordIds") or [])
-    examples = [question for question in questions if question.kind == "example" and question.item_id not in learned_word_ids]
-    return daily_round_questions(
-        state,
-        examples,
-        "recognition",
-        DAILY_RECOGNITION_MODE,
-        date_key,
-        limit,
-    )
-
-
-def record_answer(
-    state: Dict[str, Any],
-    question: Question,
-    correct: bool,
-) -> None:
-    now = utc_now_iso()
-    previous = get_progress(state, question)
-    stats = state.setdefault("stats", {})
-    old = stats.get(question.id, {})
-    next_stats = {
-        **old,
-        "total": int(old.get("total", 0)) + 1,
-        "correct": int(old.get("correct", 0)) + (1 if correct else 0),
-        "wrong": int(old.get("wrong", 0)) + (0 if correct else 1),
-        "lastAnsweredAt": now,
-        "lastResult": "correct" if correct else "wrong",
-    }
-    stats[question.id] = next_stats
-    transition = next_review_transition(
-        int(previous.get("stage", 0)), old, next_stats, correct, REVIEW_INTERVALS,
-    )
-    stage = transition["stage"]
-    interval_days = transition["intervalDays"]
-    state.setdefault("progress", {})[question.id] = {
-        "stage": stage,
-        "nextDue": add_days(today_string(), interval_days),
-        "lastAnsweredAt": now,
-        "lastResult": "correct" if correct else "wrong",
-    }
-    attempts = state.setdefault("attempts", [])
-    attempts.insert(0, {"id": str(uuid.uuid4()), "questionId": question.id, "correct": correct, "date": today_string(), "time": now})
-    del attempts[5000:]
-
-
-def record_daily_wrong_review_answer(
-    state: Dict[str, Any],
-    question: Question,
-    correct: bool,
-) -> None:
-    attempts = state.setdefault("attempts", [])
-    attempts.insert(0, {
-        "id": str(uuid.uuid4()),
-        "questionId": question.id,
-        "correct": correct,
-        "date": today_string(),
-        "time": utc_now_iso(),
-        "mode": DAILY_WRONG_REVIEW_MODE,
-    })
-    del attempts[5000:]
-
-
-def record_daily_round_answer(
-    state: Dict[str, Any],
-    question: Question,
-    correct: bool,
-    state_key: str,
-    mode: str,
-    record_wrong_stats: bool = False,
-) -> None:
-    round_state = state.setdefault(state_key, {
-        "correctIds": [], "pendingWrongIds": [], "roundCompletedOn": "", "dailyDate": today_string(),
-        "assignmentIds": [], "answeredIds": [],
-    })
-    correct_ids = set(round_state.get("correctIds") or [])
-    pending_wrong_ids = set(round_state.get("pendingWrongIds") or [])
-    if correct:
-        correct_ids.add(question.id)
-        pending_wrong_ids.discard(question.id)
-    else:
-        correct_ids.discard(question.id)
-        pending_wrong_ids.add(question.id)
-    round_state["correctIds"] = sorted(correct_ids)
-    round_state["pendingWrongIds"] = sorted(pending_wrong_ids)
-    round_state["answeredIds"] = list(dict.fromkeys([*(round_state.get("answeredIds") or []), question.id]))
-    if not correct and record_wrong_stats:
-        record_answer(state, question, False)
-        state["attempts"][0]["mode"] = mode
-        return
-    attempts = state.setdefault("attempts", [])
-    attempts.insert(0, {
-        "id": str(uuid.uuid4()),
-        "questionId": question.id,
-        "correct": correct,
-        "date": today_string(),
-        "time": utc_now_iso(),
-        "mode": mode,
-    })
-    del attempts[5000:]
-
-
-def record_daily_recognition_answer(state: Dict[str, Any], question: Question, correct: bool) -> None:
-    record_daily_round_answer(
-        state,
-        question,
-        correct,
-        "recognition",
-        DAILY_RECOGNITION_MODE,
-    )
-
-
-def toggle_star(state: Dict[str, Any], card: Card) -> None:
-    starred = state.setdefault("starred", [])
-    if card.id in starred:
-        starred.remove(card.id)
-        card.is_starred = False
-    else:
-        starred.append(card.id)
-        card.is_starred = True
-
-
-def normalize_text(text: str) -> str:
-    return "".join(ch for ch in text if not unicodedata.category(ch).startswith("P")).lower()
-
-
-def count_korean_letters(text: str) -> int:
-    return sum(1 for ch in text if "\uac00" <= ch <= "\ud7af" or "\u1100" <= ch <= "\u11ff" or "\u3130" <= ch <= "\u318f")
-
-
-def korean_length_warning(user_input: str, answer: str) -> str:
-    actual = count_korean_letters(user_input)
-    expected = count_korean_letters(answer)
-    if actual == expected:
-        return ""
-    return f"字數不符：目前 {actual} 個韓文字，答案需要 {expected} 個。請修改後再送出。"
+def record_answer(state: Dict[str, Any], question: Question, correct: bool) -> None:
+    _record_answer(state, question, correct, date_key=today_string(), now=utc_now_iso())
 
 
 def card_examples(card: Card) -> List[Dict[str, str]]:
@@ -1673,179 +1204,11 @@ def speak_korean(text: str) -> bool:
 
 
 def youtube_audio_cache_path(subtitle: YoutubeSubtitle) -> Path:
-    url_hash = hashlib.sha256(subtitle.youtube_url.encode("utf-8")).hexdigest()[:16]
-    safe_id = re.sub(r"[^A-Za-z0-9._-]+", "-", subtitle.id).strip("-.") or "subtitle"
-    return CACHE_DIR / "youtube-audio" / f"{safe_id}-{url_hash}.mp3"
-
-
-def youtube_audio_download_profiles() -> List[List[str]]:
-    return [
-        [],
-        ["--format", "bestaudio[ext=m4a]/bestaudio/best"],
-        [
-            "--format", "bestaudio[ext=m4a]/bestaudio/best",
-            "--extractor-args", "youtube:player_client=android_vr",
-        ],
-    ]
+    return _youtube_audio_cache_path(subtitle, CACHE_DIR)
 
 
 def download_youtube_audio(subtitle: YoutubeSubtitle) -> Tuple[Optional[Path], str]:
-    if not subtitle.youtube_url:
-        return None, "這篇字幕沒有 YouTube 連結。"
-    audio_path = youtube_audio_cache_path(subtitle)
-    if audio_path.exists() and audio_path.stat().st_size > 0:
-        return audio_path, "已載入快取的 YouTube 原音。"
-    yt_dlp = shutil.which("yt-dlp")
-    if not yt_dlp:
-        return None, "缺少 yt-dlp，請執行 python3 -m pip install -r requirements-terminal.txt。"
-    if not shutil.which("ffmpeg"):
-        return None, "缺少 ffmpeg，無法將 YouTube 音訊轉成 MP3。"
-
-    audio_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_dir = audio_path.parent / f".{audio_path.stem}-{uuid.uuid4().hex}"
-    temporary_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        errors: List[str] = []
-        for attempt_index, profile in enumerate(youtube_audio_download_profiles(), start=1):
-            attempt_dir = temporary_dir / f"attempt-{attempt_index}"
-            attempt_dir.mkdir(parents=True, exist_ok=True)
-            result = subprocess.run(
-                [
-                    yt_dlp,
-                    "--no-playlist",
-                    "--no-progress",
-                    "--retries", "3",
-                    "--fragment-retries", "3",
-                    "--extract-audio",
-                    "--audio-format", "mp3",
-                    "--audio-quality", "5",
-                    "--output", str(attempt_dir / "audio.%(ext)s"),
-                    *profile,
-                    subtitle.youtube_url,
-                ],
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=300,
-            )
-            generated = attempt_dir / "audio.mp3"
-            if result.returncode == 0 and generated.exists() and generated.stat().st_size > 0:
-                os.replace(generated, audio_path)
-                strategy = "" if attempt_index == 1 else f"（使用備援策略 {attempt_index}）"
-                return audio_path, f"YouTube 原音已下載並快取{strategy}。"
-            error_lines = [line.strip() for line in (result.stderr or "").splitlines() if line.strip()]
-            errors.append(error_lines[-1] if error_lines else f"策略 {attempt_index} 未產生音訊檔案")
-        detail = errors[-1] if errors else "yt-dlp 未產生音訊檔案"
-        return None, f"YouTube 音訊下載失敗：{detail}。請先更新 yt-dlp。"
-    except subprocess.TimeoutExpired:
-        return None, "YouTube 音訊下載逾時，請稍後再試。"
-    except OSError as exc:
-        return None, f"YouTube 音訊下載失敗：{exc}"
-    finally:
-        shutil.rmtree(temporary_dir, ignore_errors=True)
-
-
-class TerminalYoutubeAudioPlayer:
-    def __init__(self, audio_path: Path) -> None:
-        self.audio_path = audio_path
-        self.process: Optional[subprocess.Popen[Any]] = None
-        self.base_position = 0.0
-        self.started_at: Optional[float] = None
-        self.paused = True
-
-    @staticmethod
-    def available() -> bool:
-        return bool(shutil.which("ffplay") or shutil.which("cvlc"))
-
-    def _command(self, position: float) -> Optional[List[str]]:
-        if shutil.which("ffplay"):
-            return [
-                "ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet",
-                "-ss", f"{position:.3f}", str(self.audio_path),
-            ]
-        if shutil.which("cvlc"):
-            return [
-                "cvlc", "--intf", "dummy", "--no-video", "--play-and-exit", "--quiet",
-                f"--start-time={position:.3f}", str(self.audio_path),
-            ]
-        return None
-
-    def position(self) -> float:
-        if self.started_at is None or self.paused:
-            return self.base_position
-        current = self.base_position + max(0.0, time.monotonic() - self.started_at)
-        if self.process and self.process.poll() is not None:
-            self.base_position = current
-            self.started_at = None
-            self.process = None
-            self.paused = True
-        return current
-
-    def play_from(self, position: float) -> bool:
-        self.stop()
-        self.base_position = max(0.0, float(position))
-        command = self._command(self.base_position)
-        if not command:
-            return False
-        try:
-            self.process = subprocess.Popen(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except OSError:
-            self.process = None
-            return False
-        self.started_at = time.monotonic()
-        self.paused = False
-        return True
-
-    def pause(self) -> bool:
-        if not self.process or self.process.poll() is not None or self.paused:
-            return False
-        self.base_position = self.position()
-        try:
-            self.process.send_signal(signal.SIGSTOP)
-        except OSError:
-            return False
-        self.started_at = None
-        self.paused = True
-        return True
-
-    def resume(self) -> bool:
-        if self.process and self.process.poll() is None and self.paused:
-            try:
-                self.process.send_signal(signal.SIGCONT)
-            except OSError:
-                return False
-            self.started_at = time.monotonic()
-            self.paused = False
-            return True
-        return self.play_from(self.base_position)
-
-    def toggle(self) -> bool:
-        return self.resume() if self.paused else self.pause()
-
-    def stop(self) -> None:
-        process = self.process
-        if not process:
-            return
-        if process.poll() is None:
-            try:
-                if self.paused:
-                    process.send_signal(signal.SIGCONT)
-                process.terminate()
-                process.wait(timeout=1)
-            except (OSError, subprocess.TimeoutExpired):
-                try:
-                    process.kill()
-                except OSError:
-                    pass
-        self.process = None
-        self.started_at = None
-        self.paused = True
+    return _download_youtube_audio(subtitle, CACHE_DIR)
 
 
 def next_recognition_reveal_state(
