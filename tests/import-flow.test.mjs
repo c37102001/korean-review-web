@@ -10,7 +10,7 @@ let helpers;
 
 before(async () => {
   server = await createServer({ server: { middlewareMode: true }, appType: 'custom' });
-  helpers = await server.ssrLoadModule('/src/main.jsx');
+  helpers = await server.ssrLoadModule('/src/app/App.jsx');
 });
 
 after(async () => {

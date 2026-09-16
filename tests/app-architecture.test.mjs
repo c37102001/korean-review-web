@@ -45,16 +45,34 @@ test('feature collection hooks depend on repositories instead of Firebase SDK', 
 });
 
 test('content library routes are lazy chunks and never import the app entry', async () => {
+  const appSource = await readFile(new URL('../src/app/App.jsx', import.meta.url), 'utf8');
   const mainSource = await readFile(new URL('../src/main.jsx', import.meta.url), 'utf8');
   const routePaths = [
     '../src/features/notes/pages/NotesNotebookPage.jsx',
+    '../src/features/reading/pages/ReadingTestPage.jsx',
     '../src/features/reading/pages/ReadingTestsPage.jsx',
+    '../src/features/subtitles/pages/YoutubeSubtitleReader.jsx',
     '../src/features/subtitles/pages/YoutubeSubtitlesPage.jsx',
   ];
   routePaths.forEach((path) => {
-    const modulePath = path.replace('../src/', './');
-    assert.match(mainSource, new RegExp(`lazy\\(\\(\\) => import\\('${modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'\\)\\)`));
+    const modulePath = path.replace('../src/', '../');
+    assert.match(appSource, new RegExp(`lazy\\(\\(\\) => import\\('${modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'\\)`));
   });
+  assert.doesNotMatch(mainSource, /lazy\(|features\//);
   const routeSources = await Promise.all(routePaths.map((path) => readFile(new URL(path, import.meta.url), 'utf8')));
   routeSources.forEach((source) => assert.doesNotMatch(source, /from ['"].*main\.jsx['"]/));
+});
+
+test('web entry is bootstrap-only and feature readers do not depend on App', async () => {
+  const mainSource = await readFile(new URL('../src/main.jsx', import.meta.url), 'utf8');
+  const lines = mainSource.split('\n').filter((line) => line.trim());
+  assert.ok(lines.length <= 8);
+  assert.match(mainSource, /import App from '\.\/app\/App\.jsx'/);
+  assert.doesNotMatch(mainSource, /function App|useState|firebase|Firestore/);
+
+  const readers = await Promise.all([
+    '../src/features/reading/pages/ReadingTestPage.jsx',
+    '../src/features/subtitles/pages/YoutubeSubtitleReader.jsx',
+  ].map((path) => readFile(new URL(path, import.meta.url), 'utf8')));
+  readers.forEach((source) => assert.doesNotMatch(source, /app\/App|main\.jsx/));
 });

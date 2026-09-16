@@ -29,12 +29,18 @@ test('web review rules match the versioned Web/Terminal contract', () => {
 });
 
 test('YT and reading share one selectable-text ownership boundary', async () => {
-  const main = await readFile(new URL('../src/main.jsx', import.meta.url), 'utf8');
+  const app = await readFile(new URL('../src/app/App.jsx', import.meta.url), 'utf8');
   const hook = await readFile(new URL('../src/features/text-selection/hooks/useTextSelectionActions.js', import.meta.url), 'utf8');
-  assert.equal((main.match(/addEventListener\('selectionchange'/g) || []).length, 0);
+  const readers = await Promise.all([
+    '../src/features/reading/pages/ReadingTestPage.jsx',
+    '../src/features/subtitles/pages/YoutubeSubtitleReader.jsx',
+  ].map((path) => readFile(new URL(path, import.meta.url), 'utf8')));
+  assert.equal((app.match(/addEventListener\('selectionchange'/g) || []).length, 0);
   assert.equal((hook.match(/addEventListener\('selectionchange'/g) || []).length, 1);
-  assert.match(main, /<SelectableKoreanText/);
-  assert.match(main, /<SelectionActionPopover/);
+  readers.forEach((source) => {
+    assert.match(source, /<SelectableKoreanText/);
+    assert.match(source, /<SelectionActionPopover/);
+  });
 });
 
 test('notes, subtitles and reading use shared library layout primitives', async () => {

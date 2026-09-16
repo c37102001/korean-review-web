@@ -730,7 +730,7 @@ src/review-engine/
 
 ### Phase 8：Web feature pages 與 App composition
 
-**狀態：待實作**
+**狀態：已完成（2026-09-16）**
 
 工作順序：
 

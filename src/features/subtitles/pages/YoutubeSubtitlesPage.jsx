@@ -38,7 +38,7 @@ function YoutubeSubtitleCard({ note, onOpen, onEdit, onDelete }) {
   );
 }
 
-function YoutubeSubtitleEditorModal({ note, tagSuggestions = [], onSave, onClose }) {
+export function YoutubeSubtitleEditorModal({ note, tagSuggestions = [], onSave, onClose }) {
   const initialMode = note?.mode === YT_SUBTITLE_MODE_SRT ? YT_SUBTITLE_MODE_SRT : YT_SUBTITLE_MODE_JSON;
   const [title, setTitle] = useState(note?.title || '');
   const [tag, setTag] = useState(note?.tag || '');

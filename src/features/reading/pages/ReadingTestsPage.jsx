@@ -31,7 +31,7 @@ function ReadingTestCard({ test, index, onOpen, onEdit, onDelete }) {
   );
 }
 
-function ReadingTestsEditorModal({ test, existingTests, onSave, onClose }) {
+export function ReadingTestsEditorModal({ test, existingTests, onSave, onClose }) {
   const [source, setSource] = useState(() => test ? formatReadingTestsJson([test]) : READING_TEST_JSON_SAMPLE);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
