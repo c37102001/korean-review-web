@@ -574,4 +574,372 @@ Terminal 後續新增領域規則時必須放入 `terminal_app/domain` 並擴充
 | P2 | Terminal package 與 parity fixtures | 避免 Web／Terminal 規則漂移 |
 | P3 | route lazy loading、完整 Library primitives | 在核心邊界穩定後再做 |
 
-最合理的第一個實作任務是：建立 canonical `WordCard`，讓 Notebook、Folder、Date 使用同一元件，同時保留各自 delete policy。完成後再抽 `WordCollectionPage`，而不是反過來先建立一個尚未驗證的通用頁面框架。
+Phase 0～5 已完成。後續工作不再重做上述元件，而是依下一節的 Phase 6～14 繼續縮小 Web 與 Terminal 入口檔，最後建立可持續執行的架構邊界檢查。
+
+## 17. Phase 5 後的剩餘技術債盤點
+
+> 盤點基準：2026-09-16，commit `1786029`
+
+### 17.1 Web
+
+`src/main.jsx` 已從最初的 9,198 行降至 5,769 行，但仍同時擁有下列責任：
+
+| 行數區域 | 責任 | 建議 owner |
+| --- | --- | --- |
+| 約 239～722 | YouTube API loader、登入、離線狀態、Firestore store adapter | `app/hooks`、`features/auth`、repositories |
+| 約 723～1,246 | 單字 JSON validation、import draft、衝突處理、單字 JSON 編輯 | `features/word-import` |
+| 約 1,247～1,699 | stats、到期選題、錯題 pool、每日 round、作答寫入與文字比對 | `review-engine` |
+| 約 1,810～2,492 | App composition、登入、首頁、語音設定、自選練習 modal | `app`、`features/home`、`features/auth` |
+| 約 2,493～3,568 | 日曆、日期單字、單字新增／匯入／編輯、詳情 modal | `features/calendar`、`features/word-editor` |
+| 約 3,585～4,680 | `StudyPage`、`PracticePage` 及結果元件 | `features/sessions` |
+| 約 4,710～5,211 | JSON dialogs、閱讀 reader、YT reader | 對應 feature pages/components |
+| 約 5,212～5,769 | 資料夾與單字本 pages | `features/folders`、`features/word-library` |
+
+其他明顯問題：
+
+- `tests/import-flow.test.mjs` 仍透過 Vite SSR 載入整個 `main.jsx` 取得純函式，代表 import domain 尚未有獨立 owner。
+- `src/styles.css` 仍有 6,712 行與 8 個分散的 responsive 區段，feature ownership 不清楚。
+- production 主 chunk 約 1.16 MB；lazy routes 已開始生效，但 Study、Practice、Word Editor、readers 仍進入主 chunk。
+- `main.jsx` 底部仍 export 大量 helper 供測試使用，entry point 尚未回到單純 bootstrap。
+
+### 17.2 Terminal
+
+`terminal_review_practice.py` 已從 5,610 行降至 5,346 行，但仍包含：
+
+- 約 550 行的 `FirebaseClient`，混合 REST transport、authentication、repository、離線 journal 與 review persistence。
+- 約 800 行的 record hydration、review selectors、排程與搜尋規則。
+- 約 270 行的 TTS、YouTube download 與 audio player lifecycle。
+- 約 320 行的 curses drawing、輸入、menu 與 prompt primitives。
+- 約 2,800 行的 notes、subtitles、study、practice、folders、calendar screens 與主導航。
+
+目前 `terminal_app` 已有可用的 package 基礎，但 Terminal 測試仍主要 import `terminal_review_practice` facade。若不繼續拆分，後續新增畫面仍會回到主程式。
+
+## 18. 最終目標與依賴規則
+
+### 18.1 Web 目標
+
+```text
+main.jsx (bootstrap only)
+  -> app/App.jsx + providers + route registry
+    -> feature pages/controllers
+      -> application services
+        -> repositories
+          -> Firebase SDK
+
+feature UI -> feature domain / shared UI
+domain     -> shared pure utilities only
+repository -> Firebase adapter only
+```
+
+硬性規則：
+
+1. `src/main.jsx` 最終不超過 80 行，只能掛載 React root、global CSS 與 `App`。
+2. feature、service、repository、test 都不得 import `main.jsx`。
+3. domain/model 不得 import React、Firebase、DOM API 或 feature page。
+4. page 不得直接 import Firebase SDK、組 Firestore path 或自行處理 batch writes。
+5. 共用元件不得 import 某個 feature page；feature 可以依賴 shared，shared 不得反向依賴 feature。
+6. 單一 React page/controller 原則上不超過 350 行；超過時必須說明其 state ownership 為何不可再拆。
+
+### 18.2 Terminal 目標
+
+```text
+terminal_review_practice.py (compatibility entry)
+  -> terminal_app/app.py
+    -> ui/screens + controllers
+      -> application services
+        -> domain / sync / api / audio
+```
+
+硬性規則：
+
+1. `terminal_review_practice.py` 最終不超過 100 行，只保留相容 imports 與 `main()`。
+2. `terminal_app/domain` 不得 import curses、network、filesystem、subprocess 或 UI。
+3. `terminal_app/api` 不得知道 curses screen 或 menu；REST transport 必須可注入 fake transport。
+4. `terminal_app/ui/screens` 不得直接組 Firestore payload，僅呼叫 application service。
+5. screen 返回值要明確表示 `BACK`、`COMPLETE`、`LOGOUT`，不得靠多層 function return 意外跳過導航層級。
+6. Web／Terminal 共用規則變更必須先擴充 `contracts/` fixture，再各自實作。
+
+## 19. 後續分階段實作計畫
+
+每一階段必須獨立完成、驗證並 commit，不把多個 ownership boundary 混在同一個 commit。以下行數是方向性上限，不應為了達標而製造無意義的小檔案。
+
+### Phase 6：單字匯入與編輯 domain
+
+**狀態：待實作**
+
+目標目錄：
+
+```text
+src/features/word-import/
+├── model/validation.js
+├── model/draft.js
+├── model/conflicts.js
+├── model/editJson.js
+├── components/ImportReviewPanel.jsx
+├── components/ImportConflictResolver.jsx
+├── components/ImportProgressPanel.jsx
+└── components/WordImportForm.jsx
+```
+
+工作：
+
+- 將 JSON validation、draft、related resolution、duplicate conflict、merge／replace 與 single-word JSON edit 從 `main.jsx` 移出。
+- 將 `AddItemsForm` 拆成 controller、手動表單與 JSON import flow；共用儲存介面仍由 `wordLibraryService` 提供。
+- `tests/import-flow.test.mjs` 改為直接 import domain modules，不再 SSR load `main.jsx`。
+- 保留 schema v2、匯入順序、既有 id、衝突視窗與錯誤訊息，不改 Firestore 格式。
+
+驗收：
+
+- import domain 測試不啟動 Vite、React 或 Firebase。
+- 新增、取代、合併、取消、重試與 JSON 編輯的既有 fixture 全數通過。
+- `main.jsx` 不再包含 import validation／conflict 純函式。
+
+建議 commit：`refactor word import and editor modules`
+
+### Phase 7：複習引擎完整抽離
+
+**狀態：待實作**
+
+目標目錄：
+
+```text
+src/review-engine/
+├── rules.js
+├── selectors.js
+├── schedules.js
+├── answers.js
+├── rounds.js
+└── textComparison.js
+```
+
+工作：
+
+- 搬移 `getStats`、`getProgress`、due selectors、最低熟悉度選題、每日錯題與 streak 計算。
+- 搬移 daily round／recognition／grammar schedule 與 replay attempt 規則。
+- 搬移 answer reducers、文字正規化、韓文字數與 diff comparison。
+- UI 不直接 mutate store；所有作答都經 named reducer／result policy。
+- 擴充 versioned contract，覆蓋 due date、round rollover、learned exclusion、wrong review 與 flame completion。
+
+驗收：
+
+- review-engine 可在 Node 中直接測試，不 import React、Firebase 或 `main.jsx`。
+- Web／Terminal 對 contract fixture 的結果完全一致。
+- 每日複習與 optional practice 的 persistence policy 測試保持隔離。
+
+建議 commit：`refactor review engine boundaries`
+
+### Phase 8：Web feature pages 與 App composition
+
+**狀態：待實作**
+
+工作順序：
+
+1. 搬移 `ReadingTestPage`、`YoutubeSubtitleReader` 到各自 feature route，讓列表與 reader 同屬一個 feature。
+2. 搬移 `HomePage`、`CalendarPage`、日期單字 page、Folders pages、Notebook page。
+3. 搬移 `LoginPage`、`VoiceSettingsModal`、offline status 與 auth/offline hooks。
+4. 將 `AppWorkspace` 改成 route registry 組裝，不手動傳遞所有 feature props。
+5. 建立 `src/app/App.jsx`，`main.jsx` 只保留 bootstrap。
+
+頁面只能取得 feature controller 提供的 view model/actions，不得重新建立資料 join 或 persistence 邏輯。
+
+驗收：
+
+- 各 route 可以 lazy import，首頁不載入 YT player、reading editor 或 folder editor。
+- navigation stack、返回上一層與 collection enable policy 測試維持通過。
+- `main.jsx` 降至 1,500 行以下；剩餘內容只應是尚未搬移的 sessions 與少量相容 export。
+
+建議 commit：`refactor app routes and feature pages`
+
+### Phase 9：Study／Practice controllers 與 UI 拆分
+
+**狀態：待實作**
+
+目標：
+
+```text
+src/features/sessions/
+├── core/
+├── study/
+│   ├── StudyPage.jsx
+│   ├── useStudyController.js
+│   ├── useStudyKeyboard.js
+│   └── useStudyAudio.js
+└── practice/
+    ├── PracticePage.jsx
+    ├── usePracticeController.js
+    ├── usePracticeKeyboard.js
+    ├── PracticePrompt.jsx
+    ├── PracticeAnswerPanel.jsx
+    ├── PracticeDecisionBar.jsx
+    └── PracticeResult.jsx
+```
+
+工作：
+
+- controller 負責 session state machine；component 只呈現 view model。
+- keyboard、touch、scroll、audio、wake lock 各有單一 hook owner，並在 modal/input focus 時停用快捷鍵。
+- `StudyPage` 與 `PracticePage` 保持不同流程，不合併成萬用 conditional component。
+- 共用 `SessionShell`、`SessionNavigator`、`WordDetails`、classification actions 與 edit dialog。
+
+驗收：
+
+- 每個 session kind 可用純 controller test 驗證完整生命週期。
+- 手機 double tap、固定卡片高度、語音取消、錯題重練與每日寫入行為不變。
+- `main.jsx` 不超過 80 行，tests 不再 import entry helpers。
+
+建議 commit：`refactor study and practice controllers`
+
+### Phase 10：Terminal API 與同步邊界
+
+**狀態：待實作**
+
+目標目錄：
+
+```text
+terminal_app/
+├── api/auth.py
+├── api/firestore_client.py
+├── api/transport.py
+├── repositories/
+│   ├── words.py
+│   ├── folders.py
+│   ├── review.py
+│   └── content.py
+└── sync/
+    ├── cache.py
+    ├── incremental.py
+    ├── journal.py
+    └── service.py
+```
+
+工作：
+
+- 拆分 `FirebaseClient`：HTTP transport、token refresh、Firestore paths、repositories、offline synchronization 分離。
+- `load_data`／incremental load／hydrate 移入 sync service；normalization 移入 domain serializers。
+- offline journal merge 保持 atomic、idempotent，quota fallback 不可觸發隱性全量讀取。
+- repository methods 回傳 domain data，不把 Firestore REST value 暴露給 screens。
+
+驗收：
+
+- API/repository 測試使用 fake transport，不 monkeypatch 巨型 `FirebaseClient`。
+- 有 cache 時只執行 checkpoint 後增量查詢；429 fallback 完全不存取網路。
+- 同一作答、folder toggle、optional task 不產生額外全量 reads。
+
+建議 commit：`refactor terminal api and sync services`
+
+### Phase 11：Terminal domain 與 audio 完整抽離
+
+**狀態：待實作**
+
+工作：
+
+- 搬移 record／grammar／subtitle normalization、搜尋、filter、排序與 folder selectors。
+- 搬移 daily due、wrong review、grammar、recognition round 與 answer reducers；共用 contract parity tests。
+- 將 TTS cache、player、YouTube downloader、audio lifecycle 分至 `audio/tts.py` 與 `audio/youtube.py`。
+- 下載器與播放器使用 adapter，screen 不直接呼叫 `subprocess`。
+
+驗收：
+
+- `terminal_app/domain` 全部是 deterministic pure functions。
+- domain tests 不初始化 curses、網路、音訊或 home cache。
+- audio adapter 可用 fake command runner 測試 403 fallback、seek、pause 與 cleanup。
+
+建議 commit：`refactor terminal domain and audio adapters`
+
+### Phase 12：Terminal screens 與導航
+
+**狀態：待實作**
+
+目標目錄：
+
+```text
+terminal_app/ui/
+├── primitives.py
+├── navigation.py
+├── controllers/
+└── screens/
+    ├── home.py
+    ├── study.py
+    ├── practice.py
+    ├── notebook.py
+    ├── folders.py
+    ├── notes.py
+    └── subtitles.py
+```
+
+工作：
+
+- 先完整搬移 drawing/menu/input primitives，再按 screen 一個一個搬移。
+- 導航改用明確 stack/result，不讓單一 `Esc` 跳過多層。
+- Study／Practice 共用 answer details、scroll model、audio controls 與 classification commands。
+- `terminal_app/app.py` 負責依賴注入和主 loop；舊 script 僅作 compatibility entry。
+
+驗收：
+
+- 每個 screen 可使用 fake window、fake service 測試 Esc、上下捲動與完成 callback。
+- `terminal_review_practice.py` 不超過 100 行。
+- 現有啟動指令與 `--offline`、`--sync` 介面不變。
+
+建議 commit：`refactor terminal screens and navigation`
+
+### Phase 13：CSS ownership、bundle 與視覺回歸
+
+**狀態：待實作**
+
+工作：
+
+- 保留 `tokens.css`、`base.css`、`forms.css`、`layout.css`，其餘樣式移到 feature stylesheet。
+- 合併重複 media queries；元件只由自己的 class/modifier 控制，不依賴深層 page ancestor override。
+- 對 WordCard、Study、Practice、YT reader、Library pages 建立 360px／390px／desktop screenshot baselines。
+- 分析 bundle，將 sessions、word editor 與 media readers route-level lazy load。
+
+驗收：
+
+- 不再有同一 canonical component 的基礎 selector 散落於多個 feature 區段。
+- 主要手機流程無文字擠壓、橫向 overflow 或控制項重疊。
+- 初始主 chunk 有明確預算；建議壓縮後低於 200 KB，超過必須在 PR 說明原因。
+
+建議 commit：`refactor feature styles and route bundles`
+
+### Phase 14：架構守門與 CI
+
+**狀態：待實作**
+
+工作：
+
+- 新增 dependency boundary tests：禁止 feature/import entry、domain/import Firebase、Terminal domain/import curses。
+- 新增 file-size report；超過上限先警告，穩定後改為 CI failure。
+- 建立 Firestore Emulator integration suite：增量同步、tombstone、多 client、offline merge、read/write budget。
+- 建立不連 production Firebase 的 authenticated Playwright fixture，跑核心桌面／手機流程。
+- 將 Web tests、Python tests、build、emulator tests、E2E 分層執行並輸出清楚失敗範圍。
+
+驗收：
+
+- 新功能若破壞依賴方向，CI 在 merge 前直接阻止。
+- 測試不使用 production account，不消耗正式 Firestore quota。
+- README 說明如何執行每一層測試與新增 feature 的標準位置。
+
+建議 commit：`add architecture and integration guardrails`
+
+## 20. 每階段的固定執行流程
+
+1. 先建立 characterization test，紀錄搬移前輸出與互動。
+2. 建立新 owner，先搬 pure logic，再搬 controller，最後搬 UI。
+3. 更新所有 caller 後，在同一階段刪除舊實作；不得長期保留雙軌。
+4. 執行 `npm test`、Python tests、`npm run build` 與 `git diff --check`。
+5. 涉及 UI 時執行 390px 與 desktop screenshot；涉及 persistence 時跑 emulator/read budget tests。
+6. 更新本指南中該 Phase 的 checklist 與實際差異。
+7. 一個 Phase 完成後自動建立一個 non-amend commit，再開始下一階段。
+
+## 21. Definition of Done
+
+整體模組化重構只有在以下條件全數達成後才算完成：
+
+- `main.jsx` <= 80 行，`terminal_review_practice.py` <= 100 行。
+- tests 不再為取得 helper 而 import Web／Terminal entry point。
+- Firebase access 只存在 repositories／api adapters；screens/pages 不知道 Firestore payload。
+- Web／Terminal 複習規則由 versioned contract 持續做 parity validation。
+- 單字匯入、session、offline sync、selection tools 各有唯一 owner，沒有舊版平行實作。
+- desktop/mobile 核心流程有自動化視覺與互動回歸。
+- Firestore Emulator 證明正常啟動、增量同步與單次作答符合 read/write budget。
+- 架構 boundary tests 與 CI 能阻止責任重新集中到入口檔。
