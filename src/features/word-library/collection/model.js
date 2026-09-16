@@ -16,11 +16,7 @@ const koreanWordCollator = new Intl.Collator('ko-KR', {
 });
 
 export function familiarityScore(stats = {}) {
-  const correct = Number(stats.correct) || 0;
-  const wrong = Number.isFinite(Number(stats.wrong))
-    ? Number(stats.wrong)
-    : Math.max(0, (Number(stats.total) || 0) - correct);
-  return correct - wrong;
+  return reviewFamiliarityScore(stats);
 }
 
 export function familiarityLevel(score) {
@@ -230,3 +226,4 @@ export function deriveWordCollection({
     unfiledCount: items.filter((item) => !assignedWordIds.has(item.id)).length,
   };
 }
+import { reviewFamiliarityScore } from '../../../review-engine/rules.js';

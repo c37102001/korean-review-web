@@ -40,6 +40,11 @@ import {
 } from './features/word-library/collection/model.js';
 import { useWordCollection } from './features/word-library/hooks/useWordCollection.js';
 import { useWordCollectionDialogs } from './features/word-library/hooks/useWordCollectionDialogs.js';
+import { SelectableKoreanText } from './features/text-selection/components/SelectableKoreanText.jsx';
+import { SelectionActionPopover, WordDefinitionPopover } from './features/text-selection/components/SelectionOverlays.jsx';
+import { QuickAddWordModal } from './features/text-selection/components/QuickAddWordModal.jsx';
+import { useDismissibleWordDefinition, useTextSelectionActions } from './features/text-selection/hooks/useTextSelectionActions.js';
+import { koreanTextMatches } from './features/text-selection/model.js';
 import {
   createDailyReviewSession,
   createPracticeSession,
@@ -68,10 +73,7 @@ import {
   studyCardDoubleTapAction,
 } from './features/sessions/study/model.js';
 import {
-  ArrowDown,
-  ArrowUp,
   BookOpen,
-  BookMarked,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -88,7 +90,6 @@ import {
   FolderInput,
   FolderOpen,
   FolderPlus,
-  Highlighter,
   Link2,
   Minus,
   Pencil,
@@ -177,6 +178,7 @@ import {
   parseReadingTestsJson,
 } from './reading/model.js';
 import { attemptDate, emptyStore, progressShardId } from './review-engine/store.js';
+import { nextReviewTransition, REVIEW_INTERVALS } from './review-engine/rules.js';
 import {
   deleteLearningRecord,
   deleteLearningRecords,
@@ -204,9 +206,11 @@ import {
 } from './subtitles/model.js';
 import {
   buildRecordLookup,
+  formatPairLines,
   normalizeItemToV2,
   normalizeKoreanKey,
   normalizeRecordSet,
+  parsePairLines,
 } from './words/records.js';
 import { recordOrder, sortRecords, wordChineseSummary, wordExamples } from './words/records.js';
 import './styles.css';
@@ -215,7 +219,6 @@ const NotesNotebookPage = lazy(() => import('./features/notes/pages/NotesNoteboo
 const ReadingTestsPage = lazy(() => import('./features/reading/pages/ReadingTestsPage.jsx'));
 const YoutubeSubtitlesPage = lazy(() => import('./features/subtitles/pages/YoutubeSubtitlesPage.jsx'));
 
-const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
 const DAILY_RECOGNITION_LIMIT = 50;
 const DAILY_RECOGNITION_MODE = PRACTICE_SESSION_KIND.DAILY_RECOGNITION;
 const DAILY_WRONG_REVIEW_MODE = 'daily-wrong-review';
@@ -451,32 +454,7 @@ function useOfflineMode(user) {
   return { ...state, active: !state.online || state.manual, prepare, toggleManual };
 }
 
-function subtitleWordMatches(text, words = []) {
-  const source = String(text || '');
-  const byKorean = new Map();
-  words.forEach((word) => {
-    const ko = String(word?.ko || '').trim();
-    if (ko && !byKorean.has(ko)) byKorean.set(ko, word);
-  });
-  const candidates = [...byKorean.entries()]
-    .map(([ko, word]) => ({ ko, word }))
-    .sort((left, right) => right.ko.length - left.ko.length || left.ko.localeCompare(right.ko, 'ko'));
-  const found = [];
-  candidates.forEach((candidate) => {
-    let start = source.indexOf(candidate.ko);
-    while (start >= 0) {
-      found.push({ start, end: start + candidate.ko.length, word: candidate.word });
-      start = source.indexOf(candidate.ko, start + candidate.ko.length);
-    }
-  });
-  return found
-    .sort((left, right) => left.start - right.start || right.end - left.end)
-    .reduce((accepted, match) => {
-      const previous = accepted[accepted.length - 1];
-      if (!previous || match.start >= previous.end) accepted.push(match);
-      return accepted;
-    }, []);
-}
+const subtitleWordMatches = koreanTextMatches;
 
 function recordsFromSnapshot(snap) {
   return sortRecords(activeRecordDocuments(snap.docs));
@@ -893,41 +871,6 @@ function validateImportItem(item, itemIndex) {
     if (!Array.isArray(item.related)) throw new Error(`${label} 的 related 需要是文字陣列`);
     item.related.forEach((related, relatedIndex) => assertString(related, `${label} 的第 ${relatedIndex + 1} 個 related`, { required: true }));
   }
-}
-
-function linesToArray(text) {
-  return text.split('\n').map((line) => line.trim()).filter(Boolean);
-}
-
-function parsePairLines(text) {
-  const lines = linesToArray(text);
-  if (!lines.length) return [];
-
-  // Keep old saved/pasted input usable while the editor now emits line pairs.
-  if (lines.every((line) => line.includes('|'))) {
-    return lines.map((line, index) => {
-      const [ko, ...rest] = line.split('|');
-      const zh = rest.join('|').trim();
-      if (!ko.trim() || !zh) throw new Error(`第 ${index + 1} 個例句需要韓文和中文`);
-      return { ko: ko.trim(), zh };
-    });
-  }
-
-  if (lines.length % 2 !== 0) {
-    throw new Error(`第 ${Math.floor(lines.length / 2) + 1} 個例句缺少中文翻譯`);
-  }
-  const examples = [];
-  for (let index = 0; index < lines.length; index += 2) {
-    examples.push({ ko: lines[index], zh: lines[index + 1] });
-  }
-  return examples;
-}
-
-function formatPairLines(examples = []) {
-  return examples
-    .filter((example) => example.ko || example.zh)
-    .map((example) => `${example.ko || ''}\n${example.zh || ''}`)
-    .join('\n\n');
 }
 
 function createRecordsForDate(date, rawItems, existingItems = []) {
@@ -1646,15 +1589,12 @@ function recordAnswer(store, question, correct) {
     lastAnsweredAt: now,
     lastResult: correct ? 'correct' : 'wrong',
   };
-  const previousScore = familiarityScore(previousStats);
-  const nextScore = familiarityScore(nextStats);
-  const remainsUnfamiliar = nextScore < 0;
-  const stage = remainsUnfamiliar
-    ? 0
-    : correct
-      ? Math.min((previousScore < 0 ? 0 : previous.stage) + 1, REVIEW_INTERVALS.length - 1)
-      : 0;
-  const intervalDays = remainsUnfamiliar && correct ? 2 : REVIEW_INTERVALS[stage];
+  const { stage, intervalDays } = nextReviewTransition({
+    previousStage: previous.stage,
+    previousStats,
+    nextStats,
+    correct,
+  });
   return {
     ...store,
     stats: {
@@ -4890,46 +4830,14 @@ function EditJsonModal({ items, allItems, date, onSave, onClose }) {
   );
 }
 
-function ReadingKoreanText({ entry, words = [], highlights = [], onSelectWord, onSelectHighlight }) {
-  const knownMatches = subtitleWordMatches(entry.ko, words);
-  const highlightMatches = highlights.filter((highlight) => (
-    highlight.entryId === entry.id
-    && entry.ko.slice(highlight.start, highlight.end) === highlight.text
-  ));
-  const boundaries = [...new Set([
-    0,
-    entry.ko.length,
-    ...knownMatches.flatMap((match) => [match.start, match.end]),
-    ...highlightMatches.flatMap((highlight) => [highlight.start, highlight.end]),
-  ])].sort((left, right) => left - right);
-  return boundaries.slice(0, -1).map((start, index) => {
-    const end = boundaries[index + 1];
-    const text = entry.ko.slice(start, end);
-    const known = knownMatches.find((match) => match.start <= start && match.end >= end);
-    const highlight = highlightMatches.find((match) => match.start <= start && match.end >= end);
-    if (!known && !highlight) return <React.Fragment key={`text-${start}`}>{text}</React.Fragment>;
-    return (
-      <mark
-        className={`${known ? 'subtitle-known-word' : ''} ${highlight ? 'reading-text-highlight' : ''}`.trim()}
-        onClick={(event) => (known ? onSelectWord(event, known.word) : onSelectHighlight(event, highlight, entry))}
-        key={`mark-${start}`}
-      >{text}</mark>
-    );
-  });
-}
-
 function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onUpdateRecord, onDeleteRecord, onOpenFolder, onSave, onDelete, onBack }) {
   const [selected, setSelected] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState(false);
   const [quickAdd, setQuickAdd] = useState(null);
-  const [selectionAction, setSelectionAction] = useState(null);
-  const [definitionBubble, setDefinitionBubble] = useState(null);
   const [editingWord, setEditingWord] = useState(null);
   const [localHighlights, setLocalHighlights] = useState([]);
-  const selectionUpdateFrameRef = useRef(null);
-  const selectionClearTimerRef = useRef(null);
   useEffect(() => {
     setSelected('');
     setSubmitted(false);
@@ -4941,6 +4849,8 @@ function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onUp
     { id: `${test.id}-question`, ko: test.question.ko, zh: test.question.zh },
     ...test.options.map((option) => ({ id: `${test.id}-option-${option.id}`, ko: option.ko, zh: option.zh })),
   ] : [], [test]);
+  const { selectionAction, setSelectionAction, clearSelectionAction } = useTextSelectionActions({ entries, trackOffsets: true });
+  const [definitionBubble, setDefinitionBubble] = useDismissibleWordDefinition();
   const readingFolder = useMemo(() => folders.find((folder) => (
     !isSystemFolder(folder) && folder.name.toLocaleLowerCase() === READING_SOURCE_FOLDER_NAME.toLocaleLowerCase()
   )) || null, [folders]);
@@ -4948,83 +4858,6 @@ function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onUp
     const wordIds = new Set(readingFolder?.wordIds || []);
     return allItems.filter((item) => wordIds.has(item.id));
   }, [allItems, readingFolder]);
-  const updateSelectionAction = useCallback(() => {
-    if (selectionUpdateFrameRef.current !== null) window.cancelAnimationFrame(selectionUpdateFrameRef.current);
-    selectionUpdateFrameRef.current = window.requestAnimationFrame(() => {
-      selectionUpdateFrameRef.current = null;
-      const selection = window.getSelection();
-      const clearLater = () => {
-        if (selectionClearTimerRef.current !== null) window.clearTimeout(selectionClearTimerRef.current);
-        selectionClearTimerRef.current = window.setTimeout(() => {
-          selectionClearTimerRef.current = null;
-          setSelectionAction(null);
-        }, 120);
-      };
-      if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) {
-        clearLater();
-        return;
-      }
-      const range = selection.getRangeAt(0);
-      const selectionElement = (node) => (node?.nodeType === 1 ? node : node?.parentElement);
-      const startSource = selectionElement(range.startContainer)?.closest?.('[data-reading-entry-id]');
-      const endSource = selectionElement(range.endContainer)?.closest?.('[data-reading-entry-id]');
-      const entryId = startSource?.dataset.readingEntryId;
-      const rawSelection = selection.toString();
-      const selectedKo = rawSelection.trim();
-      const entry = entries.find((candidate) => candidate.id === entryId);
-      const rect = range.getBoundingClientRect();
-      if (!entryId || startSource !== endSource || !selectedKo || (!rect.width && !rect.height)) {
-        clearLater();
-        return;
-      }
-      const leadingWhitespace = rawSelection.length - rawSelection.trimStart().length;
-      const precedingRange = range.cloneRange();
-      precedingRange.selectNodeContents(startSource);
-      precedingRange.setEnd(range.startContainer, range.startOffset);
-      const start = precedingRange.toString().length + leadingWhitespace;
-      const end = start + selectedKo.length;
-      if (entry.ko.slice(start, end) !== selectedKo) {
-        clearLater();
-        return;
-      }
-      if (selectionClearTimerRef.current !== null) {
-        window.clearTimeout(selectionClearTimerRef.current);
-        selectionClearTimerRef.current = null;
-      }
-      setSelectionAction({
-        ko: selectedKo,
-        entry,
-        start,
-        end,
-        top: rect.bottom + 8,
-        left: Math.min(Math.max(10, rect.left + (rect.width / 2) - 63), window.innerWidth - 136),
-      });
-    });
-  }, [entries]);
-  useEffect(() => {
-    document.addEventListener('selectionchange', updateSelectionAction);
-    window.addEventListener('scroll', updateSelectionAction, true);
-    window.addEventListener('resize', updateSelectionAction);
-    return () => {
-      document.removeEventListener('selectionchange', updateSelectionAction);
-      window.removeEventListener('scroll', updateSelectionAction, true);
-      window.removeEventListener('resize', updateSelectionAction);
-      if (selectionUpdateFrameRef.current !== null) window.cancelAnimationFrame(selectionUpdateFrameRef.current);
-      if (selectionClearTimerRef.current !== null) window.clearTimeout(selectionClearTimerRef.current);
-    };
-  }, [updateSelectionAction]);
-  useEffect(() => {
-    const dismissDefinition = (event) => {
-      if (!event.target?.closest?.('.subtitle-known-word, .subtitle-word-definition')) setDefinitionBubble(null);
-    };
-    const dismissOnScroll = () => setDefinitionBubble(null);
-    document.addEventListener('pointerdown', dismissDefinition);
-    window.addEventListener('scroll', dismissOnScroll, true);
-    return () => {
-      document.removeEventListener('pointerdown', dismissDefinition);
-      window.removeEventListener('scroll', dismissOnScroll, true);
-    };
-  }, []);
   if (!test) return <section className="page"><div className="empty">找不到這題閱讀測驗。<button onClick={onBack}>返回上一層</button></div></section>;
   const selectedCorrectly = selected === test.answer;
   const toggleLearned = async () => {
@@ -5071,8 +4904,7 @@ function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onUp
     const alreadyExists = localHighlights.some((current) => (
       current.entryId === highlight.entryId && current.start === highlight.start && current.end === highlight.end
     ));
-    setSelectionAction(null);
-    window.getSelection()?.removeAllRanges();
+    clearSelectionAction({ removeRanges: true });
     if (alreadyExists) return;
     setLocalHighlights((current) => [...current, highlight]);
   };
@@ -5087,9 +4919,7 @@ function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onUp
     try { await onDeleteRecord(word.id); setDefinitionBubble(null); } catch (deleteError) { setError(deleteError.message || '刪除單字失敗'); }
   };
   const selectableKorean = (entry) => (
-    <span className="reading-korean-source" data-reading-entry-id={entry.id} lang="ko">
-      <ReadingKoreanText entry={entry} words={readingWords} highlights={localHighlights} onSelectWord={showDefinition} onSelectHighlight={showHighlightActions} />
-    </span>
+    <SelectableKoreanText className="reading-korean-source" entry={entry} words={readingWords} highlights={localHighlights} onSelectWord={showDefinition} onSelectHighlight={showHighlightActions} />
   );
   return (
     <section className="page reading-test-reader">
@@ -5102,56 +4932,19 @@ function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onUp
         </div>
       </div>
       {error && <div className="form-error">{error}</div>}
-      {selectionAction && <div className="subtitle-selection-actions" style={{ top: selectionAction.top, left: selectionAction.left }}>
-        <button
-          type="button"
-          className="subtitle-selection-add"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            setQuickAdd(selectionAction);
-            setSelectionAction(null);
-            window.getSelection()?.removeAllRanges();
-          }}
-          title="新增單字"
-          aria-label="將選取的韓文新增為單字"
-        ><Plus size={18} /></button>
-        <a
-          className="subtitle-selection-dictionary"
-          href={naverDictionaryUrl(selectionAction.ko)}
-          target="_blank"
-          rel="noopener noreferrer"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            setSelectionAction(null);
-            window.getSelection()?.removeAllRanges();
-          }}
-          title="使用 Naver 字典查詢"
-          aria-label={`使用 Naver 字典查詢「${selectionAction.ko}」`}
-        ><BookMarked size={18} /></a>
-        {!selectionAction.highlight && <button
-          type="button"
-          className="subtitle-selection-highlight"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={addHighlight}
-          title="畫線"
-          aria-label={`畫線標記「${selectionAction.ko}」`}
-        ><Highlighter size={18} /></button>}
-        {selectionAction.highlight && <button
-          type="button"
-          className="subtitle-selection-remove-highlight"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={removeHighlight}
-          title="刪除畫線"
-          aria-label={`刪除「${selectionAction.ko}」的畫線`}
-        ><Trash2 size={18} /></button>}
-      </div>}
-      {definitionBubble && <div className="subtitle-word-definition reading-word-definition" style={{ top: definitionBubble.top, left: definitionBubble.left }} role="dialog" aria-label={`${definitionBubble.word.ko}的單字資訊`}>
-        <span><strong>{definitionBubble.word.ko}</strong>{definitionBubble.zh}</span>
-        <div>
-          <button type="button" onClick={() => { setEditingWord(definitionBubble.word); setDefinitionBubble(null); }} title="編輯單字" aria-label="編輯單字"><Pencil size={15} /></button>
-          <button type="button" className="delete-icon-button" onClick={() => deleteWord(definitionBubble.word)} title="刪除單字" aria-label="刪除單字"><Trash2 size={15} /></button>
-        </div>
-      </div>}
+      <SelectionActionPopover
+        selection={selectionAction}
+        onAdd={() => { setQuickAdd(selectionAction); clearSelectionAction({ removeRanges: true }); }}
+        onLookup={() => clearSelectionAction({ removeRanges: true })}
+        onAddHighlight={addHighlight}
+        onRemoveHighlight={removeHighlight}
+      />
+      <WordDefinitionPopover
+        definition={definitionBubble}
+        className="reading-word-definition"
+        onEdit={() => { setEditingWord(definitionBubble.word); setDefinitionBubble(null); }}
+        onDelete={() => deleteWord(definitionBubble.word)}
+      />
       {readingFolder && <div className="reading-reader-floating-actions"><button type="button" className="yt-reader-floating-button" onClick={() => onOpenFolder?.(readingFolder.id)} title={`開啟資料夾「${readingFolder.name}」`} aria-label={`開啟資料夾「${readingFolder.name}」`}><FolderOpen size={22} /></button></div>}
       <article className="reading-passage">
         <p>{selectableKorean(entries[0])}</p>
@@ -5174,32 +4967,19 @@ function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onUp
       {!submitted ? <button type="button" className="primary reading-submit" disabled={!selected} onClick={() => setSubmitted(true)}><Check size={18} /> 確認答案</button>
         : <div className={`reading-result ${selectedCorrectly ? 'correct' : 'incorrect'}`}><strong>{selectedCorrectly ? '答對了' : '答錯了'}</strong><span>正確答案是選項 {test.answer}</span><button type="button" onClick={() => { setSelected(''); setSubmitted(false); }}>再做一次</button></div>}
       {editing && <ReadingTestsEditorModal test={test} existingTests={[test]} onSave={async (tests) => { await onSave(tests[0]); setEditing(false); }} onClose={() => setEditing(false)} />}
-      {quickAdd && <SubtitleQuickAddModal selection={quickAdd} entries={entries} allItems={allItems} sourceLabel="閱讀題" includeInitialExample={false} initialMarkLearned={false} onAddRecords={(records, options) => onAddRecords(test, records, options)} onClose={() => setQuickAdd(null)} />}
+      {quickAdd && <QuickAddWordModal selection={quickAdd} entries={entries} allItems={allItems} sourceLabel="閱讀題" includeInitialExample={false} initialMarkLearned={false} onSubmit={async ({ ko, zh, examples, markLearned }) => {
+        const records = createRecordsForDate(todayString(), [{ ko, meanings: [{ zh, examples }], related: [] }], allItems);
+        await onAddRecords(test, records, { markLearned });
+      }} onClose={() => setQuickAdd(null)} />}
       {editingWord && <AddItemsModal title="編輯單字" date={editingWord.date} lockedDate editItem={editingWord} allItems={allItems} onUpdateRecord={onUpdateRecord} onClose={() => setEditingWord(null)} />}
     </section>
   );
-}
-
-function SubtitleKoreanText({ text, words, onSelectWord }) {
-  const matches = subtitleWordMatches(text, words);
-  if (!matches.length) return text;
-  const parts = [];
-  let cursor = 0;
-  matches.forEach((match, index) => {
-    if (match.start > cursor) parts.push(<React.Fragment key={`text-${cursor}`}>{text.slice(cursor, match.start)}</React.Fragment>);
-    parts.push(<mark className="subtitle-known-word" onClick={(event) => onSelectWord(event, match.word)} key={`word-${match.start}-${index}`}>{text.slice(match.start, match.end)}</mark>);
-    cursor = match.end;
-  });
-  if (cursor < text.length) parts.push(<React.Fragment key={`text-${cursor}`}>{text.slice(cursor)}</React.Fragment>);
-  return parts;
 }
 
 function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords, onBack, onOpenFolder, onSave, onDelete }) {
   const [showChinese, setShowChinese] = useState(true);
   const [editing, setEditing] = useState(null);
   const [quickAdd, setQuickAdd] = useState(null);
-  const [selectionAction, setSelectionAction] = useState(null);
-  const [definitionBubble, setDefinitionBubble] = useState(null);
   const [playerLoaded, setPlayerLoaded] = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [activeSubtitleEntryId, setActiveSubtitleEntryId] = useState(null);
@@ -5208,8 +4988,8 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
   const youtubePlayerRef = useRef(null);
   const subtitleListRef = useRef(null);
   const subtitleEntryRefs = useRef(new Map());
-  const selectionUpdateFrameRef = useRef(null);
-  const selectionClearTimerRef = useRef(null);
+  const { selectionAction, setSelectionAction, clearSelectionAction } = useTextSelectionActions({ entries: note?.entries || [] });
+  const [definitionBubble, setDefinitionBubble] = useDismissibleWordDefinition();
   useEffect(() => {
     document.documentElement.classList.add('yt-reader-scroll-snap');
     document.body.classList.add('yt-reader-scroll-snap');
@@ -5223,63 +5003,6 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
     setIsVideoPlaying(false);
     setActiveSubtitleEntryId(null);
   }, [note?.id]);
-  const updateSelectionAction = useCallback(() => {
-    if (selectionUpdateFrameRef.current !== null) window.cancelAnimationFrame(selectionUpdateFrameRef.current);
-    selectionUpdateFrameRef.current = window.requestAnimationFrame(() => {
-      selectionUpdateFrameRef.current = null;
-      const selection = window.getSelection();
-      const clearLater = () => {
-        if (selectionClearTimerRef.current !== null) window.clearTimeout(selectionClearTimerRef.current);
-        selectionClearTimerRef.current = window.setTimeout(() => {
-          selectionClearTimerRef.current = null;
-          setSelectionAction(null);
-        }, 120);
-      };
-      if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) {
-        clearLater();
-        return;
-      }
-      const range = selection.getRangeAt(0);
-      const selectionElement = (node) => (node?.nodeType === 1 ? node : node?.parentElement);
-      const startCard = selectionElement(range.startContainer)?.closest?.('.yt-subtitle-entry');
-      const endCard = selectionElement(range.endContainer)?.closest?.('.yt-subtitle-entry');
-      const subtitleElement = startCard?.querySelector?.('[data-subtitle-entry-id]');
-      const entryId = subtitleElement?.dataset.subtitleEntryId;
-      const selectedKo = selection.toString().replace(/\s+/g, ' ').trim();
-      const rect = range.getBoundingClientRect();
-      const entry = note?.entries.find((candidate) => candidate.id === entryId);
-      const entryKo = String(entry?.ko || '').replace(/\s+/g, ' ').trim();
-      const selectionIsKoreanSubtitle = startCard
-        && startCard === endCard
-        && entryKo.includes(selectedKo);
-      if (!entryId || !selectionIsKoreanSubtitle || !selectedKo || (!rect.width && !rect.height)) {
-        clearLater();
-        return;
-      }
-      if (selectionClearTimerRef.current !== null) {
-        window.clearTimeout(selectionClearTimerRef.current);
-        selectionClearTimerRef.current = null;
-      }
-      setSelectionAction({
-        ko: selectedKo,
-        entry,
-        top: rect.bottom + 8,
-        left: Math.min(Math.max(10, rect.left + (rect.width / 2) - 41), window.innerWidth - 92),
-      });
-    });
-  }, [note]);
-  useEffect(() => {
-    document.addEventListener('selectionchange', updateSelectionAction);
-    window.addEventListener('scroll', updateSelectionAction, true);
-    window.addEventListener('resize', updateSelectionAction);
-    return () => {
-      document.removeEventListener('selectionchange', updateSelectionAction);
-      window.removeEventListener('scroll', updateSelectionAction, true);
-      window.removeEventListener('resize', updateSelectionAction);
-      if (selectionUpdateFrameRef.current !== null) window.cancelAnimationFrame(selectionUpdateFrameRef.current);
-      if (selectionClearTimerRef.current !== null) window.clearTimeout(selectionClearTimerRef.current);
-    };
-  }, [updateSelectionAction]);
   const subtitleFolder = useMemo(() => folders.find((folder) => (
     !isSystemFolder(folder) && folder.name.toLocaleLowerCase() === YT_SOURCE_FOLDER_NAME.toLocaleLowerCase()
   )) || null, [folders]);
@@ -5287,18 +5010,6 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
     const wordIds = new Set(subtitleFolder?.wordIds || []);
     return allItems.filter((item) => wordIds.has(item.id));
   }, [allItems, subtitleFolder]);
-  useEffect(() => {
-    const dismissDefinition = (event) => {
-      if (!event.target?.closest?.('.subtitle-known-word, .subtitle-word-definition')) setDefinitionBubble(null);
-    };
-    const dismissOnScroll = () => setDefinitionBubble(null);
-    document.addEventListener('pointerdown', dismissDefinition);
-    window.addEventListener('scroll', dismissOnScroll, true);
-    return () => {
-      document.removeEventListener('pointerdown', dismissDefinition);
-      window.removeEventListener('scroll', dismissOnScroll, true);
-    };
-  }, []);
   useEffect(() => {
     if (!note?.videoId || !iframeRef.current) return undefined;
     let disposed = false;
@@ -5434,42 +5145,12 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
         </div>
       </div>
       {error && <div className="form-error">{error}</div>}
-      {selectionAction && <div className="subtitle-selection-actions" style={{ top: selectionAction.top, left: selectionAction.left }}>
-        <button
-          type="button"
-          className="subtitle-selection-add"
-          onMouseDown={(event) => {
-            event.preventDefault();
-            pauseVideo();
-          }}
-          onClick={() => {
-            pauseVideo();
-            setQuickAdd(selectionAction);
-            setSelectionAction(null);
-            window.getSelection()?.removeAllRanges();
-          }}
-          title="新增單字"
-          aria-label="將選取的韓文新增為單字"
-        ><Plus size={18} /></button>
-        <a
-          className="subtitle-selection-dictionary"
-          href={naverDictionaryUrl(selectionAction.ko)}
-          target="_blank"
-          rel="noopener noreferrer"
-          onMouseDown={(event) => {
-            event.preventDefault();
-            pauseVideo();
-          }}
-          onClick={() => {
-            pauseVideo();
-            setSelectionAction(null);
-            window.getSelection()?.removeAllRanges();
-          }}
-          title="使用 Naver 字典查詢"
-          aria-label={`使用 Naver 字典查詢「${selectionAction.ko}」`}
-        ><BookMarked size={18} /></a>
-      </div>}
-      {definitionBubble && <div className="subtitle-word-definition" style={{ top: definitionBubble.top, left: definitionBubble.left }} role="status">{definitionBubble.zh}</div>}
+      <SelectionActionPopover
+        selection={selectionAction}
+        onAdd={() => { pauseVideo(); setQuickAdd(selectionAction); clearSelectionAction({ removeRanges: true }); }}
+        onLookup={() => { pauseVideo(); clearSelectionAction({ removeRanges: true }); }}
+      />
+      <WordDefinitionPopover definition={definitionBubble} />
       <div className="yt-reader-floating-actions" aria-label="字幕閱讀控制">
         {embedUrl && <button type="button" className="yt-reader-floating-button" onClick={toggleVideoPlayback} disabled={!playerLoaded} title={isVideoPlaying ? '暫停影片' : '播放影片'} aria-label={isVideoPlaying ? '暫停影片' : '播放影片'}>{isVideoPlaying ? <Pause size={22} /> : <Play size={22} />}</button>}
         <button type="button" className={`yt-reader-floating-button ${showChinese ? 'selected' : ''}`} onClick={() => setShowChinese((current) => !current)} title={showChinese ? '隱藏中文' : '顯示中文'} aria-label={showChinese ? '隱藏中文' : '顯示中文'}>{showChinese ? <Eye size={22} /> : <EyeOff size={22} />}</button>
@@ -5482,7 +5163,7 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
         <div className="yt-subtitle-list" ref={subtitleListRef} aria-label="字幕列表">
           {note.entries.map((entry, index) => {
             const clickable = note.mode === YT_SUBTITLE_MODE_SRT && entry.startMs !== null && !!embedUrl;
-            const content = <><strong><span className="yt-subtitle-entry-index">{index + 1}</span>{entry.startMs !== null && <small className="yt-subtitle-entry-time">{subtitleTimeLabel(entry.startMs)}</small>}<span className="yt-subtitle-ko" data-subtitle-entry-id={entry.id} onPointerDown={pauseVideo}><SubtitleKoreanText text={entry.ko} words={subtitleWords} onSelectWord={showDefinition} /></span></strong><p className={!showChinese ? 'is-hidden' : ''} aria-hidden={!showChinese}>{entry.zh}</p></>;
+            const content = <><strong><span className="yt-subtitle-entry-index">{index + 1}</span>{entry.startMs !== null && <small className="yt-subtitle-entry-time">{subtitleTimeLabel(entry.startMs)}</small>}<SelectableKoreanText className="yt-subtitle-ko" entry={entry} words={subtitleWords} onSelectWord={showDefinition} /></strong><p className={!showChinese ? 'is-hidden' : ''} aria-hidden={!showChinese}>{entry.zh}</p></>;
             const isPlaying = activeSubtitleEntryId === entry.id;
             const className = `yt-subtitle-entry ${clickable ? 'clickable' : ''} ${isPlaying ? 'is-playing' : ''}`;
             const setEntryRef = (element) => {
@@ -5503,6 +5184,7 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
               aria-current={isPlaying ? 'true' : undefined}
               role={clickable ? 'button' : undefined}
               tabIndex={clickable ? 0 : undefined}
+              onPointerDown={pauseVideo}
               onClick={clickable ? () => seekTo(entry) : undefined}
               onKeyDown={clickable ? (event) => {
                 if ((event.key === 'Enter' || event.key === ' ') && event.target === event.currentTarget) {
@@ -5518,119 +5200,12 @@ function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords
           })}
         </div>
       </div>
-      {quickAdd && <SubtitleQuickAddModal selection={quickAdd} entries={note.entries} allItems={allItems} onAddRecords={(records, options) => onAddRecords(note, records, options)} onClose={() => setQuickAdd(null)} />}
+      {quickAdd && <QuickAddWordModal selection={quickAdd} entries={note.entries} allItems={allItems} onSubmit={async ({ ko, zh, examples, markLearned }) => {
+        const records = createRecordsForDate(todayString(), [{ ko, meanings: [{ zh, examples }], related: [] }], allItems);
+        await onAddRecords(note, records, { markLearned });
+      }} onClose={() => setQuickAdd(null)} />}
       {editing && <YoutubeSubtitleEditorModal note={editing} onSave={async (nextNote) => { await onSave(nextNote); setEditing(null); }} onClose={() => setEditing(null)} />}
     </section>
-  );
-}
-
-function SubtitleQuickAddModal({ selection, entries = [], allItems, sourceLabel = '字幕', includeInitialExample = true, initialMarkLearned = true, onAddRecords, onClose }) {
-  const [ko, setKo] = useState(selection.ko);
-  const [zh, setZh] = useState(selection.zh || '');
-  const [examples, setExamples] = useState(() => includeInitialExample ? formatPairLines([selection.entry]) : '');
-  const entryIndex = entries.findIndex((entry) => entry.id === selection.entry.id);
-  const [previousIndex, setPreviousIndex] = useState(entryIndex - 1);
-  const [nextIndex, setNextIndex] = useState(entryIndex + 1);
-  const [exampleHistory, setExampleHistory] = useState([]);
-  const [markLearned, setMarkLearned] = useState(initialMarkLearned);
-  const [error, setError] = useState('');
-  const [saving, setSaving] = useState(false);
-  const extendExample = (entry, position) => {
-    try {
-      const currentExamples = parsePairLines(examples);
-      const current = {
-        ko: currentExamples.map((example) => example.ko).join(' ').trim(),
-        zh: currentExamples.map((example) => example.zh).join('').trim(),
-      };
-      const combined = position === 'before'
-        ? { ko: `${entry.ko} ${current.ko}`.trim(), zh: `${entry.zh}${current.zh}`.trim() }
-        : { ko: `${current.ko} ${entry.ko}`.trim(), zh: `${current.zh}${entry.zh}`.trim() };
-      setExampleHistory((history) => [...history, { examples, previousIndex, nextIndex }]);
-      setExamples(formatPairLines([combined]));
-      if (position === 'before') setPreviousIndex((index) => index - 1);
-      else setNextIndex((index) => index + 1);
-      setError('');
-      return true;
-    } catch {
-      setError('例句需要維持韓文一行、中文一行的格式，才能加入相鄰逐字稿。');
-      return false;
-    }
-  };
-  const addPreviousExample = () => {
-    if (previousIndex < 0) return;
-    extendExample(entries[previousIndex], 'before');
-  };
-  const addNextExample = () => {
-    if (nextIndex >= entries.length) return;
-    extendExample(entries[nextIndex], 'after');
-  };
-  const undoExampleExtension = () => {
-    if (!exampleHistory.length) return;
-    const previous = exampleHistory[exampleHistory.length - 1];
-    setExamples(previous.examples);
-    setPreviousIndex(previous.previousIndex);
-    setNextIndex(previous.nextIndex);
-    setExampleHistory((history) => history.slice(0, -1));
-    setError('');
-  };
-  const submit = async (event) => {
-    event.preventDefault();
-    const korean = ko.trim();
-    const chinese = zh.trim();
-    if (!korean || !chinese) {
-      setError('韓文與中文都是必填');
-      return;
-    }
-    if (allItems.some((item) => normalizeKoreanKey(item.ko) === normalizeKoreanKey(korean))) {
-      setError(`韓文單字「${korean}」已存在於單字本，請直接編輯既有單字卡。`);
-      return;
-    }
-    setError('');
-    let parsedExamples;
-    try {
-      parsedExamples = parsePairLines(examples);
-    } catch (parseError) {
-      setError(parseError.message || '例句格式錯誤，請確認每組都是韓文一行、中文一行。');
-      return;
-    }
-    setSaving(true);
-    try {
-      const records = createRecordsForDate(todayString(), [{
-        ko: korean,
-        meanings: [{ zh: chinese, examples: parsedExamples }],
-        related: [],
-      }], allItems);
-      await onAddRecords(records, { markLearned });
-      onClose();
-    } catch (submitError) {
-      setError(describeImportError(submitError).message);
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`從${sourceLabel}新增單字`}>
-      <form className="modal-panel subtitle-quick-add-modal" onSubmit={submit}>
-        <button type="button" className="modal-close" onClick={onClose} disabled={saving} aria-label="關閉"><X size={18} /></button>
-        <div className="panel-title"><div><span className="eyebrow">Selected word</span><h2>新增單字</h2><span>{includeInitialExample ? `例句已自動帶入目前${sourceLabel}。` : '可視需要自行加入例句。'}</span></div></div>
-        <div className="form-grid subtitle-quick-add-fields">
-          <label>韓文<input value={ko} onChange={(event) => setKo(event.target.value)} required autoFocus /></label>
-          <label>中文<input value={zh} onChange={(event) => setZh(event.target.value)} required placeholder="請填寫中文意思" /></label>
-          <div className="full-width subtitle-example-field">
-            <label htmlFor="subtitle-quick-add-examples">例句</label>
-            {includeInitialExample && <span className="subtitle-example-extend-actions">
-              <button type="button" className="small" onClick={addPreviousExample} disabled={previousIndex < 0} title="加入前一句逐字稿"><ArrowUp size={16} /><Plus size={14} /> 往前加</button>
-              <button type="button" className="small" onClick={addNextExample} disabled={nextIndex >= entries.length} title="加入後一句逐字稿"><ArrowDown size={16} /><Plus size={14} /> 往後加</button>
-              <button type="button" className="small subtitle-example-undo" onClick={undoExampleExtension} disabled={!exampleHistory.length} title="復原上一次例句延伸" aria-label="復原上一次例句延伸"><RotateCcw size={16} /></button>
-            </span>}
-            <textarea id="subtitle-quick-add-examples" value={examples} onChange={(event) => { setExamples(event.target.value); setExampleHistory([]); }} rows={4} />
-          </div>
-          <label className="subtitle-quick-add-learned"><input type="checkbox" checked={markLearned} onChange={(event) => setMarkLearned(event.target.checked)} /><span><strong>已學會</strong><small>同時加入「已學習」資料夾，不會出現在每日測驗。</small></span></label>
-        </div>
-        {error && <div className="form-error">{error}</div>}
-        <div className="actions grammar-editor-actions"><button type="button" onClick={onClose} disabled={saving}>取消</button><button className="primary" type="submit" disabled={saving}><Plus size={17} /> {saving ? '新增中' : '新增到單字本'}</button></div>
-      </form>
-    </div>
   );
 }
 

@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
-import { Check, ChevronDown, Eye, EyeOff, Plus, Search, Trash2, X } from 'lucide-react';
+import { Check, Plus, Trash2, X } from 'lucide-react';
 import { ActionMenu } from '../../../components/actions/ActionMenu.jsx';
 import { EditIconButton } from '../../../components/actions/ContentActionButtons.jsx';
+import { CollapsibleGroup, EntityCardShell, EntityGrid, LearnedVisibilityToggle, LibraryPageShell } from '../../../components/library/LibraryPrimitives.jsx';
 import { formatContentTimestamp } from '../../../shared/dateTime.js';
 import {
   formatYoutubeSubtitleJson,
@@ -17,7 +18,7 @@ import {
 
 function YoutubeSubtitleCard({ note, onOpen, onEdit, onDelete }) {
   return (
-    <article className="yt-subtitle-note-card clickable-card" onClick={() => onOpen(note.id)}>
+    <EntityCardShell className="yt-subtitle-note-card" onOpen={() => onOpen(note.id)}>
       <div className="card-head">
         <div><span className="eyebrow">{note.mode === YT_SUBTITLE_MODE_SRT ? 'SRT subtitles' : 'Bilingual subtitles'}</span><h2>{note.title}</h2></div>
         <div className="card-actions">
@@ -33,7 +34,7 @@ function YoutubeSubtitleCard({ note, onOpen, onEdit, onDelete }) {
         <span>{note.videoId ? '已嵌入影片' : '沒有影片連結'}</span>
         <span>{formatContentTimestamp(note.updatedAt || note.createdAt)}</span>
       </div>
-    </article>
+    </EntityCardShell>
   );
 }
 
@@ -129,21 +130,24 @@ export default function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, o
     try { await onDelete(note.id); } catch (deleteError) { setActionError(deleteError.message || '刪除字幕筆記失敗'); }
   };
   return (
-    <section className="page yt-subtitles-page">
-      <div className="topbar">
-        <div><span className="eyebrow">YouTube Subtitles</span><h1>YT 字幕</h1></div>
-        <div className="actions notebook-actions"><button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 新增字幕</button><ActionMenu><button type="button" className={`learned-visibility-button ${hideLearned ? 'active' : ''}`} aria-pressed={hideLearned} title={`${hideLearned ? '目前隱藏' : '目前顯示'} ${learnedCount} 個已學習字幕檔案`} onClick={() => setHideLearned((current) => !current)}>{hideLearned ? <EyeOff size={18} /> : <Eye size={18} />}{hideLearned ? '隱藏已學習' : '顯示已學習'}</button></ActionMenu></div>
-      </div>
-      <label className="search grammar-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋標題、標籤、影片連結或字幕內容" /></label>
-      {actionError && <div className="form-error">{actionError}</div>}{error && <div className="sync-error">Firebase 同步失敗：{error}</div>}
+    <LibraryPageShell
+      className="yt-subtitles-page"
+      eyebrow="YouTube Subtitles"
+      title="YT 字幕"
+      actions={<><button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 新增字幕</button><ActionMenu><LearnedVisibilityToggle hidden={hideLearned} count={learnedCount} noun="字幕檔案" onToggle={() => setHideLearned((current) => !current)} /></ActionMenu></>}
+      query={query}
+      onQueryChange={setQuery}
+      searchPlaceholder="搜尋標題、標籤、影片連結或字幕內容"
+      error={error}
+    >
+      {actionError && <div className="form-error">{actionError}</div>}
       {filtered.length ? <div className="folder-tag-groups yt-subtitle-tag-groups">{groups.map((group) => {
         const collapsed = collapsedTags.has(group.label);
-        return <section className={`folder-tag-group ${collapsed ? 'collapsed' : ''}`} key={group.label}>
-          <div className="folder-tag-group-head"><button type="button" className="folder-tag-group-toggle" aria-expanded={!collapsed} onClick={() => toggleTag(group.label)} title={collapsed ? `展開${group.label}` : `收合${group.label}`}><span className="folder-tag-group-heading"><span className="folder-tag-mark">標籤</span><h2>{group.label}</h2></span><ChevronDown size={18} /></button><span>{group.notes.length} 個字幕檔案</span></div>
-          {!collapsed && <div className="yt-subtitle-note-grid">{group.notes.map((note) => <YoutubeSubtitleCard key={note.id} note={note} onOpen={onOpen} onEdit={setEditing} onDelete={deleteNote} />)}</div>}
-        </section>;
+        return <CollapsibleGroup className="folder-tag-group" collapsed={collapsed} onToggle={() => toggleTag(group.label)} title={group.label} countLabel={`${group.notes.length} 個字幕檔案`} key={group.label}>
+          <EntityGrid className="yt-subtitle-note-grid">{group.notes.map((note) => <YoutubeSubtitleCard key={note.id} note={note} onOpen={onOpen} onEdit={setEditing} onDelete={deleteNote} />)}</EntityGrid>
+        </CollapsibleGroup>;
       })}</div> : <div className="panel grammar-empty">{query ? '找不到符合的字幕筆記。' : hideLearned && notes.length ? '目前沒有未學習的字幕筆記。取消隱藏即可查看全部字幕。' : '還沒有字幕筆記。新增一篇後即可放入中韓字幕。'}</div>}
       {editing && <YoutubeSubtitleEditorModal note={editing.id ? editing : null} tagSuggestions={tagSuggestions} onSave={async (note) => { await onSave(note); setEditing(null); }} onClose={() => setEditing(null)} />}
-    </section>
+    </LibraryPageShell>
   );
 }

@@ -1,18 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Check,
-  ChevronDown,
   Dumbbell,
   ListChecks,
   NotebookPen,
-  Pin,
   Plus,
-  Search,
   Trash2,
   X,
 } from 'lucide-react';
 import { EditIconButton } from '../../../components/actions/ContentActionButtons.jsx';
 import { TextSpeakButton } from '../../../components/actions/TextSpeakButton.jsx';
+import { CollapsibleGroup, EntityCardShell, EntityGrid, LibraryPageShell, PinButton } from '../../../components/library/LibraryPrimitives.jsx';
 import {
   formatTaggedNoteText,
   grammarPracticeQuestions,
@@ -46,17 +44,11 @@ function noteTimestamp(value) {
 function GrammarNoteCard({ note, onOpen, onEdit, onDelete, onTogglePinned, selected, onToggleSelected, category }) {
   const meta = noteCategoryMeta(category);
   return (
-    <article className={`grammar-card clickable-card ${selected ? 'selected' : ''}`} onClick={() => onOpen(note)}>
+    <EntityCardShell className="grammar-card" selected={selected} onOpen={() => onOpen(note)}>
       <div className="card-head">
         <h2>{note.title}</h2>
         <div className="card-actions">
-          <button
-            type="button"
-            className={`edit-icon-button pin-icon-button ${note.pinned ? 'active' : ''}`}
-            onClick={(event) => { event.stopPropagation(); onTogglePinned(note); }}
-            aria-label={note.pinned ? `取消釘選${meta.item}` : `釘選${meta.item}`}
-            title={note.pinned ? '取消釘選' : '釘選到最上方'}
-          ><Pin size={15} /></button>
+          <PinButton pinned={note.pinned} label={meta.item} onToggle={() => onTogglePinned(note)} />
           <label className="word-select-control" title={`選取${meta.item}`} onClick={(event) => event.stopPropagation()}>
             <input type="checkbox" checked={selected} onChange={() => onToggleSelected(note.id)} />
             <span className="sr-only">選取 {note.title}</span>
@@ -82,7 +74,7 @@ function GrammarNoteCard({ note, onOpen, onEdit, onDelete, onTogglePinned, selec
         <span>{noteTimestamp(note.createdAt)}</span>
         <span>{note.examples.length} 個例句</span>
       </div>
-    </article>
+    </EntityCardShell>
   );
 }
 
@@ -249,14 +241,8 @@ function NoteCategorySection({ category, notes, query, loading, collapsed, onTog
     }
   };
   return (
-    <section className={`note-category-section ${collapsed ? 'collapsed' : ''}`}>
-      <div className="note-category-header">
-        <button type="button" className="note-category-toggle" aria-expanded={!collapsed} onClick={onToggleCollapse} title={collapsed ? `展開${meta.singular}` : `收合${meta.singular}`}>
-          <span className="note-category-heading"><span className="note-category-mark"><NotebookPen size={15} /></span><h2>{meta.heading}</h2></span>
-          <span className="note-category-count">{categoryNotes.length} 篇</span><ChevronDown size={19} />
-        </button>
-      </div>
-      {!collapsed && <>
+    <CollapsibleGroup className="note-category-section" variant="category" collapsed={collapsed} onToggle={onToggleCollapse} title={meta.heading} countLabel={`${categoryNotes.length} 篇`} markerIcon={<NotebookPen size={15} />}>
+      <>
         <div className="note-category-actions"><button className="primary" onClick={() => setEditing({ category })}><Plus size={17} /> {meta.addLabel}</button></div>
         <div className={`bulk-word-actions grammar-bulk-actions ${selectedIds.length ? 'has-selection' : ''}`}>
           <div className="bulk-selection-summary">
@@ -268,12 +254,12 @@ function NoteCategorySection({ category, notes, query, loading, collapsed, onTog
         </div>
         {actionError && <div className="form-error">{actionError}</div>}
         {loading ? <div className="panel grammar-empty">載入{meta.singular}中...</div> : filtered.length ? (
-          <div className="grammar-grid">{filtered.map((note) => <GrammarNoteCard key={note.id} note={note} onOpen={setViewing} onEdit={setEditing} onDelete={deleteNote} onTogglePinned={togglePinned} selected={selectedIds.includes(note.id)} onToggleSelected={toggleSelected} category={category} />)}</div>
+          <EntityGrid className="grammar-grid">{filtered.map((note) => <GrammarNoteCard key={note.id} note={note} onOpen={setViewing} onEdit={setEditing} onDelete={deleteNote} onTogglePinned={togglePinned} selected={selectedIds.includes(note.id)} onToggleSelected={toggleSelected} category={category} />)}</EntityGrid>
         ) : <div className="panel grammar-empty">{query ? `找不到符合搜尋條件的${meta.singular}。` : `目前還沒有${meta.singular}。`}</div>}
-      </>}
+      </>
       {editing && <GrammarEditorModal note={editing.id ? editing : null} defaultCategory={editing.category || category} onSave={async (note) => { await onSave(note); setEditing(null); }} onClose={() => setEditing(null)} />}
       {viewing && <GrammarDetailModal note={viewing} category={viewing.category} onEdit={(note) => { setViewing(null); setEditing(note); }} onDelete={deleteNote} onPractice={(note) => { setViewing(null); startPractice([note], note.title); }} onClose={() => setViewing(null)} />}
-    </section>
+    </CollapsibleGroup>
   );
 }
 
@@ -287,13 +273,10 @@ export default function NotesNotebookPage({ notes, loading, error, onSave, onDel
     return next;
   });
   return (
-    <section className="page notes-notebook-page">
-      <div className="topbar"><div><span className="eyebrow">Korean Notes</span><h1>筆記</h1></div></div>
-      <label className="search grammar-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋標題、筆記或例句" /></label>
-      {error && <div className="sync-error">Firebase 同步失敗：{error}</div>}
+    <LibraryPageShell className="notes-notebook-page" eyebrow="Korean Notes" title="筆記" query={query} onQueryChange={setQuery} searchPlaceholder="搜尋標題、筆記或例句" error={error}>
       {[NOTE_CATEGORY_VOCABULARY, NOTE_CATEGORY_GRAMMAR].map((category) => (
         <NoteCategorySection key={category} category={category} notes={notes} query={query} loading={loading} collapsed={collapsedCategories.has(category)} onToggleCollapse={() => toggleCategory(category)} onSave={onSave} onDelete={onDelete} onPractice={onPractice} />
       ))}
-    </section>
+    </LibraryPageShell>
   );
 }

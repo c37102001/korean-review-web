@@ -35,12 +35,27 @@ import time
 import unicodedata
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib import error, parse, request
 import terminal_offline
+from terminal_app.audio.tts import korean_audio_players, korean_speech_commands
+from terminal_app.api.firestore_codec import document_id as _doc_id
+from terminal_app.api.firestore_codec import parse_fields as _parse_firestore_fields
+from terminal_app.api.firestore_codec import parse_value as _parse_firestore_value
+from terminal_app.api.firestore_codec import to_value as _to_firestore_value
+from terminal_app.domain.models import AuthSession, Card, GrammarNote, PartialCheckResult, Question, YoutubeSubtitle
+from terminal_app.domain.practice import (
+    add_optional_practice_task,
+    answer_optional_practice_task,
+    draw_optional_practice_ids,
+    optional_practice_state,
+    remove_optional_practice_task,
+)
+from terminal_app.domain.review import REVIEW_INTERVALS, familiarity_score, next_review_transition
+from terminal_app.sync.cache import cache_path, read_cache, write_cache
+from terminal_app.ui.primitives import cell_width, split_by_cell_width, text_cell_width
 
 
 API_KEY = "AIzaSyCfy63R72H6LDCb-bR7L7RwkKNnGCTHPgU"
@@ -49,7 +64,6 @@ FIRESTORE_SCHEMA_VERSION = 3
 PROGRESS_SHARD_COUNT = 16
 REVIEW_ATTEMPT_SEGMENT_COUNT = 16
 REVIEW_DAY_STORAGE_VERSION = 2
-REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90]
 DAILY_RECOGNITION_LIMIT = 50
 DAILY_RECOGNITION_MODE = "daily-recognition"
 DAILY_GRAMMAR_MODE = "daily-grammar"
@@ -71,69 +85,6 @@ TERMINAL_SYNC_VERSION = 1
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-
-@dataclass
-class AuthSession:
-    email: str
-    uid: str
-    id_token: str
-    refresh_token: str
-
-
-@dataclass
-class Card:
-    id: str
-    date: str
-    ko: str
-    zh: str
-    pos: str = ""
-    meanings: List[Dict[str, Any]] = field(default_factory=list)
-    notes: List[str] = field(default_factory=list)
-    related: List[str] = field(default_factory=list)
-    created_at: str = ""
-    order: int = 0
-    index: int = 0
-    is_starred: bool = False
-
-
-@dataclass
-class Question:
-    id: str
-    item_id: str
-    date: str
-    kind: str
-    ko: str
-    zh: str
-    source: Card
-
-
-@dataclass
-class GrammarNote:
-    id: str
-    title: str
-    notes: str
-    examples: List[Dict[str, str]]
-    category: str = NOTE_CATEGORY_GRAMMAR
-    created_at: str = ""
-
-
-@dataclass
-class YoutubeSubtitle:
-    id: str
-    title: str
-    youtube_url: str
-    mode: str
-    entries: List[Dict[str, Any]]
-    created_at: str = ""
-    updated_at: str = ""
-
-
-@dataclass
-class PartialCheckResult:
-    all_correct_prefix: bool
-    wrong_raw_indices: set[int]
-    missing_space_before_raw_indices: set[int]
 
 
 _AUTO_PLAY_AUDIO = True
@@ -847,50 +798,6 @@ def _is_quota_exceeded_error(message: str) -> bool:
     return "quota exceeded" in message.casefold()
 
 
-def _doc_id(doc_name: str) -> str:
-    return doc_name.rsplit("/", 1)[-1] if doc_name else ""
-
-
-def _parse_firestore_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
-    return {key: _parse_firestore_value(value) for key, value in fields.items()}
-
-
-def _parse_firestore_value(value: Dict[str, Any]) -> Any:
-    if "stringValue" in value:
-        return value["stringValue"]
-    if "integerValue" in value:
-        return int(value["integerValue"])
-    if "doubleValue" in value:
-        return float(value["doubleValue"])
-    if "booleanValue" in value:
-        return bool(value["booleanValue"])
-    if "timestampValue" in value:
-        return value["timestampValue"]
-    if "nullValue" in value:
-        return None
-    if "arrayValue" in value:
-        return [_parse_firestore_value(item) for item in value.get("arrayValue", {}).get("values", [])]
-    if "mapValue" in value:
-        return _parse_firestore_fields(value.get("mapValue", {}).get("fields", {}))
-    return None
-
-
-def _to_firestore_value(value: Any) -> Dict[str, Any]:
-    if value is None:
-        return {"nullValue": None}
-    if isinstance(value, bool):
-        return {"booleanValue": value}
-    if isinstance(value, int):
-        return {"integerValue": str(value)}
-    if isinstance(value, float):
-        return {"doubleValue": value}
-    if isinstance(value, list):
-        return {"arrayValue": {"values": [_to_firestore_value(item) for item in value]}}
-    if isinstance(value, dict):
-        return {"mapValue": {"fields": {key: _to_firestore_value(val) for key, val in value.items()}}}
-    return {"stringValue": str(value)}
-
-
 def today_string() -> str:
     return date.today().isoformat()
 
@@ -1239,28 +1146,19 @@ def _hydrate_loaded_data(
 
 
 def _terminal_cache_path(uid: str) -> Path:
-    digest = hashlib.sha256(uid.encode("utf-8")).hexdigest()[:24]
-    return CACHE_DIR / f"{digest}.json"
+    return cache_path(CACHE_DIR, uid)
 
 
 def _write_terminal_cache(uid: str, payload: Dict[str, Any]) -> None:
     try:
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cache_path = _terminal_cache_path(uid)
-        temporary_path = cache_path.with_suffix(".tmp")
-        temporary_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        temporary_path.replace(cache_path)
+        write_cache(CACHE_DIR, uid, payload)
     except OSError:
         # A cache failure must never block normal Firebase-backed practice.
         pass
 
 
 def _read_terminal_cache(uid: str) -> Optional[Dict[str, Any]]:
-    try:
-        payload = json.loads(_terminal_cache_path(uid).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return payload if isinstance(payload, dict) else None
+    return read_cache(CACHE_DIR, uid)
 
 
 def get_progress(state: Dict[str, Any], question: Question) -> Dict[str, Any]:
@@ -1390,102 +1288,6 @@ OPTIONAL_PRACTICE_LABELS = {
     "reading": "單字例句閱讀練習",
     "grammar": "文法例句練習",
 }
-
-
-def optional_practice_state(review: Dict[str, Any]) -> Dict[str, Any]:
-    raw = review.get("optionalPractice") or {}
-    return {
-        "tasks": [entry for entry in (raw.get("tasks") or []) if isinstance(entry, dict)],
-        "pools": dict(raw.get("pools") or {}),
-    }
-
-
-def draw_optional_practice_ids(
-    pool_ids: Iterable[str],
-    seen_ids: Iterable[str],
-    reserved_ids: Iterable[str],
-    count: int,
-) -> Tuple[List[str], List[str]]:
-    if count < 1 or count > 500:
-        raise ValueError("題數須為 1 至 500 的整數")
-    pool = list(dict.fromkeys(str(item) for item in pool_ids if item))
-    reserved = set(str(item) for item in reserved_ids)
-    seen = set(str(item) for item in seen_ids)
-    selected: List[str] = []
-    limit = min(count, len([item for item in pool if item not in reserved]))
-    while len(selected) < limit:
-        candidates = [item for item in pool if item not in reserved and item not in selected and item not in seen]
-        if not candidates:
-            seen.difference_update(pool)
-            seen.update(selected)
-            candidates = [item for item in pool if item not in reserved and item not in selected]
-        if not candidates:
-            break
-        selected_id = random.choice(candidates)
-        selected.append(selected_id)
-        seen.add(selected_id)
-    return selected, sorted(seen)
-
-
-def add_optional_practice_task(
-    current: Dict[str, Any],
-    task: Dict[str, Any],
-    pool_ids: Iterable[str],
-    count: int,
-) -> Dict[str, Any]:
-    state = {"tasks": list(current.get("tasks") or []), "pools": dict(current.get("pools") or {})}
-    if any(entry.get("id") == task.get("id") for entry in state["tasks"]):
-        return state
-    if len(state["tasks"]) >= 20:
-        raise ValueError("最多保留 20 組練習，請先完成或移除現有練習")
-    kind = str(task.get("kind") or "")
-    reserved = [
-        question_id
-        for entry in state["tasks"]
-        if entry.get("kind") == kind
-        for question_id in (entry.get("ids") or [])
-    ]
-    selected, seen = draw_optional_practice_ids(pool_ids, state["pools"].get(kind) or [], reserved, count)
-    if not selected:
-        raise ValueError("沒有可新增的題目，請調整篩選或先完成現有練習")
-    state["tasks"].append({**task, "ids": selected, "answeredIds": []})
-    state["pools"][kind] = seen
-    return state
-
-
-def answer_optional_practice_task(
-    current: Dict[str, Any], task_id: str, question_id: str, correct: bool,
-) -> Dict[str, Any]:
-    state = {"tasks": list(current.get("tasks") or []), "pools": dict(current.get("pools") or {})}
-    task = next((entry for entry in state["tasks"] if entry.get("id") == task_id), None)
-    if not task or question_id not in (task.get("ids") or []) or question_id in (task.get("answeredIds") or []):
-        return state
-    updated_tasks = []
-    for entry in state["tasks"]:
-        if entry.get("id") != task_id:
-            updated_tasks.append(entry)
-            continue
-        updated = {**entry, "answeredIds": list(dict.fromkeys([*(entry.get("answeredIds") or []), question_id]))}
-        if any(item not in updated["answeredIds"] for item in (updated.get("ids") or [])):
-            updated_tasks.append(updated)
-    state["tasks"] = updated_tasks
-    if not correct:
-        kind = str(task.get("kind") or "")
-        state["pools"][kind] = [item for item in (state["pools"].get(kind) or []) if item != question_id]
-    return state
-
-
-def remove_optional_practice_task(current: Dict[str, Any], task_id: str) -> Dict[str, Any]:
-    state = {"tasks": list(current.get("tasks") or []), "pools": dict(current.get("pools") or {})}
-    task = next((entry for entry in state["tasks"] if entry.get("id") == task_id), None)
-    if not task:
-        return state
-    answered = set(task.get("answeredIds") or [])
-    unanswered = {item for item in (task.get("ids") or []) if item not in answered}
-    kind = str(task.get("kind") or "")
-    state["tasks"] = [entry for entry in state["tasks"] if entry.get("id") != task_id]
-    state["pools"][kind] = [item for item in (state["pools"].get(kind) or []) if item not in unanswered]
-    return state
 
 
 def seed_from_string(text: str) -> int:
@@ -1631,17 +1433,11 @@ def record_answer(
         "lastResult": "correct" if correct else "wrong",
     }
     stats[question.id] = next_stats
-    previous_score = familiarity_score(old)
-    next_score = familiarity_score(next_stats)
-    remains_unfamiliar = next_score < 0
-    if remains_unfamiliar:
-        stage = 0
-    elif correct:
-        previous_stage = 0 if previous_score < 0 else int(previous.get("stage", 0))
-        stage = min(previous_stage + 1, len(REVIEW_INTERVALS) - 1)
-    else:
-        stage = 0
-    interval_days = 2 if remains_unfamiliar and correct else REVIEW_INTERVALS[stage]
+    transition = next_review_transition(
+        int(previous.get("stage", 0)), old, next_stats, correct, REVIEW_INTERVALS,
+    )
+    stage = transition["stage"]
+    interval_days = transition["intervalDays"]
     state.setdefault("progress", {})[question.id] = {
         "stage": stage,
         "nextDue": add_days(today_string(), interval_days),
@@ -1776,13 +1572,6 @@ def cards_in_folder(cards: List[Card], folder: Dict[str, Any]) -> List[Card]:
     return [card for card in cards if card.id in word_ids]
 
 
-def familiarity_score(stats: Dict[str, Any]) -> int:
-    correct = int(stats.get("correct") or 0)
-    wrong_value = stats.get("wrong")
-    wrong = int(wrong_value) if wrong_value is not None else max(0, int(stats.get("total") or 0) - correct)
-    return correct - wrong
-
-
 def familiarity_level(score: int) -> str:
     if score < 0:
         return "不熟悉"
@@ -1888,39 +1677,6 @@ def order_questions_by_cards(questions: List[Question], cards: List[Card]) -> Li
         kind_rank.get(question.kind, 9),
         question.id,
     ))
-
-
-def korean_speech_commands(text: str) -> List[List[str]]:
-    commands: List[List[str]] = []
-    if shutil.which("spd-say"):
-        commands.append(["spd-say", "--wait", "--language", "ko", "--rate", "-10", text])
-    if shutil.which("espeak-ng"):
-        commands.append(["espeak-ng", "-v", "ko", "-s", "145", text])
-    elif shutil.which("espeak"):
-        commands.append(["espeak", "-v", "ko", "-s", "145", text])
-    return commands
-
-
-def korean_audio_players(audio_path: Path) -> List[List[str]]:
-    commands: List[List[str]] = []
-    if shutil.which("cvlc"):
-        commands.append([
-            "cvlc",
-            "--intf", "dummy",
-            "--play-and-exit",
-            "--no-video",
-            "--quiet",
-            str(audio_path),
-        ])
-    if shutil.which("ffplay"):
-        commands.append([
-            "ffplay",
-            "-nodisp",
-            "-autoexit",
-            "-loglevel", "quiet",
-            str(audio_path),
-        ])
-    return commands
 
 
 def neural_korean_audio(text: str) -> Optional[Path]:
@@ -2193,13 +1949,11 @@ def next_recognition_reveal_state(
 
 
 def _cell_width(ch: str) -> int:
-    if unicodedata.combining(ch):
-        return 0
-    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return cell_width(ch)
 
 
 def _text_cell_width(text: str) -> int:
-    return sum(_cell_width(ch) for ch in text)
+    return text_cell_width(text)
 
 
 def _filtered_chars_with_raw_map(text: str) -> Tuple[List[str], List[int]]:
@@ -2272,25 +2026,7 @@ def load_local_env(path: str = ".env") -> None:
 
 
 def _split_by_cell_width(text: str, max_cells: int) -> List[str]:
-    max_cells = max(1, max_cells)
-    lines: List[str] = []
-    current: List[str] = []
-    current_width = 0
-    for char in text:
-        if char == "\n":
-            lines.append("".join(current))
-            current = []
-            current_width = 0
-            continue
-        char_width = _cell_width(char)
-        if current and current_width + char_width > max_cells:
-            lines.append("".join(current))
-            current = []
-            current_width = 0
-        current.append(char)
-        current_width += char_width
-    lines.append("".join(current))
-    return lines or [""]
+    return split_by_cell_width(text, max_cells)
 
 
 def folder_prompt_notice(message: str) -> Tuple[str, str]:

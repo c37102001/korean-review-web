@@ -1,0 +1,1 @@
+"""Pure terminal domain rules."""

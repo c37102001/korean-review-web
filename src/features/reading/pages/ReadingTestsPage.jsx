@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
-import { Check, Copy, Eye, EyeOff, Plus, Search, Trash2, X } from 'lucide-react';
+import { Check, Copy, Plus, Trash2, X } from 'lucide-react';
 import { ActionMenu } from '../../../components/actions/ActionMenu.jsx';
 import { EditIconButton } from '../../../components/actions/ContentActionButtons.jsx';
+import { EntityCardShell, EntityGrid, LearnedVisibilityToggle, LibraryPageShell } from '../../../components/library/LibraryPrimitives.jsx';
 import {
   formatReadingTestsJson,
   parseReadingTestsJson,
@@ -12,7 +13,7 @@ import { formatContentTimestamp } from '../../../shared/dateTime.js';
 
 function ReadingTestCard({ test, index, onOpen, onEdit, onDelete }) {
   return (
-    <article className="reading-test-card clickable-card" onClick={() => onOpen(test.id)}>
+    <EntityCardShell className="reading-test-card" onOpen={() => onOpen(test.id)}>
       <div className="card-head">
         <div><span className="eyebrow">Reading · {test.options.length} choices</span><h2>閱讀題 {index + 1}</h2></div>
         <div className="card-actions">
@@ -26,7 +27,7 @@ function ReadingTestCard({ test, index, onOpen, onEdit, onDelete }) {
         <span>{test.options.length} 個選項</span>
         <span>{formatContentTimestamp(test.updatedAt || test.createdAt)}</span>
       </div>
-    </article>
+    </EntityCardShell>
   );
 }
 
@@ -98,25 +99,26 @@ export default function ReadingTestsPage({ tests, error, onSave, onSaveMany, onD
     }
   };
   return (
-    <section className="page reading-tests-page">
-      <div className="topbar">
-        <div><span className="eyebrow">Reading Practice</span><h1>閱讀測驗</h1></div>
-        <div className="actions notebook-actions">
+    <LibraryPageShell
+      className="reading-tests-page"
+      eyebrow="Reading Practice"
+      title="閱讀測驗"
+      actions={<>
           <button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 匯入題目</button>
           <ActionMenu>
-            <button type="button" className={`learned-visibility-button ${hideLearned ? 'active' : ''}`} aria-pressed={hideLearned} title={`${hideLearned ? '目前隱藏' : '目前顯示'} ${learnedCount} 個已學習題目`} onClick={() => setHideLearned((current) => !current)}>
-              {hideLearned ? <EyeOff size={18} /> : <Eye size={18} />}{hideLearned ? '隱藏已學習' : '顯示已學習'}
-            </button>
+            <LearnedVisibilityToggle hidden={hideLearned} count={learnedCount} noun="題目" onToggle={() => setHideLearned((current) => !current)} />
             <button type="button" onClick={copyJsonFormat}><Copy size={18} /> {formatCopied ? '已複製格式' : '複製 JSON 格式'}</button>
           </ActionMenu>
-        </div>
-      </div>
-      <label className="search grammar-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋韓文文章、題目、選項或中文翻譯" /></label>
+      </>}
+      query={query}
+      onQueryChange={setQuery}
+      searchPlaceholder="搜尋韓文文章、題目、選項或中文翻譯"
+      error={error}
+    >
       {actionError && <div className="form-error">{actionError}</div>}
-      {error && <div className="sync-error">Firebase 同步失敗：{error}</div>}
-      {filtered.length ? <div className="reading-test-grid">{filtered.map((test, index) => <ReadingTestCard key={test.id} test={test} index={index} onOpen={onOpen} onEdit={setEditing} onDelete={deleteTest} />)}</div>
+      {filtered.length ? <EntityGrid className="reading-test-grid">{filtered.map((test, index) => <ReadingTestCard key={test.id} test={test} index={index} onOpen={onOpen} onEdit={setEditing} onDelete={deleteTest} />)}</EntityGrid>
         : <div className="panel grammar-empty">{query ? '找不到符合的閱讀題。' : hideLearned && tests.length ? '目前沒有未學習的閱讀題。取消隱藏即可查看全部題目。' : '還沒有閱讀題，請用 JSON 一次匯入一題或多題。'}</div>}
       {editing && <ReadingTestsEditorModal test={editing.id ? editing : null} existingTests={tests} onSave={async (nextTests) => { if (editing.id) await onSave(nextTests[0]); else await onSaveMany(nextTests); setEditing(null); }} onClose={() => setEditing(null)} />}
-    </section>
+    </LibraryPageShell>
   );
 }

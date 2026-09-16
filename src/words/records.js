@@ -32,6 +32,30 @@ export function normalizeKoreanKey(value) {
   return String(value || '').trim().normalize('NFC');
 }
 
+export function parsePairLines(text) {
+  const lines = String(text || '').split('\n').map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  if (lines.every((line) => line.includes('|'))) {
+    return lines.map((line, index) => {
+      const [ko, ...rest] = line.split('|');
+      const zh = rest.join('|').trim();
+      if (!ko.trim() || !zh) throw new Error(`第 ${index + 1} 個例句需要韓文和中文`);
+      return { ko: ko.trim(), zh };
+    });
+  }
+  if (lines.length % 2 !== 0) throw new Error(`第 ${Math.floor(lines.length / 2) + 1} 個例句缺少中文翻譯`);
+  const examples = [];
+  for (let index = 0; index < lines.length; index += 2) examples.push({ ko: lines[index], zh: lines[index + 1] });
+  return examples;
+}
+
+export function formatPairLines(examples = []) {
+  return examples
+    .filter((example) => example.ko || example.zh)
+    .map((example) => `${example.ko || ''}\n${example.zh || ''}`)
+    .join('\n\n');
+}
+
 export function buildRecordLookup(records) {
   const byId = new Map();
   const byKo = new Map();

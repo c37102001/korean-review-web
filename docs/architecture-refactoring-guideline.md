@@ -524,9 +524,15 @@ Firestore schema、collection 名稱、增量 checkpoint、tombstone 與離線�
 
 ### Phase 5：內容工具與 Terminal
 
-- 共用 YT／閱讀的 selectable text 工具。
-- 共用 Library layout primitives。
-- 拆分 Terminal package，加入 Web／Terminal contract fixtures。
+**狀態：已完成（2026-09-16）**
+
+- [x] YT／閱讀共用 `SelectableKoreanText`、selection lifecycle hook、操作泡泡、單字解釋泡泡與快速新增 modal；來源頁只注入影片暫停、畫線及目的資料夾 policy。
+- [x] 筆記、YT 字幕與閱讀題共用 `LibraryPageShell`、`CollapsibleGroup`、`EntityGrid`、`EntityCardShell`、`LearnedVisibilityToggle` 與 `PinButton`，保留各 feature 的 editor、validation 與 card body。
+- [x] 建立 `terminal_app` package，將 models、複習規則、自選練習、Firestore codec、cache、TTS adapter 與 curses 文字寬度 primitive 移出入口檔；`terminal_review_practice.py` 保留 CLI orchestration 與舊 import API 相容性。
+- [x] 建立 `contracts/review-rules-v1.json`，由 Web 與 Terminal 各自跑同一份熟悉分數、負分排程、錯題 pool、已學習排除及 review intervals parity tests。
+- [x] 新增 ownership boundary tests，防止 YT／閱讀重新建立第二套 selection listener，或 Library 頁退回各自維護版型。
+
+Terminal 後續新增領域規則時必須放入 `terminal_app/domain` 並擴充共用 contract；CLI 畫面流程可再按功能逐步移入 `terminal_app/ui/screens`，不得為了搬檔而一次改寫 curses 導航行為。
 
 ## 14. 重構工作規則
 
