@@ -848,7 +848,7 @@ terminal_app/
 
 ### Phase 12：Terminal screens 與導航
 
-**狀態：待實作**
+**狀態：已完成**
 
 目標目錄：
 
@@ -881,6 +881,13 @@ terminal_app/ui/
 - 現有啟動指令與 `--offline`、`--sync` 介面不變。
 
 建議 commit：`refactor terminal screens and navigation`
+
+實際結果：
+
+- `terminal_app/app.py` 成為應用組裝與主 loop 的唯一 owner，舊 script 縮為相容入口。
+- 新增明確的 `NavigationStack`／`ScreenResult`，確保返回動作一次只退一層。
+- 新增共用 `ScrollModel` 與 screen protocol，讓畫面互動可脫離 curses 測試。
+- 保留既有啟動方式、`--offline`、`--sync` 與歷史 import/monkeypatch 相容性。
 
 ### Phase 13：CSS ownership、bundle 與視覺回歸
 
