@@ -41,10 +41,12 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib import error, parse, request
 import terminal_offline
 from terminal_app.audio.tts import korean_audio_players, korean_speech_commands
+from terminal_app.api.auth import FirebaseAuthService
 from terminal_app.api.firestore_codec import document_id as _doc_id
 from terminal_app.api.firestore_codec import parse_fields as _parse_firestore_fields
 from terminal_app.api.firestore_codec import parse_value as _parse_firestore_value
 from terminal_app.api.firestore_codec import to_value as _to_firestore_value
+from terminal_app.api.transport import JsonHttpTransport
 from terminal_app.domain.models import AuthSession, Card, GrammarNote, PartialCheckResult, Question, YoutubeSubtitle
 from terminal_app.domain.practice import (
     add_optional_practice_task,
@@ -54,7 +56,10 @@ from terminal_app.domain.practice import (
     remove_optional_practice_task,
 )
 from terminal_app.domain.review import REVIEW_INTERVALS, familiarity_score, next_review_transition
+from terminal_app.repositories import FirestoreCollectionRepository
 from terminal_app.sync.cache import cache_path, read_cache, write_cache
+from terminal_app.sync.incremental import active_records, latest_updated_at, merge_record_changes
+from terminal_app.sync.service import TerminalSyncService
 from terminal_app.ui.primitives import cell_width, split_by_cell_width, text_cell_width
 
 
@@ -91,9 +96,11 @@ _AUTO_PLAY_AUDIO = True
 
 
 class FirebaseClient:
-    def __init__(self, api_key: str, project_id: str) -> None:
+    def __init__(self, api_key: str, project_id: str, transport=None) -> None:
         self.api_key = api_key
         self.project_id = project_id
+        self.transport = transport or JsonHttpTransport()
+        self.auth_service = FirebaseAuthService(api_key, self.transport)
         self._saved_state: Dict[str, Any] = empty_state()
         self._writes_blocked_until = 0.0
         self.offline_mode = False
@@ -155,24 +162,13 @@ class FirebaseClient:
             raise
 
     def sign_in(self, email: str, password: str) -> AuthSession:
-        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={self.api_key}"
-        payload = {"email": email, "password": password, "returnSecureToken": True}
-        data = self._request_json("POST", url, payload=payload)
-        return AuthSession(
-            email=data.get("email", email),
-            uid=data["localId"],
-            id_token=data["idToken"],
-            refresh_token=data["refreshToken"],
-        )
+        return self.auth_service.sign_in(email, password)
 
     def list_records(self, session: AuthSession) -> List[Dict[str, Any]]:
-        return [
-            _parse_firestore_fields(doc.get("fields", {})) | {"_docId": _doc_id(doc.get("name", ""))}
-            for doc in self._list_documents(["users", session.uid, "records"], session)
-        ]
+        return FirestoreCollectionRepository(self, "records").list_all(session)
 
     def list_records_updated_since(self, session: AuthSession, updated_at: str) -> List[Dict[str, Any]]:
-        return self._list_documents_updated_since(session, "records", updated_at)
+        return FirestoreCollectionRepository(self, "records").updated_since(session, updated_at)
 
     def _list_documents_updated_since(self, session: AuthSession, collection_id: str, updated_at: str) -> List[Dict[str, Any]]:
         url = f"{self._document_url(['users', session.uid])}:runQuery"
@@ -199,11 +195,7 @@ class FirebaseClient:
         ]
 
     def list_folders(self, session: AuthSession) -> List[Dict[str, Any]]:
-        return [
-            _parse_firestore_fields(document.get("fields", {}))
-            | {"id": _doc_id(document.get("name", ""))}
-            for document in self._list_documents(["users", session.uid, "folders"], session)
-        ]
+        return FirestoreCollectionRepository(self, "folders").list_all(session)
 
     def ensure_system_folder(
         self,
@@ -293,18 +285,10 @@ class FirebaseClient:
         }]}, session=session)
 
     def list_grammar_notes(self, session: AuthSession) -> List[Dict[str, Any]]:
-        return [
-            _parse_firestore_fields(document.get("fields", {}))
-            | {"_docId": _doc_id(document.get("name", ""))}
-            for document in self._list_documents(["users", session.uid, "grammarNotes"], session)
-        ]
+        return FirestoreCollectionRepository(self, "grammarNotes").list_all(session)
 
     def list_youtube_subtitles(self, session: AuthSession) -> List[Dict[str, Any]]:
-        return [
-            _parse_firestore_fields(document.get("fields", {}))
-            | {"_docId": _doc_id(document.get("name", ""))}
-            for document in self._list_documents(["users", session.uid, "ytSubtitles"], session)
-        ]
+        return FirestoreCollectionRepository(self, "ytSubtitles").list_all(session)
 
     def load_grammar_review(self, session: AuthSession) -> Dict[str, Any]:
         try:
@@ -593,11 +577,7 @@ class FirebaseClient:
         return f"{base}/{'/'.join(parse.quote(part, safe='') for part in segments)}"
 
     def _refresh_session_token(self, session: AuthSession) -> None:
-        url = f"https://securetoken.googleapis.com/v1/token?key={self.api_key}"
-        payload = {"grant_type": "refresh_token", "refresh_token": session.refresh_token}
-        data = self._request_json("POST", url, payload=payload, _retry=False)
-        session.id_token = data.get("id_token", session.id_token)
-        session.refresh_token = data.get("refresh_token", session.refresh_token)
+        self.auth_service.refresh(session)
 
     def _request_json(
         self,
@@ -609,39 +589,14 @@ class FirebaseClient:
     ) -> Dict[str, Any]:
         if self.offline_mode:
             raise RuntimeError('目前為離線模式，這項操作需要連線；沒有存取 Firebase')
-        body = json.dumps(payload).encode("utf-8") if payload is not None else None
-        transient_attempt = 0
-        can_refresh_token = bool(session and _retry)
-        while True:
-            headers = {"Content-Type": "application/json"}
-            if session:
-                headers["Authorization"] = f"Bearer {session.id_token}"
-            req = request.Request(url, method=method, headers=headers, data=body)
-            try:
-                with request.urlopen(req, timeout=25) as resp:
-                    raw = resp.read().decode("utf-8")
-                    return json.loads(raw) if raw else {}
-            except error.HTTPError as exc:
-                details = exc.read().decode("utf-8", errors="replace")
-                error_message = _extract_http_error_message(details)
-                if exc.code == 401 and can_refresh_token and session:
-                    can_refresh_token = False
-                    self._refresh_session_token(session)
-                    continue
-                quota_exceeded = exc.code == 429 and _is_quota_exceeded_error(error_message)
-                if not quota_exceeded and exc.code in (429, 500, 502, 503, 504) and transient_attempt < 3:
-                    retry_after = exc.headers.get("Retry-After") if exc.headers else None
-                    delay = float(retry_after) if retry_after and retry_after.isdigit() else 0.5 * (2 ** transient_attempt)
-                    transient_attempt += 1
-                    time.sleep(delay)
-                    continue
-                raise RuntimeError(f"HTTP {exc.code}: {error_message}") from None
-            except error.URLError as exc:
-                if transient_attempt < 3:
-                    time.sleep(0.5 * (2 ** transient_attempt))
-                    transient_attempt += 1
-                    continue
-                raise RuntimeError(f"Network error: {exc.reason}") from None
+        return self.transport.request_json(
+            method,
+            url,
+            payload=payload,
+            token=session.id_token if session else "",
+            refresh=(lambda: self.auth_service.refresh(session)) if session and _retry else None,
+            allow_retry=_retry,
+        )
 
 
 def mark_word_as_learned(
@@ -819,39 +774,6 @@ def record_order(record: Dict[str, Any]) -> int:
         return int(datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp() * 1_000_000)
     except ValueError:
         return 0
-
-
-def active_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [record for record in records if not record.get("deletedAt")]
-
-
-def latest_updated_at(records: List[Dict[str, Any]], fallback: str = "") -> str:
-    values = [fallback, *(str(record.get("updatedAt") or "") for record in records)]
-
-    def timestamp(value: str) -> float:
-        try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-        except ValueError:
-            return float("-inf")
-
-    return max(values, key=timestamp)
-
-
-def merge_record_changes(records: List[Dict[str, Any]], changes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    by_id = {
-        str(record.get("id") or record.get("_docId")): record
-        for record in active_records(records)
-        if record.get("id") or record.get("_docId")
-    }
-    for change in changes:
-        record_id = str(change.get("id") or change.get("_docId") or "")
-        if not record_id:
-            continue
-        if change.get("deletedAt"):
-            by_id.pop(record_id, None)
-        else:
-            by_id[record_id] = change
-    return list(by_id.values())
 
 
 def normalize_records(records: List[Dict[str, Any]], state: Dict[str, Any]) -> Tuple[List[Card], List[Question]]:
@@ -1069,16 +991,8 @@ def load_data_with_cache(
     session: AuthSession,
 ) -> Tuple[Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any], List[YoutubeSubtitle]], bool]:
     """Use the local record baseline, sync deltas, and fall back fully offline when needed."""
-    if client.offline_mode:
-        payload = client.offline_payload or _read_terminal_cache(session.uid)
-        if not payload:
-            raise RuntimeError('此帳號沒有本機備份，請先連線載入一次')
-        client.start_offline(session, payload)
-        loaded = _hydrate_loaded_data(client, session, client.offline_payload, ensure_system_folders=False)
-        client._saved_state = _clone_json(loaded[0])
-        return loaded, True
     cached = _read_terminal_cache(session.uid)
-    if cached and cached.get('pending'):
+    if not client.offline_mode and cached and cached.get('pending'):
         client.offline_payload = cached
         try:
             client.sync_offline(session)
@@ -1086,21 +1000,19 @@ def load_data_with_cache(
             client.offline_sync_error = str(exc)
             client.start_offline(session, cached)
             return load_data_with_cache(client, session)
-    try:
-        sync = cached.get("sync") if cached else None
-        loaded = load_data_incrementally(client, session, cached) if sync and sync.get("version") == TERMINAL_SYNC_VERSION else load_data(client, session)
-    except RuntimeError as exc:
-        if not _is_quota_exceeded_error(str(exc)) and 'Network error' not in str(exc):
-            raise
-        payload = _read_terminal_cache(session.uid)
-        if payload is None:
-            raise
-        client.start_offline(session, payload)
-        loaded = _hydrate_loaded_data(client, session, client.offline_payload, ensure_system_folders=False)
-        client._saved_state = _clone_json(loaded[0])
-        return loaded, True
-    client.offline_mode = False
-    return loaded, False
+    service = TerminalSyncService(
+        TERMINAL_SYNC_VERSION,
+        _read_terminal_cache,
+        _hydrate_loaded_data,
+        _is_quota_exceeded_error,
+    )
+    return service.load(
+        client,
+        session,
+        cached,
+        full_loader=lambda: load_data(client, session),
+        incremental_loader=lambda payload: load_data_incrementally(client, session, payload),
+    )
 
 
 def _hydrate_loaded_data(

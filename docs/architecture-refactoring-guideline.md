@@ -791,7 +791,7 @@ src/features/sessions/
 
 ### Phase 10：Terminal API 與同步邊界
 
-**狀態：待實作**
+**狀態：已完成（2026-09-16）**
 
 目標目錄：
 
