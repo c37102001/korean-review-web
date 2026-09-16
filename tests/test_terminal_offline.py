@@ -22,6 +22,7 @@ class OfflineTests(unittest.TestCase):
             'state': terminal.empty_state(), 'records': [],
             'folders': [{'id': 'system-unfamiliar', 'wordIds': []}],
             'grammarReview': {}, 'grammarNotes': [], 'ytSubtitles': [],
+            'readingTests': [{'id': 'reading', 'learned': False}],
         }
         terminal._write_terminal_cache(self.session.uid, self.payload)
 
@@ -48,6 +49,14 @@ class OfflineTests(unittest.TestCase):
         cached = terminal._read_terminal_cache(self.session.uid)
         self.assertEqual(cached['folders'][0]['wordIds'], [])
         self.assertFalse(cached['pending']['folders']['system-unfamiliar']['word'])
+
+    def test_reading_learned_toggle_is_available_offline_and_persisted(self):
+        self.client.start_offline(self.session)
+        with patch.object(self.client, '_request_json', side_effect=AssertionError('network accessed')):
+            self.client.set_reading_test_learned(self.session, 'reading', True)
+        cached = terminal._read_terminal_cache(self.session.uid)
+        self.assertTrue(cached['readingTests'][0]['learned'])
+        self.assertEqual(cached['pending']['readingTests'], {'reading': True})
 
     def test_local_optional_practice_can_be_created_and_completed(self):
         self.client.start_offline(self.session)

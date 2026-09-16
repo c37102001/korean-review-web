@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Tuple
 
-from .models import Card, GrammarNote, Question, YoutubeSubtitle
+from .models import Card, GrammarNote, Question, ReadingTest, YoutubeSubtitle
 
 
 def item_zh(item: Dict[str, Any]) -> str:
@@ -122,3 +122,40 @@ def normalize_youtube_subtitles(records: List[Dict[str, Any]]) -> List[YoutubeSu
             updated_at=str(record.get("updatedAt") or ""),
         ))
     return sorted(subtitles, key=lambda subtitle: (subtitle.updated_at or subtitle.created_at, subtitle.title, subtitle.id), reverse=True)
+
+
+def normalize_reading_tests(records: List[Dict[str, Any]]) -> List[ReadingTest]:
+    tests: List[ReadingTest] = []
+    for record in records:
+        test_id = str(record.get("id") or record.get("_docId") or "")
+        passage = record.get("passage") if isinstance(record.get("passage"), dict) else {}
+        question = record.get("question") if isinstance(record.get("question"), dict) else {}
+        options = []
+        for index, option in enumerate(record.get("options") or []):
+            if not isinstance(option, dict):
+                continue
+            option_id = str(option.get("id") or index + 1)
+            ko = str(option.get("ko") or "").strip()
+            zh = str(option.get("zh") or "").strip()
+            if ko and zh:
+                options.append({"id": option_id, "ko": ko, "zh": zh})
+        answer = str(record.get("answer") or "").strip()
+        if (
+            not test_id
+            or not str(passage.get("ko") or "").strip()
+            or not str(question.get("ko") or "").strip()
+            or answer not in {option["id"] for option in options}
+        ):
+            continue
+        tests.append(ReadingTest(
+            id=test_id,
+            passage={"ko": str(passage.get("ko") or "").strip(), "zh": str(passage.get("zh") or "").strip()},
+            question={"ko": str(question.get("ko") or "").strip(), "zh": str(question.get("zh") or "").strip()},
+            options=options,
+            answer=answer,
+            learned=record.get("learned") is True,
+            order=int(record.get("order")) if isinstance(record.get("order"), int) else 0,
+            created_at=str(record.get("createdAt") or ""),
+            updated_at=str(record.get("updatedAt") or ""),
+        ))
+    return sorted(tests, key=lambda item: (item.order, item.created_at, item.id))

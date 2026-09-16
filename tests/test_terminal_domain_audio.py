@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from terminal_app.audio.youtube import TerminalYoutubeAudioPlayer, download_youtube_audio
-from terminal_app.domain.content import normalize_grammar_notes, normalize_records, normalize_youtube_subtitles
+from terminal_app.domain.content import normalize_grammar_notes, normalize_reading_tests, normalize_records, normalize_youtube_subtitles
 from terminal_app.domain.models import YoutubeSubtitle
 
 
@@ -69,6 +69,25 @@ class TerminalDomainAudioTests(unittest.TestCase):
         self.assertEqual([question.kind for question in questions], ['term', 'example'])
         self.assertEqual(normalize_grammar_notes([{'id': 'n', 'title': '標題'}])[0].category, 'grammar')
         self.assertEqual(normalize_youtube_subtitles([{'id': 's', 'title': '字幕', 'mode': 'srt'}])[0].mode, 'srt')
+
+    def test_reading_tests_normalize_valid_questions_and_ignore_incomplete_records(self):
+        tests = normalize_reading_tests([
+            {
+                'id': 'reading',
+                'passage': {'ko': '한국어 글', 'zh': '韓文文章'},
+                'question': {'ko': '고르십시오.', 'zh': '請選擇。'},
+                'options': [
+                    {'id': '1', 'ko': '첫째', 'zh': '第一'},
+                    {'id': '2', 'ko': '둘째', 'zh': '第二'},
+                ],
+                'answer': '2',
+                'learned': True,
+            },
+            {'id': 'invalid', 'passage': {'ko': '缺少其餘欄位'}},
+        ])
+        self.assertEqual(len(tests), 1)
+        self.assertEqual(tests[0].answer, '2')
+        self.assertTrue(tests[0].learned)
 
     def test_youtube_downloader_uses_fallback_after_403(self):
         with tempfile.TemporaryDirectory() as directory:

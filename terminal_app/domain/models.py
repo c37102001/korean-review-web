@@ -59,6 +59,19 @@ class YoutubeSubtitle:
 
 
 @dataclass
+class ReadingTest:
+    id: str
+    passage: Dict[str, str]
+    question: Dict[str, str]
+    options: List[Dict[str, str]]
+    answer: str
+    learned: bool = False
+    order: int = 0
+    created_at: str = ""
+    updated_at: str = ""
+
+
+@dataclass
 class PartialCheckResult:
     all_correct_prefix: bool
     wrong_raw_indices: set[int]

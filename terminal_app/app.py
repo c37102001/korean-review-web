@@ -51,8 +51,8 @@ from terminal_app.api.firestore_codec import parse_fields as _parse_firestore_fi
 from terminal_app.api.firestore_codec import parse_value as _parse_firestore_value
 from terminal_app.api.firestore_codec import to_value as _to_firestore_value
 from terminal_app.api.transport import JsonHttpTransport
-from terminal_app.domain.models import AuthSession, Card, GrammarNote, PartialCheckResult, Question, YoutubeSubtitle
-from terminal_app.domain.content import item_zh, normalize_grammar_notes, normalize_records, normalize_youtube_subtitles, order_questions, record_order
+from terminal_app.domain.models import AuthSession, Card, GrammarNote, PartialCheckResult, Question, ReadingTest, YoutubeSubtitle
+from terminal_app.domain.content import item_zh, normalize_grammar_notes, normalize_reading_tests, normalize_records, normalize_youtube_subtitles, order_questions, record_order
 from terminal_app.domain.practice import (
     add_optional_practice_task,
     answer_optional_practice_task,
@@ -316,6 +316,42 @@ class FirebaseClient:
 
     def list_youtube_subtitles(self, session: AuthSession) -> List[Dict[str, Any]]:
         return FirestoreCollectionRepository(self, "ytSubtitles").list_all(session)
+
+    def list_reading_tests(self, session: AuthSession) -> List[Dict[str, Any]]:
+        return FirestoreCollectionRepository(self, "readingTests").list_all(session)
+
+    def set_reading_test_learned(self, session: AuthSession, test_id: str, learned: bool) -> None:
+        if self.offline_mode:
+            payload = self.offline_payload
+            previous = _clone_json(payload)
+            pending = payload.setdefault("pending", {})
+            pending.setdefault("readingTests", {})[test_id] = bool(learned)
+            for record in payload.setdefault("readingTests", []):
+                if str(record.get("id") or record.get("_docId") or "") == test_id:
+                    record["learned"] = bool(learned)
+                    record["updatedAt"] = utc_now_iso()
+                    break
+            try:
+                self.persist_offline(session)
+            except RuntimeError:
+                self.offline_payload = previous
+                raise
+            return
+        document_name = f"projects/{self.project_id}/databases/(default)/documents/users/{session.uid}/readingTests/{test_id}"
+        self._request_json(
+            "POST",
+            f"https://firestore.googleapis.com/v1/projects/{self.project_id}/databases/(default)/documents:commit",
+            payload={"writes": [{
+                "update": {
+                    "name": document_name,
+                    "fields": {"learned": _to_firestore_value(bool(learned))},
+                },
+                "updateMask": {"fieldPaths": ["learned"]},
+                "updateTransforms": [{"fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"}],
+                "currentDocument": {"exists": True},
+            }]},
+            session=session,
+        )
 
     def load_grammar_review(self, session: AuthSession) -> Dict[str, Any]:
         try:
@@ -793,18 +829,20 @@ def load_data(
     session: AuthSession,
 ) -> Tuple[Dict[str, Any], List[Card], List[Question], List[GrammarNote], Dict[str, Any], List[YoutubeSubtitle]]:
     baseline_started_at = utc_now_iso()
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=7) as executor:
         state_future = executor.submit(client.load_review_state, session)
         records_future = executor.submit(client.list_records, session)
         folders_future = executor.submit(client.list_folders, session)
         grammar_notes_future = executor.submit(client.list_grammar_notes, session)
         youtube_subtitles_future = executor.submit(client.list_youtube_subtitles, session)
+        reading_tests_future = executor.submit(client.list_reading_tests, session)
         grammar_review_future = executor.submit(client.load_grammar_review, session)
         state = state_future.result()
         all_record_documents = records_future.result()
         all_folder_documents = folders_future.result()
         all_grammar_note_documents = grammar_notes_future.result()
         all_youtube_subtitle_documents = youtube_subtitles_future.result()
+        all_reading_test_documents = reading_tests_future.result()
         grammar_review = grammar_review_future.result()
 
     payload = {
@@ -814,6 +852,7 @@ def load_data(
         "folders": active_records(all_folder_documents),
         "grammarNotes": active_records(all_grammar_note_documents),
         "ytSubtitles": active_records(all_youtube_subtitle_documents),
+        "readingTests": active_records(all_reading_test_documents),
         "grammarReview": grammar_review,
         "sync": {
             "version": TERMINAL_SYNC_VERSION,
@@ -821,6 +860,7 @@ def load_data(
             "foldersUpdatedAt": latest_updated_at(all_folder_documents, baseline_started_at),
             "grammarNotesUpdatedAt": latest_updated_at(all_grammar_note_documents, baseline_started_at),
             "ytSubtitlesUpdatedAt": latest_updated_at(all_youtube_subtitle_documents, baseline_started_at),
+            "readingTestsUpdatedAt": latest_updated_at(all_reading_test_documents, baseline_started_at),
         },
     }
     loaded = _hydrate_loaded_data(client, session, payload, ensure_system_folders=True)
@@ -841,27 +881,31 @@ def load_data_incrementally(
         "folders": str(sync.get("foldersUpdatedAt") or ""),
         "grammarNotes": str(sync.get("grammarNotesUpdatedAt") or ""),
         "ytSubtitles": str(sync.get("ytSubtitlesUpdatedAt") or ""),
+        "readingTests": str(sync.get("readingTestsUpdatedAt") or ""),
     }
     if not all(checkpoints.values()):
         return load_data(client, session)
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=7) as executor:
         state_future = executor.submit(client.load_review_state, session)
         records_future = executor.submit(client._list_documents_updated_since, session, "records", checkpoints["records"])
         folders_future = executor.submit(client._list_documents_updated_since, session, "folders", checkpoints["folders"])
         grammar_notes_future = executor.submit(client._list_documents_updated_since, session, "grammarNotes", checkpoints["grammarNotes"])
         youtube_subtitles_future = executor.submit(client._list_documents_updated_since, session, "ytSubtitles", checkpoints["ytSubtitles"])
+        reading_tests_future = executor.submit(client._list_documents_updated_since, session, "readingTests", checkpoints["readingTests"])
         grammar_review_future = executor.submit(client.load_grammar_review, session)
         state = state_future.result()
         record_changes = records_future.result()
         folder_changes = folders_future.result()
         grammar_note_changes = grammar_notes_future.result()
         youtube_subtitle_changes = youtube_subtitles_future.result()
+        reading_test_changes = reading_tests_future.result()
         grammar_review = grammar_review_future.result()
 
     records = merge_record_changes(cached.get("records") or [], record_changes)
     folders = merge_record_changes(cached.get("folders") or [], folder_changes)
     grammar_note_records = merge_record_changes(cached.get("grammarNotes") or [], grammar_note_changes)
     youtube_subtitle_records = merge_record_changes(cached.get("ytSubtitles") or [], youtube_subtitle_changes)
+    reading_test_records = merge_record_changes(cached.get("readingTests") or [], reading_test_changes)
     payload = {
         "account": {"uid": session.uid, "email": session.email},
         "state": state,
@@ -869,6 +913,7 @@ def load_data_incrementally(
         "folders": folders,
         "grammarNotes": grammar_note_records,
         "ytSubtitles": youtube_subtitle_records,
+        "readingTests": reading_test_records,
         "grammarReview": grammar_review,
         "sync": {
             "version": TERMINAL_SYNC_VERSION,
@@ -876,6 +921,7 @@ def load_data_incrementally(
             "foldersUpdatedAt": latest_updated_at(folder_changes, checkpoints["folders"]),
             "grammarNotesUpdatedAt": latest_updated_at(grammar_note_changes, checkpoints["grammarNotes"]),
             "ytSubtitlesUpdatedAt": latest_updated_at(youtube_subtitle_changes, checkpoints["ytSubtitles"]),
+            "readingTestsUpdatedAt": latest_updated_at(reading_test_changes, checkpoints["readingTests"]),
         },
     }
     loaded = _hydrate_loaded_data(client, session, payload, ensure_system_folders=True)
@@ -925,6 +971,7 @@ def _hydrate_loaded_data(
     folders = _clone_json(payload.get("folders") or [])
     grammar_note_records = _clone_json(payload.get("grammarNotes") or [])
     youtube_subtitle_records = _clone_json(payload.get("ytSubtitles") or [])
+    reading_test_records = _clone_json(payload.get("readingTests") or [])
     grammar_review = _clone_json(payload.get("grammarReview") or {})
 
     learned_folder = next((folder for folder in folders if folder.get("id") == SYSTEM_LEARNED_FOLDER_ID), None)
@@ -953,6 +1000,7 @@ def _hydrate_loaded_data(
     cards, questions = normalize_records(list(records_by_id.values()), state)
     grammar_notes = normalize_grammar_notes(grammar_note_records)
     youtube_subtitles = normalize_youtube_subtitles(youtube_subtitle_records)
+    state["readingTests"] = reading_test_records
     return state, cards, questions, grammar_notes, grammar_review, youtube_subtitles
 
 
@@ -2223,6 +2271,207 @@ def run_youtube_subtitles(
         elif key in ("\n", "\r", curses.KEY_ENTER, 10, 13):
             run_youtube_subtitle_detail(stdscr, notes, cursor)
             set_cursor_visibility(0)
+
+
+def _reading_content_lines(
+    test: ReadingTest,
+    width: int,
+    selected_id: str,
+    submitted: bool,
+) -> Tuple[List[Tuple[str, int]], Dict[str, int]]:
+    lines: List[Tuple[str, int]] = []
+    option_rows: Dict[str, int] = {}
+
+    def append(text: str = "", attr: int = 0, indent: str = "") -> None:
+        wrapped = _split_by_cell_width(text, max(1, width - _text_cell_width(indent)))
+        lines.extend((indent + part, attr) for part in wrapped)
+
+    append(test.passage["ko"])
+    if submitted and test.passage.get("zh"):
+        append(test.passage["zh"], curses.A_DIM)
+    append()
+    append(test.question["ko"], curses.A_BOLD)
+    if submitted and test.question.get("zh"):
+        append(test.question["zh"], curses.A_DIM)
+    append()
+    for index, option in enumerate(test.options):
+        option_rows[option["id"]] = len(lines)
+        marker = "●" if option["id"] == selected_id else "○"
+        if submitted:
+            if option["id"] == test.answer:
+                marker = "✓"
+            elif option["id"] == selected_id:
+                marker = "✗"
+        attr = curses.A_BOLD if option["id"] in (selected_id, test.answer if submitted else "") else 0
+        append(f"{marker} {index + 1}. {option['ko']}", attr)
+        if submitted and option.get("zh"):
+            append(option["zh"], curses.A_DIM, "    ")
+        append()
+    if submitted:
+        correct = selected_id == test.answer
+        append("答對" if correct else f"答錯，正確答案是 {test.answer}", curses.A_BOLD)
+    return lines, option_rows
+
+
+def _update_cached_reading_learned(uid: str, test_id: str, learned: bool) -> None:
+    cached = _read_terminal_cache(uid)
+    if not cached:
+        return
+    for container in (cached.get("readingTests") or [], (cached.get("state") or {}).get("readingTests") or []):
+        for record in container:
+            if str(record.get("id") or record.get("_docId") or "") == test_id:
+                record["learned"] = bool(learned)
+    _write_terminal_cache(uid, cached)
+
+
+def run_reading_test_detail(
+    stdscr: curses.window,
+    test: ReadingTest,
+    state: Dict[str, Any],
+    client: FirebaseClient,
+    session: AuthSession,
+) -> None:
+    selected_index = 0
+    selected_id = test.options[0]["id"]
+    submitted = False
+    scroll_offset = 0
+    message = ""
+    set_cursor_visibility(0)
+    stdscr.keypad(True)
+    while True:
+        stdscr.erase()
+        height, width = stdscr.getmaxyx()
+        content_width = max(10, width - 4)
+        lines, option_rows = _reading_content_lines(test, content_width, selected_id, submitted)
+        viewport_height = max(1, height - 5)
+        scroll_offset = max(0, min(scroll_offset, max(0, len(lines) - viewport_height)))
+        status = "已學習" if test.learned else "未學習"
+        draw_line(stdscr, 0, 2, f"閱讀測驗 | {status}", curses.A_BOLD)
+        controls = "↑↓=捲動 ←→=選項 Enter=作答" if not submitted else "↑↓=捲動 R=再做一次"
+        draw_line(stdscr, 1, 2, f"{controls} L=切換已學習 Esc=返回", curses.A_DIM)
+        for row, (line, attr) in enumerate(lines[scroll_offset:scroll_offset + viewport_height], 2):
+            draw_line(stdscr, row, 2, line, attr)
+        if message:
+            draw_line(stdscr, height - 2, 2, message, curses.A_DIM)
+        draw_line(stdscr, height - 1, 2, f"{scroll_offset + 1}-{min(len(lines), scroll_offset + viewport_height)}/{len(lines)}", curses.A_DIM)
+        update_curses_screen(stdscr)
+
+        key = read_terminal_key(stdscr, wide=True)
+        if isinstance(key, int) and 0 <= key <= 255:
+            key = chr(key)
+        key_text = key.lower() if isinstance(key, str) else ""
+        if key in ("\x1b", 27):
+            return
+        if key_text == "l":
+            previous = test.learned
+            try:
+                client.set_reading_test_learned(session, test.id, not previous)
+                test.learned = not previous
+                for record in state.get("readingTests") or []:
+                    if str(record.get("id") or record.get("_docId") or "") == test.id:
+                        record["learned"] = test.learned
+                if not client.offline_mode:
+                    _update_cached_reading_learned(session.uid, test.id, test.learned)
+                message = "已標記為已學習" if test.learned else "已取消已學習"
+            except RuntimeError as exc:
+                message = friendly_firebase_error(exc)
+            continue
+        if submitted:
+            if key == curses.KEY_UP:
+                scroll_offset -= 1
+            elif key == curses.KEY_DOWN:
+                scroll_offset += 1
+            elif key in (curses.KEY_PPAGE, "4"):
+                scroll_offset -= viewport_height
+            elif key in (curses.KEY_NPAGE, "6"):
+                scroll_offset += viewport_height
+            elif key_text == "r":
+                submitted = False
+                selected_id = test.options[0]["id"]
+                selected_index = 0
+                scroll_offset = 0
+                message = ""
+            continue
+        if key == curses.KEY_UP:
+            scroll_offset -= 1
+        elif key == curses.KEY_DOWN:
+            scroll_offset += 1
+        elif key == curses.KEY_LEFT:
+            selected_index = (selected_index - 1) % len(test.options)
+            selected_id = test.options[selected_index]["id"]
+        elif key == curses.KEY_RIGHT:
+            selected_index = (selected_index + 1) % len(test.options)
+            selected_id = test.options[selected_index]["id"]
+        elif isinstance(key, str) and key.isdigit() and 1 <= int(key) <= len(test.options):
+            selected_index = int(key) - 1
+            selected_id = test.options[selected_index]["id"]
+            submitted = True
+        elif key in ("\n", "\r", curses.KEY_ENTER, 10, 13):
+            selected_id = test.options[selected_index]["id"]
+            submitted = True
+        if key in (curses.KEY_LEFT, curses.KEY_RIGHT):
+            target_row = option_rows.get(selected_id, 0)
+            if target_row < scroll_offset:
+                scroll_offset = target_row
+            elif target_row >= scroll_offset + viewport_height:
+                scroll_offset = target_row - viewport_height + 1
+
+
+def run_reading_tests(
+    stdscr: curses.window,
+    state: Dict[str, Any],
+    client: FirebaseClient,
+    session: AuthSession,
+) -> None:
+    show_learned = False
+    cursor = 0
+    set_cursor_visibility(0)
+    stdscr.keypad(True)
+    while True:
+        tests = normalize_reading_tests(state.get("readingTests") or [])
+        visible = tests if show_learned else [test for test in tests if not test.learned]
+        if not visible:
+            action = menu(
+                stdscr,
+                "閱讀測驗",
+                [("show", "顯示已學習題目")] if tests and not show_learned else [("back", "返回")],
+                "Enter=選擇 Esc=返回",
+            )
+            if action == "show":
+                show_learned = True
+                cursor = 0
+                continue
+            return
+        cursor = min(cursor, len(visible) - 1)
+        stdscr.erase()
+        height, width = stdscr.getmaxyx()
+        visible_count = max(1, height - 4)
+        start = max(0, min(cursor - visible_count + 1, len(visible) - visible_count))
+        draw_line(stdscr, 0, 2, f"閱讀測驗 | {len(visible)}/{len(tests)} 題", curses.A_BOLD)
+        draw_line(stdscr, 1, 2, f"↑↓=移動 Enter=作答 H={'隱藏' if show_learned else '顯示'}已學習 Esc=返回", curses.A_DIM)
+        for row, test in enumerate(visible[start:start + visible_count], 2):
+            index = start + row - 2
+            status = " [已學習]" if test.learned else ""
+            label = f"閱讀題 {index + 1}{status}"
+            draw_line(stdscr, row, 2, ("» " if index == cursor else "  ") + label, curses.A_BOLD if index == cursor else 0)
+        draw_line(stdscr, height - 1, 2, f"{cursor + 1}/{len(visible)}", curses.A_DIM)
+        update_curses_screen(stdscr)
+        key = read_terminal_key(stdscr, wide=True)
+        if isinstance(key, int) and 0 <= key <= 255:
+            key = chr(key)
+        key_text = key.lower() if isinstance(key, str) else ""
+        if key in ("\x1b", 27):
+            return
+        if key == curses.KEY_UP:
+            cursor = (cursor - 1) % len(visible)
+        elif key == curses.KEY_DOWN:
+            cursor = (cursor + 1) % len(visible)
+        elif key_text == "h":
+            show_learned = not show_learned
+            cursor = 0
+        elif key in ("\n", "\r", curses.KEY_ENTER, 10, 13):
+            run_reading_test_detail(stdscr, visible[cursor], state, client, session)
+            cursor = min(cursor, max(0, len(visible) - 1))
 
 
 def prompt_practice_count(stdscr: curses.window, initial: int) -> Optional[int]:
@@ -4480,6 +4729,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 ("grammar", "文法筆記"),
                 ("vocabulary_notes", "單字筆記"),
                 ("youtube_subtitles", "YT字幕"),
+                ("reading_tests", "閱讀測驗"),
                 ("refresh", "同步最新變更"),
                 ("full_refresh", "完整重新下載（維修）"),
                 ("offline", "切換至離線模式（使用本機備份）"),
@@ -4543,6 +4793,8 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
             )
         elif choice == "youtube_subtitles":
             run_youtube_subtitles(stdscr, youtube_subtitles)
+        elif choice == "reading_tests":
+            run_reading_tests(stdscr, state, client, session)
 
 
 def clear_plain_screen() -> None:

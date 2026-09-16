@@ -26,7 +26,9 @@ def begin(payload):
         'baseState': copy.deepcopy(payload['state']),
         'baseGrammarReview': copy.deepcopy(payload.get('grammarReview') or {}),
         'folders': {},
+        'readingTests': {},
     })
+    payload['pending'].setdefault('readingTests', {})
     return payload
 
 
@@ -185,6 +187,19 @@ def synchronize(client, session, payload, api):
                 raise RuntimeError('待同步的資料夾已被刪除，已保留離線資料')
             writes.append({'transform': {'document': f'{prefix}/folders/{folder_id}', 'fieldTransforms': transforms},
                            'currentDocument': {'updateTime': folder_document['updateTime']}})
+    for test_id, learned in pending.get('readingTests', {}).items():
+        reading_document = read(client._document_url(['users', uid, 'readingTests', test_id]))
+        if not reading_document:
+            raise RuntimeError('待同步的閱讀題已被刪除，已保留離線資料')
+        writes.append({
+            'update': {
+                'name': f'{prefix}/readingTests/{test_id}',
+                'fields': {'learned': api._to_firestore_value(bool(learned))},
+            },
+            'updateMask': {'fieldPaths': ['learned']},
+            'updateTransforms': [{'fieldPath': 'updatedAt', 'setToServerValue': 'REQUEST_TIME'}],
+            'currentDocument': {'updateTime': reading_document['updateTime']},
+        })
     if len(writes) > 500:
         raise RuntimeError('離線資料超過單次同步上限，資料已保留')
     client._request_json('POST', f'https://firestore.googleapis.com/v1/projects/{client.project_id}/databases/(default)/documents:commit',
