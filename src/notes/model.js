@@ -4,6 +4,39 @@ import { firestoreTimestampIso } from '../shared/firestoreTimestamp.js';
 export const NOTE_CATEGORY_GRAMMAR = 'grammar';
 export const NOTE_CATEGORY_VOCABULARY = 'vocabulary';
 
+export function noteCategoryMeta(category) {
+  return category === NOTE_CATEGORY_VOCABULARY
+    ? {
+      category: NOTE_CATEGORY_VOCABULARY,
+      singular: '單字筆記',
+      item: '筆記',
+      heading: '單字筆記',
+      eyebrow: 'Vocabulary Notes',
+      addLabel: '新增單字筆記',
+    }
+    : {
+      category: NOTE_CATEGORY_GRAMMAR,
+      singular: '文法筆記',
+      item: '文法',
+      heading: '文法筆記',
+      eyebrow: 'Grammar Notes',
+      addLabel: '新增文法',
+    };
+}
+
+export function grammarPracticeQuestions(notes) {
+  return notes.flatMap((note) => (note.examples || [])
+    .filter((example) => example.ko?.trim() && example.zh?.trim())
+    .map((example, index) => ({
+      id: `grammar:${note.id}:${example.id || index}`,
+      itemId: note.id,
+      kind: 'grammar-example',
+      ko: example.ko.trim(),
+      zh: example.zh.trim(),
+      source: note,
+    })));
+}
+
 export function normalizeGrammarNote(note, fallbackId = '') {
   const examples = Array.isArray(note?.examples)
     ? note.examples.map((example, index) => ({

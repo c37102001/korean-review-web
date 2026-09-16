@@ -1,7 +1,22 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { AppDataProvider, useAppData } from './app/AppDataProvider.jsx';
+import { AppShell } from './app/AppShell.jsx';
+import { useAppNavigation } from './app/navigation.js';
+import {
+  configureSpeechUtterance,
+  findPreferredSpeechVoice,
+  normalizeSpeechLanguage,
+  readSpeechVoicePreferences,
+  SPEECH_VOICE_STORAGE_KEY,
+  speakText,
+  speakTextAndWait,
+  speechLanguageKey,
+} from './audio/speech.js';
 import { useOptionalPractice } from './practice/optionalPractice.js';
+import { ActionMenu } from './components/actions/ActionMenu.jsx';
 import { EditIconButton, KoreanSpeakButton, StarButton } from './components/actions/ContentActionButtons.jsx';
+import { TextSpeakButton } from './components/actions/TextSpeakButton.jsx';
 import { FolderPickerDropdown } from './features/word-library/components/BulkWordActions.jsx';
 import { GroupedFolderMultiSelect, MultiSelectFilter, SearchScopeControl } from './features/word-library/components/WordCollectionFilters.jsx';
 import { WordCollectionView } from './features/word-library/components/WordCollectionView.jsx';
@@ -57,8 +72,6 @@ import {
   ArrowUp,
   BookOpen,
   BookMarked,
-  CalendarDays,
-  Captions,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -76,13 +89,8 @@ import {
   FolderOpen,
   FolderPlus,
   Highlighter,
-  LibraryBig,
-  ListChecks,
   Link2,
-  LogOut,
   Minus,
-  MoreHorizontal,
-  NotebookPen,
   Pencil,
   Pin,
   Pause,
@@ -104,27 +112,20 @@ import {
   X,
 } from 'lucide-react';
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { arrayRemove, arrayUnion, collection, deleteField, doc, FieldPath, getDocsFromCache, onSnapshot, query, serverTimestamp, setDoc, Timestamp, where, writeBatch } from 'firebase/firestore';
+import { arrayUnion, collection, doc, FieldPath, getDocsFromCache, onSnapshot, query, serverTimestamp, setDoc, Timestamp, where } from 'firebase/firestore';
 import { auth, db, prepareOfflineFirestoreData, setFirestoreNetworkEnabled, waitForFirestoreSync } from './firebase.js';
 import {
-  defaultLearnedFolder,
-  defaultUnfamiliarFolder,
   folderTagLabel,
   groupFoldersByTag,
   isLearnedFolder,
   isSystemFolder,
   isUnfamiliarFolder,
   normalizeFolder,
-  READING_SOURCE_FOLDER_ID,
   READING_SOURCE_FOLDER_NAME,
   SYSTEM_LEARNED_FOLDER_ID,
-  SYSTEM_LEARNED_FOLDER_NAME,
   SYSTEM_UNFAMILIAR_FOLDER_ID,
-  SYSTEM_UNFAMILIAR_FOLDER_NAME,
-  systemFolderRank,
   toggleFolderGroupSelection,
   UNTAGGED_FOLDER_LABEL,
-  YT_SOURCE_FOLDER_ID,
   YT_SOURCE_FOLDER_NAME,
 } from './folders/model.js';
 import {
@@ -150,6 +151,8 @@ import {
 import {
   formatGrammarExamplesText,
   formatTaggedNoteText,
+  grammarPracticeQuestions,
+  noteCategoryMeta,
   normalizeGrammarNote,
   NOTE_CATEGORY_GRAMMAR,
   NOTE_CATEGORY_VOCABULARY,
@@ -163,14 +166,35 @@ import {
   reviewAttemptSegmentsRef,
   reviewDayRef,
 } from './repositories/reviewDaysRepository.js';
-import { subscribeToIncrementalCollection } from './repositories/incrementalCollectionRepository.js';
-import { attemptDate, emptyStore, progressShardId } from './review-engine/store.js';
-import { createId } from './shared/id.js';
-import { firestoreTimestampIso } from './shared/firestoreTimestamp.js';
 import {
+  commitFirestoreOperations,
+  isTransientFirestoreError,
+  retryFirestoreWrite,
+} from './repositories/firestoreWriteRepository.js';
+import {
+  formatReadingTestsJson,
+  normalizeReadingTest,
+  parseReadingTestsJson,
+} from './reading/model.js';
+import { attemptDate, emptyStore, progressShardId } from './review-engine/store.js';
+import {
+  deleteLearningRecord,
+  deleteLearningRecords,
+  writeLearningRecord,
+  writeLearningRecords,
+  writeReadingTestLearningRecords,
+  writeYoutubeSubtitleLearningRecords,
+} from './services/wordLibraryService.js';
+import { createId } from './shared/id.js';
+import { copyText } from './shared/clipboard.js';
+import { formatContentTimestamp as grammarTimestamp } from './shared/dateTime.js';
+import {
+  formatYoutubeSubtitleSrt,
   groupYoutubeSubtitlesByTag,
   naverDictionaryUrl,
   normalizeYoutubeSubtitle,
+  parseYoutubeSubtitleJson,
+  parseYoutubeSubtitleSrt,
   subtitleEntryAtTime,
   subtitleTagLabel as youtubeSubtitleTagLabel,
   YOUTUBE_EMBED_ORIGIN,
@@ -178,8 +202,18 @@ import {
   YT_SUBTITLE_MODE_JSON,
   YT_SUBTITLE_MODE_SRT,
 } from './subtitles/model.js';
+import {
+  buildRecordLookup,
+  normalizeItemToV2,
+  normalizeKoreanKey,
+  normalizeRecordSet,
+} from './words/records.js';
 import { recordOrder, sortRecords, wordChineseSummary, wordExamples } from './words/records.js';
 import './styles.css';
+
+const NotesNotebookPage = lazy(() => import('./features/notes/pages/NotesNotebookPage.jsx'));
+const ReadingTestsPage = lazy(() => import('./features/reading/pages/ReadingTestsPage.jsx'));
+const YoutubeSubtitlesPage = lazy(() => import('./features/subtitles/pages/YoutubeSubtitlesPage.jsx'));
 
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
 const DAILY_RECOGNITION_LIMIT = 50;
@@ -189,7 +223,6 @@ const CONTENT_SCHEMA_VERSION = 2;
 const FIRESTORE_SCHEMA_VERSION = 3;
 const MAX_ATOMIC_RECORD_WRITES = 450;
 const PUNCTUATION_RE = /[^\p{L}\p{N}\s]/gu;
-const SPEECH_VOICE_STORAGE_KEY = 'korean-review-speech-voices-v1';
 const FONT_SCALE_STORAGE_KEY = 'korean-review-font-scale-v1';
 const FONT_SCALE_MIN = 80;
 const FONT_SCALE_MAX = 150;
@@ -199,57 +232,6 @@ const SPEECH_SAMPLE_TEXT = {
 };
 
 let youtubeIframeApiPromise = null;
-
-async function copyText(text) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  document.body.appendChild(textarea);
-  textarea.select();
-  const copied = document.execCommand('copy');
-  textarea.remove();
-  if (!copied) throw new Error('瀏覽器不支援複製');
-}
-
-function ActionMenu({ label = '更多', icon: MenuIcon = MoreHorizontal, children, className = '' }) {
-  const detailsRef = useRef(null);
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const closeOutside = (event) => {
-      if (!detailsRef.current?.contains(event.target)) detailsRef.current?.removeAttribute('open');
-    };
-    const closeWithEscape = (event) => {
-      if (event.key === 'Escape') detailsRef.current?.removeAttribute('open');
-    };
-    document.addEventListener('pointerdown', closeOutside);
-    document.addEventListener('keydown', closeWithEscape);
-    return () => {
-      document.removeEventListener('pointerdown', closeOutside);
-      document.removeEventListener('keydown', closeWithEscape);
-    };
-  }, [open]);
-
-  return (
-    <details ref={detailsRef} className={`action-menu ${className}`.trim()} onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary><MenuIcon size={18} /><span>{label}</span><ChevronDown className="action-menu-chevron" size={15} /></summary>
-      <div className="action-menu-popover" onClick={(event) => {
-        if (event.target.closest('button, a') && !event.target.closest('[data-menu-keep-open]')) {
-          detailsRef.current?.removeAttribute('open');
-        }
-      }}>
-        {children}
-      </div>
-    </details>
-  );
-}
 
 function loadYoutubeIframeApi() {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -469,177 +451,6 @@ function useOfflineMode(user) {
   return { ...state, active: !state.online || state.manual, prepare, toggleManual };
 }
 
-function normalizeReadingTest(input, fallbackId = '') {
-  const options = Array.isArray(input?.options)
-    ? input.options.map((option, index) => ({
-      id: String(option?.id || index + 1),
-      ko: String(option?.ko || '').trim(),
-      zh: String(option?.zh || '').trim(),
-    }))
-    : [];
-  return {
-    id: String(input?.id || fallbackId),
-    passage: {
-      ko: String(input?.passage?.ko || '').trim(),
-      zh: String(input?.passage?.zh || '').trim(),
-    },
-    question: {
-      ko: String(input?.question?.ko || '').trim(),
-      zh: String(input?.question?.zh || '').trim(),
-    },
-    options,
-    answer: String(input?.answer || '').trim(),
-    learned: input?.learned === true,
-    order: Number.isSafeInteger(input?.order) ? input.order : 0,
-    createdAt: firestoreTimestampIso(input?.createdAt),
-    updatedAt: firestoreTimestampIso(input?.updatedAt),
-  };
-}
-
-function validateReadingTest(test, index = 0) {
-  const label = `第 ${index + 1} 題`;
-  if (!test.passage.ko || !test.passage.zh) throw new Error(`${label}的 passage 必須包含 ko 與 zh`);
-  if (!test.question.ko || !test.question.zh) throw new Error(`${label}的 question 必須包含 ko 與 zh`);
-  if (test.options.length < 2) throw new Error(`${label}至少需要兩個選項`);
-  const optionIds = test.options.map((option) => option.id);
-  if (new Set(optionIds).size !== optionIds.length) throw new Error(`${label}的選項 id 不可重複`);
-  const incompleteOption = test.options.findIndex((option) => !option.ko || !option.zh);
-  if (incompleteOption >= 0) throw new Error(`${label}的第 ${incompleteOption + 1} 個選項必須包含 id、ko 與 zh`);
-  if (!optionIds.includes(test.answer)) throw new Error(`${label}的 answer 必須是其中一個選項 id`);
-  return test;
-}
-
-function parseReadingTestsJson(text, existingTests = []) {
-  let parsed;
-  try {
-    parsed = JSON.parse(String(text || ''));
-  } catch {
-    throw new Error('閱讀測驗 JSON 格式無法解析');
-  }
-  if (!parsed || !Array.isArray(parsed.data)) throw new Error('閱讀測驗 JSON 必須是包含 data 陣列的物件');
-  if (!parsed.data.length) throw new Error('data 至少需要一題閱讀測驗');
-  const existingById = new Map(existingTests.map((test) => [test.id, test]));
-  const tests = parsed.data.map((entry, index) => {
-    const existing = entry?.id ? existingById.get(String(entry.id)) : null;
-    const id = String(entry?.id || createId());
-    return validateReadingTest(normalizeReadingTest({
-      ...existing,
-      ...entry,
-      id,
-      order: Number.isSafeInteger(entry?.order) ? entry.order : index,
-      createdAt: entry?.createdAt || existing?.createdAt || '',
-    }, id), index);
-  });
-  const ids = tests.map((test) => test.id);
-  if (new Set(ids).size !== ids.length) throw new Error('同一份 JSON 中的閱讀題目 id 不可重複');
-  return tests;
-}
-
-function formatReadingTestsJson(tests = []) {
-  return JSON.stringify({
-    schemaVersion: 1,
-    data: tests.map((test) => ({
-      ...(test.id ? { id: test.id } : {}),
-      passage: test.passage,
-      question: test.question,
-      options: test.options,
-      answer: test.answer,
-      learned: test.learned === true,
-      ...(Number.isSafeInteger(test.order) ? { order: test.order } : {}),
-    })),
-  }, null, 2);
-}
-
-function subtitleEntryIds(entries, existingEntries = []) {
-  const usedIds = new Set();
-  return entries.map((entry, index) => {
-    const exact = existingEntries.find((current) => (
-      !usedIds.has(current.id)
-      && current.ko === entry.ko
-      && current.zh === entry.zh
-      && current.startMs === entry.startMs
-    ));
-    if (exact) {
-      usedIds.add(exact.id);
-      return { ...entry, id: exact.id };
-    }
-    const samePosition = existingEntries[index];
-    if (samePosition?.id && !usedIds.has(samePosition.id)) {
-      usedIds.add(samePosition.id);
-      return { ...entry, id: samePosition.id };
-    }
-    return { ...entry, id: createId() };
-  });
-}
-
-function parseYoutubeSubtitleJson(text, existingEntries = []) {
-  let parsed;
-  try {
-    parsed = JSON.parse(String(text || ''));
-  } catch {
-    throw new Error('字幕 JSON 格式無法解析');
-  }
-  if (!parsed || !Array.isArray(parsed.data)) throw new Error('字幕 JSON 必須是包含 data 陣列的物件');
-  const entries = parsed.data.map((entry, index) => {
-    const ko = String(entry?.ko || '').trim();
-    const zh = String(entry?.zh || '').trim();
-    if (!ko || !zh) throw new Error(`第 ${index + 1} 句必須同時包含 ko 與 zh`);
-    return { ko, zh, startMs: null, endMs: null };
-  });
-  if (!entries.length) throw new Error('字幕 JSON 至少需要一個句子');
-  return subtitleEntryIds(entries, existingEntries);
-}
-
-function parseSrtTimestamp(value) {
-  const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})$/);
-  if (!match) return null;
-  return (((Number(match[1]) * 60 + Number(match[2])) * 60 + Number(match[3])) * 1000) + Number(match[4]);
-}
-
-function formatSrtTimestamp(value) {
-  const milliseconds = Math.max(0, Math.floor(Number(value) || 0));
-  const hours = Math.floor(milliseconds / 3600000);
-  const minutes = Math.floor((milliseconds % 3600000) / 60000);
-  const seconds = Math.floor((milliseconds % 60000) / 1000);
-  const fraction = milliseconds % 1000;
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(fraction).padStart(3, '0')}`;
-}
-
-function parseYoutubeSubtitleSrt(text, existingEntries = []) {
-  const blocks = String(text || '').replace(/\r\n?/g, '\n').trim().split(/\n\s*\n/).filter(Boolean);
-  const entries = blocks.map((block, index) => {
-    const lines = block.split('\n').map((line) => line.trim()).filter(Boolean);
-    if (/^\d+$/.test(lines[0])) lines.shift();
-    const timing = lines.shift()?.match(/^(.+?)\s+-->\s+(.+?)(?:\s+.*)?$/);
-    if (!timing) throw new Error(`第 ${index + 1} 段缺少有效的 SRT 時間戳`);
-    const startMs = parseSrtTimestamp(timing[1]);
-    const endMs = parseSrtTimestamp(timing[2]);
-    if (startMs === null || endMs === null) throw new Error(`第 ${index + 1} 段的時間戳格式不正確`);
-    if (lines.length < 2) throw new Error(`第 ${index + 1} 段必須提供韓文與中文各一行`);
-    return {
-      ko: lines[0].replace(/<[^>]+>/g, ''),
-      zh: lines.slice(1).join(' ').replace(/<[^>]+>/g, ''),
-      startMs,
-      endMs,
-    };
-  });
-  if (!entries.length) throw new Error('SRT 至少需要一段字幕');
-  return subtitleEntryIds(entries, existingEntries);
-}
-
-function formatYoutubeSubtitleJson(entries = []) {
-  return JSON.stringify({ data: entries.map(({ ko, zh }) => ({ ko, zh })) }, null, 2);
-}
-
-function formatYoutubeSubtitleSrt(entries = []) {
-  return entries.map((entry, index) => [
-    index + 1,
-    `${formatSrtTimestamp(entry.startMs)} --> ${formatSrtTimestamp(entry.endMs)}`,
-    entry.ko,
-    entry.zh,
-  ].join('\n')).join('\n\n');
-}
-
 function subtitleWordMatches(text, words = []) {
   const source = String(text || '');
   const byKorean = new Map();
@@ -667,395 +478,6 @@ function subtitleWordMatches(text, words = []) {
     }, []);
 }
 
-function useGrammarNotes(user, enabled = true) {
-  const [state, setState] = useState({
-    notes: [],
-    review: null,
-    loading: false,
-    reviewLoading: false,
-    error: '',
-  });
-
-  useEffect(() => {
-    if (!user || !enabled) {
-      setState({ notes: [], review: null, loading: false, reviewLoading: false, error: '' });
-      return undefined;
-    }
-    setState((current) => ({ ...current, loading: true, error: '' }));
-    return subscribeToIncrementalCollection({
-      db,
-      uid: user.uid,
-      collectionName: 'grammarNotes',
-      onData: (documents) => {
-        const notes = documents
-          .map((note) => normalizeGrammarNote(note, note.id))
-          .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '') || a.title.localeCompare(b.title));
-        setState((current) => ({ ...current, notes, loading: false, error: '' }));
-      },
-      onError: (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
-    });
-  }, [user, enabled]);
-
-  useEffect(() => {
-    if (!user || !enabled) return undefined;
-    setState((current) => ({ ...current, reviewLoading: true }));
-    return onSnapshot(
-      doc(db, 'users', user.uid, 'settings', 'grammarReview'),
-      { includeMetadataChanges: true },
-      (snapshot) => {
-        if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) markOfflineSectionReady(user.uid, 'grammarReview');
-        setState((current) => ({
-          ...current,
-          review: snapshot.exists() ? snapshot.data() : null,
-          reviewLoading: false,
-        }));
-      },
-      (error) => setState((current) => ({ ...current, reviewLoading: false, error: error.message })),
-    );
-  }, [user, enabled]);
-
-  const save = useCallback(async (input) => {
-    if (!user) throw new Error('尚未登入');
-    const id = input.id || createId();
-    const now = new Date().toISOString();
-    const note = normalizeGrammarNote({
-      ...input,
-      id,
-      createdAt: input.createdAt || now,
-      updatedAt: now,
-    }, id);
-    if (!note.title) throw new Error('請輸入筆記標題');
-    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'grammarNotes', id), {
-      ...note,
-      updatedAt: serverTimestamp(),
-    }));
-    return note;
-  }, [user]);
-
-  const remove = useCallback(async (id) => {
-    if (!user) throw new Error('尚未登入');
-    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'grammarNotes', id), {
-      id,
-      deletedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      title: deleteField(),
-      notes: deleteField(),
-      examples: deleteField(),
-      category: deleteField(),
-      createdAt: deleteField(),
-      pinned: deleteField(),
-    }, { merge: true }));
-  }, [user]);
-
-  const completeReview = useCallback(async (note, date = todayString()) => {
-    if (!user) throw new Error('尚未登入');
-    const review = {
-      lastCompletedGrammarId: note.id,
-      lastCompletedCreatedAt: note.createdAt || '',
-      completedDate: date,
-      updatedAt: new Date().toISOString(),
-    };
-    await retryFirestoreWrite(() => setDoc(
-      doc(db, 'users', user.uid, 'settings', 'grammarReview'),
-      review,
-      { merge: true },
-    ));
-    return review;
-  }, [user]);
-
-  return { ...state, save, remove, completeReview };
-}
-
-function useYoutubeSubtitles(user, enabled = true) {
-  const [state, setState] = useState({ notes: [], loading: false, error: '' });
-
-  useEffect(() => {
-    if (!user || !enabled) {
-      setState({ notes: [], loading: false, error: '' });
-      return undefined;
-    }
-    setState((current) => ({ ...current, loading: true, error: '' }));
-    return subscribeToIncrementalCollection({
-      db,
-      uid: user.uid,
-      collectionName: 'ytSubtitles',
-      onData: (documents) => {
-        const notes = documents
-          .map((note) => normalizeYoutubeSubtitle(note, note.id))
-          .filter((note) => note.title)
-          .sort((left, right) => (right.updatedAt || right.createdAt || '').localeCompare(left.updatedAt || left.createdAt || '') || left.title.localeCompare(right.title));
-        setState({ notes, loading: false, error: '' });
-      },
-      onError: (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
-    });
-  }, [user, enabled]);
-
-  const save = useCallback(async (input) => {
-    if (!user) throw new Error('尚未登入');
-    const id = input.id || createId();
-    const now = new Date().toISOString();
-    const note = normalizeYoutubeSubtitle({
-      ...input,
-      id,
-      createdAt: input.createdAt || now,
-      updatedAt: now,
-    }, id);
-    if (!note.title) throw new Error('請輸入字幕筆記標題');
-    if (!note.entries.length) throw new Error('請至少加入一個字幕句子');
-    if (note.youtubeUrl && !note.videoId) throw new Error('YouTube 連結格式無法辨識，請使用 youtube.com 或 youtu.be 連結');
-    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'ytSubtitles', id), {
-      ...note,
-      updatedAt: serverTimestamp(),
-    }));
-    return note;
-  }, [user]);
-
-  const remove = useCallback(async (id) => {
-    if (!user) throw new Error('尚未登入');
-    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'ytSubtitles', id), {
-      id,
-      deletedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      title: deleteField(),
-      entries: deleteField(),
-      youtubeUrl: deleteField(),
-      videoId: deleteField(),
-      mode: deleteField(),
-      tag: deleteField(),
-      createdAt: deleteField(),
-      learned: deleteField(),
-      pinned: deleteField(),
-    }, { merge: true }));
-  }, [user]);
-
-  return { ...state, save, remove };
-}
-
-function useReadingTests(user, enabled = true) {
-  const [state, setState] = useState({ tests: [], loading: false, error: '' });
-
-  useEffect(() => {
-    if (!user || !enabled) {
-      setState({ tests: [], loading: false, error: '' });
-      return undefined;
-    }
-    setState((current) => ({ ...current, loading: true, error: '' }));
-    return subscribeToIncrementalCollection({
-      db,
-      uid: user.uid,
-      collectionName: 'readingTests',
-      onData: (documents) => {
-        const tests = documents
-          .map((test) => normalizeReadingTest(test, test.id))
-          .sort((left, right) => (right.createdAt || '').localeCompare(left.createdAt || '') || left.order - right.order || left.id.localeCompare(right.id));
-        setState({ tests, loading: false, error: '' });
-      },
-      onError: (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
-    });
-  }, [user, enabled]);
-
-  const saveMany = useCallback(async (inputs) => {
-    if (!user) throw new Error('尚未登入');
-    if (!inputs.length) throw new Error('沒有可儲存的閱讀題目');
-    if (inputs.length > MAX_ATOMIC_RECORD_WRITES) throw new Error(`一次最多可以匯入 ${MAX_ATOMIC_RECORD_WRITES} 題`);
-    const now = new Date().toISOString();
-    const tests = inputs.map((input, index) => validateReadingTest(normalizeReadingTest({
-      ...input,
-      id: input.id || createId(),
-      order: Number.isSafeInteger(input.order) ? input.order : index,
-      createdAt: input.createdAt || now,
-      updatedAt: now,
-    }, input.id), index));
-    await retryFirestoreWrite(async () => {
-      const batch = writeBatch(db);
-      tests.forEach((test) => batch.set(doc(db, 'users', user.uid, 'readingTests', test.id), {
-        ...test,
-        updatedAt: serverTimestamp(),
-      }));
-      await batch.commit();
-    });
-    return tests;
-  }, [user]);
-
-  const save = useCallback(async (input) => (await saveMany([input]))[0], [saveMany]);
-
-  const remove = useCallback(async (id) => {
-    if (!user) throw new Error('尚未登入');
-    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'readingTests', id), {
-      id,
-      deletedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      passage: deleteField(),
-      question: deleteField(),
-      options: deleteField(),
-      answer: deleteField(),
-      learned: deleteField(),
-      order: deleteField(),
-      createdAt: deleteField(),
-    }, { merge: true }));
-  }, [user]);
-
-  return { ...state, save, saveMany, remove };
-}
-
-function useWordFolders(user, enabled = true) {
-  const [state, setState] = useState({ folders: [], loading: false, error: '' });
-
-  useEffect(() => {
-    if (!user || !enabled) {
-      setState({ folders: [], loading: false, error: '' });
-      return undefined;
-    }
-    setState((current) => ({ ...current, loading: true, error: '' }));
-    return subscribeToIncrementalCollection({
-      db,
-      uid: user.uid,
-      collectionName: 'folders',
-      onData: (documents) => {
-        let folders = documents
-          .map((folder) => normalizeFolder(folder, folder.id))
-          .filter((folder) => folder.name)
-          .sort((a, b) => systemFolderRank(a) - systemFolderRank(b) || (b.createdAt || '').localeCompare(a.createdAt || '') || a.name.localeCompare(b.name));
-        const missingSystemFolders = [];
-        if (!folders.some(isLearnedFolder)) missingSystemFolders.push(defaultLearnedFolder());
-        if (!folders.some(isUnfamiliarFolder)) missingSystemFolders.push(defaultUnfamiliarFolder());
-        if (missingSystemFolders.length) {
-          folders = [...missingSystemFolders, ...folders].sort((a, b) => systemFolderRank(a) - systemFolderRank(b) || (b.createdAt || '').localeCompare(a.createdAt || '') || a.name.localeCompare(b.name));
-          missingSystemFolders.forEach((folder) => {
-            retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'folders', folder.id), {
-              ...folder,
-              updatedAt: serverTimestamp(),
-            }))
-              .catch((error) => setState((current) => ({ ...current, error: `建立${folder.name}資料夾失敗：${error.message}` })));
-          });
-        }
-        setState({ folders, loading: false, error: '' });
-      },
-      onError: (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
-    });
-  }, [user, enabled]);
-
-  const save = useCallback(async (input) => {
-    if (!user) throw new Error('尚未登入');
-    const id = input?.id || createId();
-    const existing = state.folders.find((folder) => folder.id === id);
-    const systemFolder = isSystemFolder(existing || input);
-    const name = systemFolder ? String(existing?.name || input?.name || '').trim() : String(input?.name || '').trim();
-    if (!name) throw new Error('請輸入資料夾名稱');
-    const duplicate = state.folders.find((folder) => folder.name.toLocaleLowerCase() === name.toLocaleLowerCase() && folder.id !== input?.id);
-    if (duplicate) throw new Error(`已經有名為「${name}」的資料夾`);
-    const now = new Date().toISOString();
-    const folder = normalizeFolder({
-      ...existing,
-      ...input,
-      id,
-      name,
-      wordIds: existing?.wordIds || input?.wordIds || [],
-      createdAt: existing?.createdAt || input?.createdAt || now,
-      updatedAt: now,
-    }, id);
-    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'folders', id), {
-      ...folder,
-      updatedAt: serverTimestamp(),
-    }));
-    return folder;
-  }, [user, state.folders]);
-
-  const remove = useCallback(async (folderId) => {
-    if (!user) throw new Error('尚未登入');
-    if (isSystemFolder(state.folders.find((folder) => folder.id === folderId) || { id: folderId })) {
-      throw new Error('系統資料夾無法刪除');
-    }
-    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'folders', folderId), {
-      id: folderId,
-      deletedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      name: deleteField(),
-      wordIds: deleteField(),
-      tag: deleteField(),
-      createdAt: deleteField(),
-      pinned: deleteField(),
-    }, { merge: true }));
-  }, [user, state.folders]);
-
-  const addWords = useCallback(async (folderId, wordIds) => {
-    if (!user) throw new Error('尚未登入');
-    const ids = [...new Set(wordIds.filter(Boolean).map(String))];
-    if (!ids.length) return;
-    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'folders', folderId), {
-      wordIds: arrayUnion(...ids),
-      updatedAt: serverTimestamp(),
-    }, { merge: true }));
-  }, [user]);
-
-  const removeWords = useCallback(async (folderId, wordIds) => {
-    if (!user) throw new Error('尚未登入');
-    const ids = [...new Set(wordIds.filter(Boolean).map(String))];
-    if (!ids.length) return;
-    await retryFirestoreWrite(() => setDoc(doc(db, 'users', user.uid, 'folders', folderId), {
-      wordIds: arrayRemove(...ids),
-      updatedAt: serverTimestamp(),
-    }, { merge: true }));
-  }, [user]);
-
-  const addWordsToFolders = useCallback(async (folderIds, wordIds) => {
-    if (!user) throw new Error('尚未登入');
-    const targetFolderIds = [...new Set(folderIds.filter(Boolean).map(String))];
-    const ids = [...new Set(wordIds.filter(Boolean).map(String))];
-    if (!targetFolderIds.length || !ids.length) return;
-    if (targetFolderIds.length > 500) throw new Error('一次最多可以更新 500 個資料夾');
-    await retryFirestoreWrite(async () => {
-      const batch = writeBatch(db);
-      targetFolderIds.forEach((folderId) => batch.set(
-        doc(db, 'users', user.uid, 'folders', folderId),
-        { wordIds: arrayUnion(...ids), updatedAt: serverTimestamp() },
-        { merge: true },
-      ));
-      await batch.commit();
-    });
-  }, [user]);
-
-  const createFolderAndAssign = useCallback(async (nameInput, wordIds, additionalFolderIds = [], tagInput = '') => {
-    if (!user) throw new Error('尚未登入');
-    const name = String(nameInput || '').trim();
-    if (!name) throw new Error('請輸入新資料夾名稱');
-    if ([SYSTEM_LEARNED_FOLDER_NAME, SYSTEM_UNFAMILIAR_FOLDER_NAME].includes(name)) {
-      throw new Error(`「${name}」是系統保留資料夾`);
-    }
-    const duplicate = state.folders.find((folder) => folder.name.toLocaleLowerCase() === name.toLocaleLowerCase());
-    if (duplicate) throw new Error(`已經有名為「${name}」的資料夾，請直接勾選它`);
-    const ids = [...new Set(wordIds.filter(Boolean).map(String))];
-    if (!ids.length) throw new Error('請先選取要加入的單字');
-    const targetFolderIds = [...new Set(additionalFolderIds.filter(Boolean).map(String))];
-    if (targetFolderIds.length + 1 > 500) throw new Error('這次更新的資料夾數量超過 Firebase 單次批次上限');
-    const now = new Date().toISOString();
-    const folder = normalizeFolder({
-      id: createId(),
-      name,
-      tag: String(tagInput || '').trim(),
-      wordIds: ids,
-      createdAt: now,
-      updatedAt: now,
-    });
-    await retryFirestoreWrite(async () => {
-      const batch = writeBatch(db);
-      batch.set(doc(db, 'users', user.uid, 'folders', folder.id), {
-        ...folder,
-        updatedAt: serverTimestamp(),
-      });
-      targetFolderIds.forEach((folderId) => batch.set(
-        doc(db, 'users', user.uid, 'folders', folderId),
-        { wordIds: arrayUnion(...ids), updatedAt: serverTimestamp() },
-        { merge: true },
-      ));
-      await batch.commit();
-    });
-    return folder;
-  }, [user, state.folders]);
-
-  return { ...state, save, remove, addWords, removeWords, addWordsToFolders, createFolderAndAssign };
-}
-
 function recordsFromSnapshot(snap) {
   return sortRecords(activeRecordDocuments(snap.docs));
 }
@@ -1064,113 +486,7 @@ function mergeRecordSnapshot(records, snap) {
   return sortRecords(mergeRecordDocuments(records, snap.docs));
 }
 
-const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-let firestoreWritesBlockedUntil = 0;
-let firestoreQuotaError = null;
-
-function isFirestoreQuotaExceeded(error) {
-  return /quota exceeded/i.test(error?.message || '');
-}
-
-function isTransientFirestoreError(error) {
-  if (isFirestoreQuotaExceeded(error)) return false;
-  const code = String(error?.code || '').replace(/^firestore\//, '');
-  return ['aborted', 'deadline-exceeded', 'resource-exhausted', 'unavailable'].includes(code)
-    || /quota|too many requests|temporar|network|offline/i.test(error?.message || '');
-}
-
-async function retryFirestoreWrite(operation, maxAttempts = 4) {
-  if (isBrowserOffline()) return queueOfflineWrite(operation, 'Firebase 資料');
-  if (Date.now() < firestoreWritesBlockedUntil && firestoreQuotaError) throw firestoreQuotaError;
-  let lastError;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    let timeoutId;
-    try {
-      const pendingWrite = Promise.resolve().then(operation);
-      const result = await Promise.race([
-        pendingWrite,
-        new Promise((resolve) => {
-          timeoutId = setTimeout(() => resolve({ timedOut: true }), 8000);
-        }),
-      ]);
-      if (result?.timedOut) return trackOfflineWrite(pendingWrite, 'Firebase 資料');
-      firestoreWritesBlockedUntil = 0;
-      firestoreQuotaError = null;
-      return result;
-    } catch (error) {
-      lastError = error;
-      if (isFirestoreQuotaExceeded(error)) {
-        firestoreWritesBlockedUntil = Date.now() + 60_000;
-        firestoreQuotaError = error;
-        throw error;
-      }
-      if (!isTransientFirestoreError(error) || attempt === maxAttempts) throw error;
-      await wait(500 * (2 ** (attempt - 1)));
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-  throw lastError;
-}
-
 const reviewSettingsRef = (uid) => doc(db, 'users', uid, 'settings', 'review');
-
-async function commitFirestoreOperations(operations, chunkSize = 400) {
-  for (let start = 0; start < operations.length; start += chunkSize) {
-    const chunk = operations.slice(start, start + chunkSize);
-    await retryFirestoreWrite(async () => {
-      const batch = writeBatch(db);
-      chunk.forEach((operation) => operation(batch));
-      await batch.commit();
-    });
-  }
-}
-
-async function persistFirestoreStoreChanges(uid, previous, next) {
-  const operations = [];
-  const changedEntriesByShard = new Map();
-  const questionIds = new Set([
-    ...Object.keys(previous.stats || {}),
-    ...Object.keys(previous.progress || {}),
-    ...Object.keys(next.stats || {}),
-    ...Object.keys(next.progress || {}),
-  ]);
-  questionIds.forEach((questionId) => {
-    const previousValue = { stats: previous.stats?.[questionId] || null, progress: previous.progress?.[questionId] || null };
-    const nextValue = { stats: next.stats?.[questionId] || null, progress: next.progress?.[questionId] || null };
-    if (JSON.stringify(previousValue) === JSON.stringify(nextValue)) return;
-    const shardId = progressShardId(questionId);
-    if (!changedEntriesByShard.has(shardId)) changedEntriesByShard.set(shardId, new Map());
-    changedEntriesByShard.get(shardId).set(questionId, nextValue.stats || nextValue.progress ? nextValue : null);
-  });
-  changedEntriesByShard.forEach((entries, shardId) => {
-    const ref = doc(db, 'users', uid, 'progressShards', shardId);
-    const fieldValues = [];
-    entries.forEach((entry, questionId) => {
-      fieldValues.push(new FieldPath('entries', questionId), entry || deleteField());
-    });
-    fieldValues.push('updatedAt', serverTimestamp());
-    operations.push((batch) => batch.update(ref, ...fieldValues));
-  });
-
-  const previousAttemptIds = new Set((previous.attempts || []).map((attempt) => attempt.id));
-  const addedAttempts = (next.attempts || []).filter((attempt) => !previousAttemptIds.has(attempt.id));
-  operations.push(...createReviewAttemptWriteOperations(db, uid, previous.attempts, addedAttempts));
-
-  const previousCompletedDates = new Set(previous.completedReviewDates || []);
-  const addedCompletedDates = (next.completedReviewDates || []).filter((date) => !previousCompletedDates.has(date));
-  const settingsChanged = addedCompletedDates.length
-    || JSON.stringify(previous.starred || []) !== JSON.stringify(next.starred || [])
-    || JSON.stringify(previous.recognition || null) !== JSON.stringify(next.recognition || null);
-  if (settingsChanged) {
-    const settingsUpdate = { schemaVersion: FIRESTORE_SCHEMA_VERSION, updatedAt: serverTimestamp() };
-    if (addedCompletedDates.length) settingsUpdate.completedReviewDates = arrayUnion(...addedCompletedDates);
-    if (JSON.stringify(previous.starred || []) !== JSON.stringify(next.starred || [])) settingsUpdate.starred = next.starred || [];
-    if (JSON.stringify(previous.recognition || null) !== JSON.stringify(next.recognition || null)) settingsUpdate.recognition = next.recognition || null;
-    operations.push((batch) => batch.set(reviewSettingsRef(uid), settingsUpdate, { merge: true }));
-  }
-  await commitFirestoreOperations(operations);
-}
 
 async function persistCompletedReviewDate(uid, date) {
   await retryFirestoreWrite(() => setDoc(reviewSettingsRef(uid), {
@@ -1424,71 +740,6 @@ function useFirestoreStore(user) {
   }, [user, flushDeferredRemote]);
 
   return [state.store, update, state.loading, state.error, markDateComplete];
-}
-
-function normalizeKoreanKey(value) {
-  return String(value || '').trim().normalize('NFC');
-}
-
-function buildRecordLookup(records) {
-  const byId = new Map();
-  const byKo = new Map();
-  records.forEach((record) => {
-    byId.set(record.id, record.id);
-    if (record.item?.ko) byKo.set(normalizeKoreanKey(record.item.ko), record.id);
-  });
-  return { byId, byKo };
-}
-
-function resolveRelatedIds(related, lookup) {
-  if (!Array.isArray(related)) return [];
-  return [...new Set(related.map((entry) => {
-    if (typeof entry === 'string') return lookup.byId.get(entry) || lookup.byKo.get(normalizeKoreanKey(entry)) || entry.trim();
-    if (entry?.id) return lookup.byId.get(entry.id) || entry.id;
-    if (entry?.ko) return lookup.byKo.get(normalizeKoreanKey(entry.ko)) || entry.ko.trim();
-    return '';
-  }).filter(Boolean))];
-}
-
-function normalizeExample(example, fallbackId) {
-  return {
-    id: example.id || fallbackId,
-    ko: example.ko || '',
-    zh: example.zh || '',
-  };
-}
-
-function normalizeItemToV2(item, recordId, lookup = buildRecordLookup([])) {
-  if (!Array.isArray(item.meanings) || !item.meanings.length) {
-    throw new Error(`單字「${item.ko || recordId}」缺少 meanings`);
-  }
-
-  const meanings = item.meanings.map((meaning, meaningIndex) => {
-    const meaningId = meaning.id || `${recordId}-${meaningIndex}`;
-    const examples = (meaning.examples || []).map((example, exampleIndex) => normalizeExample(example, `${meaningId}-ex-${exampleIndex}`));
-    return {
-      id: meaningId,
-      zh: meaning.zh || '',
-      ...(meaning.pattern ? { pattern: meaning.pattern } : {}),
-      examples,
-    };
-  });
-
-  return {
-    ko: item.ko,
-    ...(item.pos ? { pos: item.pos } : {}),
-    meanings,
-    ...(item.notes?.length ? { notes: item.notes } : {}),
-    related: resolveRelatedIds(item.related, lookup),
-  };
-}
-
-function normalizeRecordSet(records) {
-  const lookup = buildRecordLookup(records);
-  return records.map((record) => ({
-    ...record,
-    item: normalizeItemToV2(record.item, record.id, lookup),
-  }));
 }
 
 function normalizeRecords(records) {
@@ -2050,183 +1301,6 @@ function resolveImportConflictDraft(draft, choice, allItems = []) {
   };
 }
 
-async function writeLearningRecords(uid, records, onProgress, folderIds = [], additionalFolderWordIds = [], foldersToCreate = [], folderPatches = [], removeFolderIds = []) {
-  let queuedOffline = isBrowserOffline();
-  const uniqueFolderIds = [...new Set(folderIds)].filter(Boolean);
-  const extraWordIds = [...new Set(additionalFolderWordIds)].filter(Boolean);
-  const newFolders = foldersToCreate.filter((folder) => folder?.id && folder?.name);
-  const normalizedFolderPatches = folderPatches
-    .filter((patch) => patch?.id)
-    .map((patch) => ({ id: String(patch.id), data: patch.data || {} }));
-  const uniqueRemoveFolderIds = [...new Set(removeFolderIds)].filter(Boolean);
-  if (!records.length && (!uniqueFolderIds.length || !extraWordIds.length) && !newFolders.length && !normalizedFolderPatches.length && !uniqueRemoveFolderIds.length) return;
-  if (records.length > MAX_ATOMIC_RECORD_WRITES) {
-    throw new Error(`一次最多可以寫入 ${MAX_ATOMIC_RECORD_WRITES} 筆單字，請縮小匯入範圍`);
-  }
-  if (records.length + uniqueFolderIds.length + newFolders.length + normalizedFolderPatches.length + uniqueRemoveFolderIds.length > 500) throw new Error('單字與資料夾更新超過 Firebase 單次批次上限');
-  const newFolderIds = newFolders.map((folder) => folder.id);
-  const patchedFolderIds = normalizedFolderPatches.map((patch) => patch.id);
-  const allFolderIds = [...uniqueFolderIds, ...newFolderIds, ...patchedFolderIds];
-  if (new Set(newFolderIds).size !== newFolderIds.length || new Set(patchedFolderIds).size !== patchedFolderIds.length || new Set(allFolderIds).size !== allFolderIds.length) {
-    throw new Error('資料夾寫入資料有重複 ID');
-  }
-  if (uniqueRemoveFolderIds.some((folderId) => allFolderIds.includes(folderId))) {
-    throw new Error('同一個資料夾不能同時加入及移除單字');
-  }
-  const lookup = buildRecordLookup(records);
-  const normalizedRecords = [];
-  for (let index = 0; index < records.length; index += 1) {
-    const record = records[index];
-    onProgress?.({
-      phase: 'preparing',
-      current: index + 1,
-      total: records.length,
-      ko: record.item?.ko || record.id,
-      detail: `正在整理第 ${index + 1}/${records.length} 筆：${record.item?.ko || record.id}`,
-    });
-    normalizedRecords.push({ ...record, item: normalizeItemToV2(record.item, record.id, lookup) });
-    if (onProgress) await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  const recordIds = [...new Set([...normalizedRecords.map((record) => record.id), ...extraWordIds])];
-  if (recordIds.some((recordId) => !recordId)) throw new Error('寫入資料缺少必要的單字 ID');
-  if (new Set(recordIds).size !== recordIds.length) throw new Error('寫入資料中含有重複的單字 ID');
-  const normalizedNewFolders = newFolders.map((folder) => normalizeFolder({
-    ...folder,
-    wordIds: [...new Set([...(folder.wordIds || []), ...recordIds])],
-  }, folder.id));
-  onProgress?.({
-    phase: 'uploading',
-    current: records.length,
-    total: records.length,
-    detail: `已準備 ${records.length} 筆，正在以單一批次送往 Firebase，等待伺服器確認`,
-  });
-  const uploadStartedAt = Date.now();
-  const waitingTimer = onProgress ? setInterval(() => {
-    const elapsedSeconds = Math.max(1, Math.round((Date.now() - uploadStartedAt) / 1000));
-    onProgress({
-      phase: 'uploading',
-      current: records.length,
-      total: records.length,
-      detail: `Firebase 批次已送出，已等待 ${elapsedSeconds} 秒；請保持視窗開啟`,
-    });
-  }, 5000) : null;
-  try {
-    const writeResult = await retryFirestoreWrite(async () => {
-      const batch = writeBatch(db);
-      normalizedRecords.forEach((record) => batch.set(
-        doc(db, 'users', uid, 'records', record.id),
-        { ...record, updatedAt: serverTimestamp() },
-      ));
-      uniqueFolderIds.forEach((folderId) => batch.set(
-        doc(db, 'users', uid, 'folders', folderId),
-        { wordIds: arrayUnion(...recordIds), updatedAt: serverTimestamp() },
-        { merge: true },
-      ));
-      uniqueRemoveFolderIds.forEach((folderId) => batch.set(
-        doc(db, 'users', uid, 'folders', folderId),
-        { wordIds: arrayRemove(...recordIds), updatedAt: serverTimestamp() },
-        { merge: true },
-      ));
-      normalizedNewFolders.forEach((folder) => batch.set(
-        doc(db, 'users', uid, 'folders', folder.id),
-        { ...folder, updatedAt: serverTimestamp() },
-      ));
-      normalizedFolderPatches.forEach((patch) => batch.set(
-        doc(db, 'users', uid, 'folders', patch.id),
-        { ...patch.data, wordIds: arrayUnion(...recordIds), updatedAt: serverTimestamp() },
-        { merge: true },
-      ));
-      await batch.commit();
-    });
-    if (writeResult?.queuedOffline) queuedOffline = true;
-  } finally {
-    if (waitingTimer) clearInterval(waitingTimer);
-  }
-  onProgress?.({
-    phase: 'success',
-    current: records.length,
-    total: records.length,
-    detail: queuedOffline
-      ? `已將 ${records.length} 筆變更儲存在此裝置，恢復連線後會自動同步`
-      : `Firebase 已確認完成 ${records.length} 筆寫入`,
-  });
-}
-
-async function writeSourceLearningRecords(uid, records, folders, { folderId, folderName, tag }, { markLearned = false } = {}) {
-  const learnedFolderId = folders.find(isLearnedFolder)?.id || SYSTEM_LEARNED_FOLDER_ID;
-  const targetFolderIds = markLearned ? [learnedFolderId] : [];
-  const matchingFolder = folders.find((folder) => !isSystemFolder(folder) && folder.name.toLocaleLowerCase() === folderName.toLocaleLowerCase());
-  if (matchingFolder) {
-    return writeLearningRecords(uid, records, undefined, targetFolderIds, [], [], [{
-      id: matchingFolder.id,
-      data: { tag },
-    }]);
-  }
-  const now = new Date().toISOString();
-  const folder = normalizeFolder({
-    id: folderId,
-    name: folderName,
-    tag,
-    wordIds: records.map((record) => record.id),
-    createdAt: now,
-    updatedAt: now,
-  });
-  return writeLearningRecords(uid, records, undefined, targetFolderIds, [], [folder]);
-}
-
-async function writeYoutubeSubtitleLearningRecords(uid, records, folders = [], options = {}) {
-  return writeSourceLearningRecords(uid, records, folders, {
-    folderId: YT_SOURCE_FOLDER_ID,
-    folderName: YT_SOURCE_FOLDER_NAME,
-    tag: YT_SOURCE_FOLDER_NAME,
-  }, options);
-}
-
-async function writeReadingTestLearningRecords(uid, records, folders = [], options = {}) {
-  return writeSourceLearningRecords(uid, records, folders, {
-    folderId: READING_SOURCE_FOLDER_ID,
-    folderName: READING_SOURCE_FOLDER_NAME,
-    tag: READING_SOURCE_FOLDER_NAME,
-  }, options);
-}
-
-async function writeLearningRecord(uid, record, onProgress, folderIds = []) {
-  await writeLearningRecords(uid, [record], onProgress, folderIds);
-}
-
-async function deleteLearningRecords(uid, recordIds, folders = []) {
-  const ids = [...new Set(recordIds.filter(Boolean))];
-  if (!ids.length) return;
-  const affectedFolders = folders.filter((folder) => folder.wordIds.some((wordId) => ids.includes(wordId)));
-  if (ids.length + affectedFolders.length > 500) throw new Error('這次刪除超過 Firebase 單次批次上限，請縮小選取範圍');
-  await retryFirestoreWrite(async () => {
-    const batch = writeBatch(db);
-    ids.forEach((recordId) => batch.set(
-      doc(db, 'users', uid, 'records', recordId),
-      {
-        id: recordId,
-        deletedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        item: deleteField(),
-        date: deleteField(),
-        createdAt: deleteField(),
-        order: deleteField(),
-      },
-      { merge: true },
-    ));
-    affectedFolders.forEach((folder) => batch.set(
-      doc(db, 'users', uid, 'folders', folder.id),
-      { wordIds: arrayRemove(...ids), updatedAt: serverTimestamp() },
-      { merge: true },
-    ));
-    await batch.commit();
-  });
-}
-
-async function deleteLearningRecord(uid, recordId, folders = []) {
-  await deleteLearningRecords(uid, [recordId], folders);
-}
-
 function getStats(store, id) {
   const stats = store.stats[id] || { total: 0, correct: 0, wrong: 0 };
   const score = familiarityScore(stats);
@@ -2458,19 +1532,6 @@ function nextRecognitionRevealState(listeningMode, wordVisible, revealed) {
   if (revealed) return { wordVisible: true, revealed: true };
   if (listeningMode && !wordVisible) return { wordVisible: true, revealed: false };
   return { wordVisible: true, revealed: true };
-}
-
-function grammarPracticeQuestions(notes) {
-  return notes.flatMap((note) => (note.examples || [])
-    .filter((example) => example.ko?.trim() && example.zh?.trim())
-    .map((example, index) => ({
-      id: `grammar:${note.id}:${example.id || index}`,
-      itemId: note.id,
-      kind: 'grammar-example',
-      ko: example.ko.trim(),
-      zh: example.zh.trim(),
-      source: note,
-    })));
 }
 
 function dailyGrammarSchedule(notes, review, date = todayString()) {
@@ -2742,78 +1803,6 @@ function compareAnswer(input, answer) {
   };
 }
 
-function normalizeSpeechLanguage(lang) {
-  return String(lang || '').replaceAll('_', '-').toLowerCase();
-}
-
-function speechLanguageKey(lang) {
-  return normalizeSpeechLanguage(lang).startsWith('zh') ? 'zh' : 'ko';
-}
-
-function findPreferredSpeechVoice(voices, preference, lang) {
-  if (!preference || !Array.isArray(voices)) return null;
-  const languageKey = speechLanguageKey(lang);
-  const candidates = voices.filter((voice) => normalizeSpeechLanguage(voice?.lang).startsWith(languageKey));
-  return candidates.find((voice) => preference.voiceURI && voice.voiceURI === preference.voiceURI)
-    || candidates.find((voice) => (
-      voice.name === preference.name
-      && normalizeSpeechLanguage(voice.lang) === normalizeSpeechLanguage(preference.lang)
-    ))
-    || null;
-}
-
-function readSpeechVoicePreferences() {
-  if (typeof window === 'undefined') return {};
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(SPEECH_VOICE_STORAGE_KEY) || '{}');
-    return stored && typeof stored === 'object' ? stored : {};
-  } catch {
-    return {};
-  }
-}
-
-function configureSpeechUtterance(utterance, lang, voiceOverride = undefined) {
-  utterance.lang = lang;
-  utterance.rate = normalizeSpeechLanguage(lang).startsWith('ko') ? 0.9 : 1;
-  const selectedVoice = voiceOverride === undefined
-    ? findPreferredSpeechVoice(
-      window.speechSynthesis.getVoices(),
-      readSpeechVoicePreferences()[speechLanguageKey(lang)],
-      lang,
-    )
-    : voiceOverride;
-  if (selectedVoice) {
-    utterance.voice = selectedVoice;
-    utterance.lang = selectedVoice.lang || lang;
-  }
-  return utterance;
-}
-
-function speakText(text, lang, voiceOverride = undefined) {
-  if (!('speechSynthesis' in window) || !text) return;
-  window.speechSynthesis.cancel();
-  const utterance = configureSpeechUtterance(new SpeechSynthesisUtterance(text), lang, voiceOverride);
-  window.speechSynthesis.speak(utterance);
-}
-
-function speakTextAndWait(text, lang) {
-  if (!('speechSynthesis' in window) || !text) return Promise.resolve();
-  return new Promise((resolve) => {
-    const utterance = configureSpeechUtterance(new SpeechSynthesisUtterance(text), lang);
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(fallbackTimer);
-      resolve();
-    };
-    const fallbackTimer = window.setTimeout(finish, Math.max(3500, [...text].length * 320));
-    utterance.onend = finish;
-    utterance.onerror = finish;
-    window.speechSynthesis.speak(utterance);
-  });
-}
-
 function waitFor(milliseconds) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
@@ -2880,27 +1869,48 @@ function playResultSound(correct) {
 
 function App() {
   const { loading: authLoading, user } = useAuthUser();
+  const [practiceSet, setPracticeSet] = useState(null);
+  const [selectedDate, setSelectedDate] = useState(() => todayString());
+  const handleTopNavigate = useCallback((nextPage) => {
+    if (nextPage === 'calendar') setSelectedDate(todayString());
+  }, []);
+  const navigation = useAppNavigation('home', handleTopNavigate);
+
+  if (authLoading) return <LoadingScreen text="正在確認登入狀態" />;
+  if (!user) return <LoginPage />;
+  return (
+    <AppDataProvider user={user} page={navigation.page} practiceKind={practiceSet?.kind}>
+      <AppWorkspace
+        user={user}
+        practiceSet={practiceSet}
+        setPracticeSet={setPracticeSet}
+        selectedDate={selectedDate}
+        setSelectedDate={setSelectedDate}
+        navigation={navigation}
+      />
+    </AppDataProvider>
+  );
+}
+
+function AppWorkspace({
+  user,
+  practiceSet,
+  setPracticeSet,
+  selectedDate,
+  setSelectedDate,
+  navigation,
+}) {
   const [store, updateStore, storeLoading, storeError, markDateComplete] = useFirestoreStore(user);
   const offlineMode = useOfflineMode(user);
-  const [page, setPage] = useState('home');
-  const [practiceSet, setPracticeSet] = useState(null);
-  const grammarEnabled = page === 'home'
-    || page === 'notes'
-    || (page === 'practice' && [
-      PRACTICE_SESSION_KIND.DAILY_GRAMMAR,
-      PRACTICE_SESSION_KIND.OPTIONAL_GRAMMAR,
-      PRACTICE_SESSION_KIND.GRAMMAR_EXAMPLES,
-    ].includes(practiceSet?.kind));
-  const ytEnabled = page === 'ytSubtitles' || page === 'ytSubtitle';
-  const readingEnabled = page === 'readingTests' || page === 'readingTest';
-  const foldersEnabled = !['calendar', 'notes', 'ytSubtitles', 'readingTests'].includes(page);
-  const grammar = useGrammarNotes(user, grammarEnabled);
-  const ytSubtitles = useYoutubeSubtitles(user, ytEnabled);
-  const readingTests = useReadingTests(user, readingEnabled);
-  const folders = useWordFolders(user, foldersEnabled);
+  const { page, pageStack, navTop, navChild, goUp } = navigation;
+  const {
+    policy: dataPolicy,
+    grammar,
+    youtubeSubtitles: ytSubtitles,
+    readingTests,
+    folders,
+  } = useAppData();
   const optionalPractice = useOptionalPractice(user);
-  const [pageStack, setPageStack] = useState([]);
-  const [selectedDate, setSelectedDate] = useState(() => todayString());
   const [studySet, setStudySet] = useState(null);
   const [selectedFolderId, setSelectedFolderId] = useState(null);
   const [selectedYoutubeSubtitleId, setSelectedYoutubeSubtitleId] = useState(null);
@@ -2959,23 +1969,6 @@ function App() {
     markDateComplete,
   ]);
 
-  const navTop = (next) => {
-    setPageStack([]);
-    if (next === 'calendar') setSelectedDate(todayString());
-    setPage(next);
-  };
-  const navChild = (next) => {
-    setPageStack((stack) => [...stack, page]);
-    setPage(next);
-  };
-  const goUp = () => {
-    if (!pageStack.length) {
-      if (page !== 'home') navTop('home');
-      return;
-    }
-    setPage(pageStack[pageStack.length - 1]);
-    setPageStack(pageStack.slice(0, -1));
-  };
   const startPractice = (sourceQuestions, label, options = {}) => {
     setPracticeSet(createPracticeSession(sourceQuestions, label, options));
     navChild('practice');
@@ -3035,9 +2028,11 @@ function App() {
     navChild('readingTest');
   };
 
-  if (authLoading) return <LoadingScreen text="正在確認登入狀態" />;
-  if (!user) return <LoginPage />;
-  if (storeLoading || (foldersEnabled && folders.loading) || (grammarEnabled && grammar.loading) || (ytEnabled && ytSubtitles.loading) || (readingEnabled && readingTests.loading)) {
+  if (storeLoading
+    || (dataPolicy.folders && folders.loading)
+    || (dataPolicy.grammar && grammar.loading)
+    || (dataPolicy.youtubeSubtitles && ytSubtitles.loading)
+    || (dataPolicy.readingTests && readingTests.loading)) {
     return <LoadingScreen text="載入資料中" />;
   }
 
@@ -3057,28 +2052,28 @@ function App() {
     readingTest: <ReadingTestPage test={readingTests.tests.find((test) => test.id === selectedReadingTestId)} allItems={items} folders={folders.folders} onAddRecords={addReadingTestRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} onOpenFolder={openFolder} onSave={readingTests.save} onDelete={readingTests.remove} onBack={goUp} />,
   };
 
+  const backButtonClassName = `${page === 'ytSubtitle'
+    ? `with-yt-controls ${selectedYoutubeSubtitle?.videoId ? 'with-yt-video' : ''} ${selectedSubtitleHasFolder ? 'with-yt-folder' : ''}`
+    : ''} ${selectedReadingHasFolder ? 'with-reading-folder' : ''}`;
   return (
-    <div className="app">
-      <aside className="sidebar">
-        <button className={`brand brand-button ${page === 'home' ? 'active' : ''}`} onClick={() => navTop('home')}><Sparkles size={24} /> 韓文筆記</button>
-        <button className={page === 'calendar' || page === 'dateNotes' ? 'active' : ''} onClick={() => navTop('calendar')}><CalendarDays size={18} /> 日曆</button>
-        <button className={page === 'notebook' ? 'active' : ''} onClick={() => navTop('notebook')}><LibraryBig size={18} /> 單字本</button>
-        <button className={page === 'folders' || page === 'folder' ? 'active' : ''} onClick={() => navTop('folders')}><Folder size={18} /> 資料夾</button>
-        <button className={page === 'notes' ? 'active' : ''} onClick={() => navTop('notes')}><NotebookPen size={18} /> 筆記</button>
-        <button className={page === 'ytSubtitles' || page === 'ytSubtitle' ? 'active' : ''} onClick={() => navTop('ytSubtitles')}><Captions size={18} /> YT 字幕</button>
-        <button className={page === 'readingTests' || page === 'readingTest' ? 'active' : ''} onClick={() => navTop('readingTests')}><BookOpen size={18} /> 閱讀測驗</button>
-        <button className="logout-button" onClick={() => signOut(auth)}><LogOut size={18} /> 登出</button>
-      </aside>
-      <main>
-        <OfflineStatusBar offlineMode={offlineMode} />
-        {storeError && <div className="sync-error">Firebase 同步失敗：{storeError}</div>}
-        {folders.error && <div className="sync-error">資料夾同步失敗：{folders.error}</div>}
-        {ytSubtitles.error && <div className="sync-error">YT 字幕同步失敗：{ytSubtitles.error}</div>}
-        {readingTests.error && <div className="sync-error">閱讀測驗同步失敗：{readingTests.error}</div>}
+    <AppShell
+      page={page}
+      navTop={navTop}
+      goUp={goUp}
+      onLogout={() => signOut(auth)}
+      status={<OfflineStatusBar offlineMode={offlineMode} />}
+      errors={[
+        { label: 'Firebase 同步失敗', message: storeError },
+        { label: '資料夾同步失敗', message: folders.error },
+        { label: 'YT 字幕同步失敗', message: ytSubtitles.error },
+        { label: '閱讀測驗同步失敗', message: readingTests.error },
+      ]}
+      backButtonClassName={backButtonClassName}
+    >
+      <Suspense fallback={<LoadingScreen text="載入頁面中" />}>
         {views[page]}
-      </main>
-      {page !== 'home' && <button type="button" className={`global-back-button ${page === 'ytSubtitle' ? `with-yt-controls ${selectedYoutubeSubtitle?.videoId ? 'with-yt-video' : ''} ${selectedSubtitleHasFolder ? 'with-yt-folder' : ''}` : ''} ${selectedReadingHasFolder ? 'with-reading-folder' : ''}`} onClick={goUp} title="回到上一層" aria-label="回到上一層"><ChevronLeft size={24} /></button>}
-    </div>
+      </Suspense>
+    </AppShell>
   );
 }
 
@@ -5895,537 +4890,6 @@ function EditJsonModal({ items, allItems, date, onSave, onClose }) {
   );
 }
 
-function grammarNoteSearchText(note) {
-  return [
-    note.title,
-    note.notes,
-    ...(note.examples || []).flatMap((example) => [example.ko, example.zh]),
-  ].filter(Boolean).join(' ').toLocaleLowerCase('zh-TW');
-}
-
-function grammarTimestamp(value) {
-  if (!value) return '建立時間未記錄';
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return new Intl.DateTimeFormat('zh-TW', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(parsed);
-}
-
-function TextSpeakButton({ text, lang, label }) {
-  if (!text) return null;
-  return (
-    <button
-      type="button"
-      className="speak-icon-button"
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        speakText(text, lang);
-      }}
-      aria-label={label}
-      title={label}
-    >
-      <Volume2 size={15} />
-    </button>
-  );
-}
-
-function noteCategoryMeta(category) {
-  return category === NOTE_CATEGORY_VOCABULARY
-    ? {
-      category: NOTE_CATEGORY_VOCABULARY,
-      singular: '單字筆記',
-      item: '筆記',
-      heading: '單字筆記',
-      eyebrow: 'Vocabulary Notes',
-      addLabel: '新增單字筆記',
-    }
-    : {
-      category: NOTE_CATEGORY_GRAMMAR,
-      singular: '文法筆記',
-      item: '文法',
-      heading: '文法筆記',
-      eyebrow: 'Grammar Notes',
-      addLabel: '新增文法',
-    };
-}
-
-function NotesNotebookPage({ notes, loading, error, onSave, onDelete, onPractice }) {
-  const [query, setQuery] = useState('');
-  const [collapsedCategories, setCollapsedCategories] = useState(() => new Set());
-  const toggleCategory = (category) => setCollapsedCategories((current) => {
-    const next = new Set(current);
-    if (next.has(category)) next.delete(category);
-    else next.add(category);
-    return next;
-  });
-  const categories = [NOTE_CATEGORY_VOCABULARY, NOTE_CATEGORY_GRAMMAR];
-
-  return (
-    <section className="page notes-notebook-page">
-      <div className="topbar">
-        <div><span className="eyebrow">Korean Notes</span><h1>筆記</h1></div>
-      </div>
-      <label className="search grammar-search">
-        <Search size={18} />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋標題、筆記或例句" />
-      </label>
-      {error && <div className="sync-error">Firebase 同步失敗：{error}</div>}
-      {categories.map((category) => (
-        <NoteCategorySection
-          key={category}
-          category={category}
-          notes={notes}
-          query={query}
-          loading={loading}
-          collapsed={collapsedCategories.has(category)}
-          onToggleCollapse={() => toggleCategory(category)}
-          onSave={onSave}
-          onDelete={onDelete}
-          onPractice={onPractice}
-        />
-      ))}
-    </section>
-  );
-}
-
-function NoteCategorySection({ category, notes, query, loading, collapsed, onToggleCollapse, onSave, onDelete, onPractice }) {
-  const meta = noteCategoryMeta(category);
-  const categoryNotes = useMemo(
-    () => notes.filter((note) => note.category === category),
-    [notes, category],
-  );
-  const [editing, setEditing] = useState(null);
-  const [viewing, setViewing] = useState(null);
-  const [selectedIds, setSelectedIds] = useState([]);
-  const [actionError, setActionError] = useState('');
-  useEffect(() => {
-    setEditing(null);
-    setViewing(null);
-    setSelectedIds([]);
-    setActionError('');
-  }, [category]);
-  const filtered = useMemo(() => {
-    const keyword = query.trim().toLocaleLowerCase('zh-TW');
-    const matches = keyword
-      ? categoryNotes.filter((note) => grammarNoteSearchText(note).includes(keyword))
-      : categoryNotes;
-    return [...matches].sort((left, right) => (
-      Number(right.pinned) - Number(left.pinned)
-      || (right.createdAt || '').localeCompare(left.createdAt || '')
-      || left.title.localeCompare(right.title)
-    ));
-  }, [categoryNotes, query]);
-  useEffect(() => {
-    const existingIds = new Set(categoryNotes.map((note) => note.id));
-    setSelectedIds((current) => current.filter((id) => existingIds.has(id)));
-  }, [categoryNotes]);
-  const selectedNotes = categoryNotes.filter((note) => selectedIds.includes(note.id));
-  const selectedQuestions = grammarPracticeQuestions(selectedNotes);
-  const filteredIds = filtered.map((note) => note.id);
-  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.includes(id));
-  const toggleSelected = (noteId) => setSelectedIds((current) => (
-    current.includes(noteId) ? current.filter((id) => id !== noteId) : [...current, noteId]
-  ));
-  const toggleFiltered = () => setSelectedIds((current) => {
-    if (allFilteredSelected) {
-      const filteredSet = new Set(filteredIds);
-      return current.filter((id) => !filteredSet.has(id));
-    }
-    return [...new Set([...current, ...filteredIds])];
-  });
-  const startGrammarPractice = (targetNotes, label) => {
-    const questions = grammarPracticeQuestions(targetNotes);
-    if (!questions.length) {
-      setActionError(`所選${meta.singular}沒有可練習的完整例句`);
-      return;
-    }
-    setActionError('');
-    onPractice(questions, label, { grammarOnly: true, noteCategory: category });
-  };
-
-  const deleteNote = async (note) => {
-    if (!window.confirm(`確定要刪除「${note.title}」嗎？`)) return;
-    setActionError('');
-    try {
-      await onDelete(note.id);
-      if (viewing?.id === note.id) setViewing(null);
-      setSelectedIds((current) => current.filter((id) => id !== note.id));
-    } catch (deleteError) {
-      setActionError(deleteError.message || `刪除${meta.singular}失敗`);
-    }
-  };
-  const togglePinned = async (note) => {
-    setActionError('');
-    try {
-      await onSave({ ...note, pinned: !note.pinned });
-    } catch (pinError) {
-      setActionError(pinError.message || `${note.pinned ? '取消釘選' : '釘選'}${meta.singular}失敗`);
-    }
-  };
-
-  return (
-    <section className={`note-category-section ${collapsed ? 'collapsed' : ''}`}>
-      <div className="note-category-header">
-        <button
-          type="button"
-          className="note-category-toggle"
-          aria-expanded={!collapsed}
-          onClick={onToggleCollapse}
-          title={collapsed ? `展開${meta.singular}` : `收合${meta.singular}`}
-        >
-          <span className="note-category-heading"><span className="note-category-mark"><NotebookPen size={15} /></span><h2>{meta.heading}</h2></span>
-          <span className="note-category-count">{categoryNotes.length} 篇</span>
-          <ChevronDown size={19} />
-        </button>
-      </div>
-      {!collapsed && <>
-        <div className="note-category-actions">
-          <button className="primary" onClick={() => setEditing({ category })}><Plus size={17} /> {meta.addLabel}</button>
-        </div>
-      <div className={`bulk-word-actions grammar-bulk-actions ${selectedIds.length ? 'has-selection' : ''}`}>
-        <div className="bulk-selection-summary">
-          <ListChecks size={19} />
-          <strong>{selectedIds.length ? `已選 ${selectedIds.length} 個${meta.item}` : `選取${meta.singular}`}</strong>
-          <button type="button" className="text-link" disabled={!filteredIds.length} onClick={toggleFiltered}>{allFilteredSelected ? '取消本頁' : '選取本頁'}</button>
-          {!!selectedIds.length && <button type="button" className="text-link muted-link" onClick={() => setSelectedIds([])}>清除</button>}
-        </div>
-        {!!selectedIds.length && <div className="bulk-action-buttons">
-          <button type="button" className="primary" disabled={!selectedQuestions.length} onClick={() => startGrammarPractice(selectedNotes, `已選 ${selectedNotes.length} 個${meta.item}`)}><Dumbbell size={17} /> 練習 ({selectedQuestions.length || 0})</button>
-        </div>}
-      </div>
-      {actionError && <div className="form-error">{actionError}</div>}
-      {loading ? (
-        <div className="panel grammar-empty">載入{meta.singular}中...</div>
-      ) : filtered.length ? (
-        <div className="grammar-grid">
-          {filtered.map((note) => (
-            <GrammarNoteCard
-              key={note.id}
-              note={note}
-              onOpen={setViewing}
-              onEdit={setEditing}
-              onDelete={deleteNote}
-              onTogglePinned={togglePinned}
-              selected={selectedIds.includes(note.id)}
-              onToggleSelected={toggleSelected}
-              category={category}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="panel grammar-empty">{query ? `找不到符合搜尋條件的${meta.singular}。` : `目前還沒有${meta.singular}。`}</div>
-      )}
-      </>}
-      {editing && (
-        <GrammarEditorModal
-          note={editing.id ? editing : null}
-          defaultCategory={editing.category || category}
-          onSave={async (note) => {
-            await onSave(note);
-            setEditing(null);
-          }}
-          onClose={() => setEditing(null)}
-        />
-      )}
-      {viewing && (
-        <GrammarDetailModal
-          note={viewing}
-          category={viewing.category}
-          onEdit={(note) => {
-            setViewing(null);
-            setEditing(note);
-          }}
-          onDelete={deleteNote}
-          onPractice={(note) => {
-            setViewing(null);
-            startGrammarPractice([note], note.title);
-          }}
-          onClose={() => setViewing(null)}
-        />
-      )}
-    </section>
-  );
-}
-
-function GrammarNoteCard({ note, onOpen, onEdit, onDelete, onTogglePinned, selected = false, onToggleSelected, category }) {
-  const meta = noteCategoryMeta(category);
-  return (
-    <article className={`grammar-card clickable-card ${selected ? 'selected' : ''}`} onClick={() => onOpen(note)}>
-      <div className="card-head">
-        <h2>{note.title}</h2>
-        <div className="card-actions">
-          <button
-            type="button"
-            className={`edit-icon-button pin-icon-button ${note.pinned ? 'active' : ''}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onTogglePinned(note);
-            }}
-            aria-label={note.pinned ? `取消釘選${meta.item}` : `釘選${meta.item}`}
-            title={note.pinned ? '取消釘選' : '釘選到最上方'}
-          >
-            <Pin size={15} />
-          </button>
-          <label className="word-select-control" title={`選取${meta.item}`} onClick={(event) => event.stopPropagation()}>
-            <input type="checkbox" checked={selected} onChange={() => onToggleSelected(note.id)} />
-            <span className="sr-only">選取 {note.title}</span>
-          </label>
-          <EditIconButton onClick={() => onEdit(note)} label={`編輯${meta.item}`} />
-          <button
-            type="button"
-            className="edit-icon-button delete-icon-button"
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete(note);
-            }}
-            aria-label={`刪除${meta.item}`}
-            title={`刪除${meta.item}`}
-          >
-            <Trash2 size={15} />
-          </button>
-        </div>
-      </div>
-      {note.notes && <p className="grammar-card-notes">{note.notes}</p>}
-      {!!note.examples.length && (
-        <div className="grammar-card-example">
-          <strong>{note.examples[0].ko}</strong>
-          <span>{note.examples[0].zh}</span>
-        </div>
-      )}
-      <div className="grammar-card-meta">
-        <span>{grammarTimestamp(note.createdAt)}</span>
-        <span>{note.examples.length} 個例句</span>
-      </div>
-    </article>
-  );
-}
-
-function GrammarEditorModal({ note, defaultCategory = NOTE_CATEGORY_GRAMMAR, onSave, onClose }) {
-  const [category, setCategory] = useState(note?.category || defaultCategory);
-  const [content, setContent] = useState(() => formatTaggedNoteText(note));
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  const submit = async (event) => {
-    event.preventDefault();
-    setSaving(true);
-    setError('');
-    try {
-      const parsed = parseTaggedNoteText(content, note?.examples || []);
-      await onSave({
-        ...note,
-        ...parsed,
-        category,
-      });
-    } catch (saveError) {
-      setError(saveError.message || '儲存筆記失敗');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <form className="modal-panel grammar-editor" onSubmit={submit}>
-        <button type="button" className="modal-close" disabled={saving} onClick={onClose} aria-label="關閉"><X size={18} /></button>
-        <div className="grammar-modal-head">
-          <span className="eyebrow">Korean Note</span>
-          <h2>{note ? '編輯筆記' : '新增筆記'}</h2>
-        </div>
-        <div className="grammar-field">
-          <span>筆記分類</span>
-          <div className="segmented compact note-category-control">
-            <button type="button" className={category === NOTE_CATEGORY_GRAMMAR ? 'active' : ''} onClick={() => setCategory(NOTE_CATEGORY_GRAMMAR)}>文法筆記</button>
-            <button type="button" className={category === NOTE_CATEGORY_VOCABULARY ? 'active' : ''} onClick={() => setCategory(NOTE_CATEGORY_VOCABULARY)}>單字筆記</button>
-          </div>
-        </div>
-        <label className="grammar-field tagged-note-field">
-          <span>筆記內容</span>
-          <textarea
-            className="tagged-note-textarea"
-            value={content}
-            onChange={(event) => setContent(event.target.value)}
-            rows={26}
-            spellCheck={false}
-            placeholder={'[標題]\n\n表示過去反覆的習慣：動詞 + -곤 했다\n\n[筆記]\n\n用來表達「以前常常……」、「過去時常會……」。\n\n[例句]\n\n어렸을 때 주말마다 할머니 댁에 가곤 했어요.\n小時候每到週末常常會去奶奶家。'}
-          />
-          <small>請保留 [標題]、[筆記]、[例句]。例句使用韓文一行、中文一行，例句之間可空行。</small>
-        </label>
-        {error && <div className="json-edit-error">{error}</div>}
-        <div className="actions grammar-editor-actions">
-          <button type="button" disabled={saving} onClick={onClose}>取消</button>
-          <button className="primary" disabled={saving} type="submit"><Check size={17} /> {saving ? '儲存中' : '儲存筆記'}</button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-function subtitleTimeLabel(milliseconds) {
-  const totalSeconds = Math.max(0, Math.floor((Number(milliseconds) || 0) / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}` : `${minutes}:${String(seconds).padStart(2, '0')}`;
-}
-
-function readingTestTitle(test, index = 0) {
-  return `閱讀題 ${index + 1}`;
-}
-
-function ReadingTestCard({ test, index, onOpen, onEdit, onDelete }) {
-  return (
-    <article className="reading-test-card clickable-card" onClick={() => onOpen(test.id)}>
-      <div className="card-head">
-        <div><span className="eyebrow">Reading · {test.options.length} choices</span><h2>{readingTestTitle(test, index)}</h2></div>
-        <div className="card-actions">
-          <EditIconButton label="編輯閱讀題" onClick={() => onEdit(test)} />
-          <button type="button" className="edit-icon-button delete-icon-button" title="刪除閱讀題" aria-label="刪除閱讀題" onClick={(event) => { event.stopPropagation(); onDelete(test); }}><Trash2 size={15} /></button>
-        </div>
-      </div>
-      <p>{test.passage.ko}</p>
-      <div className="yt-subtitle-note-meta">
-        {test.learned && <span className="yt-subtitle-learned-chip"><Check size={13} /> 已學習</span>}
-        <span>{test.options.length} 個選項</span>
-        <span>{grammarTimestamp(test.updatedAt || test.createdAt)}</span>
-      </div>
-    </article>
-  );
-}
-
-function ReadingTestsPage({ tests, error, onSave, onSaveMany, onDelete, onOpen }) {
-  const [query, setQuery] = useState('');
-  const [editing, setEditing] = useState(null);
-  const [hideLearned, setHideLearned] = useState(true);
-  const [formatCopied, setFormatCopied] = useState(false);
-  const [actionError, setActionError] = useState('');
-  const learnedCount = tests.filter((test) => test.learned).length;
-  const filtered = useMemo(() => {
-    const keyword = query.trim().toLocaleLowerCase('zh-TW');
-    return tests.filter((test) => (!hideLearned || !test.learned) && (!keyword || [
-      test.passage.ko,
-      test.passage.zh,
-      test.question.ko,
-      test.question.zh,
-      ...test.options.flatMap((option) => [option.ko, option.zh]),
-    ].filter(Boolean).join(' ').toLocaleLowerCase('zh-TW').includes(keyword)));
-  }, [hideLearned, query, tests]);
-  const deleteTest = async (test) => {
-    if (!window.confirm('確定要刪除這題閱讀題嗎？')) return;
-    setActionError('');
-    try { await onDelete(test.id); } catch (deleteError) { setActionError(deleteError.message || '刪除閱讀題失敗'); }
-  };
-  const copyJsonFormat = async () => {
-    setActionError('');
-    try {
-      await copyText(READING_TEST_JSON_SAMPLE);
-      setFormatCopied(true);
-      window.setTimeout(() => setFormatCopied(false), 1600);
-    } catch {
-      setActionError('無法複製 JSON 格式，請在匯入視窗中手動選取。');
-    }
-  };
-  return (
-    <section className="page reading-tests-page">
-      <div className="topbar">
-        <div><span className="eyebrow">Reading Practice</span><h1>閱讀測驗</h1></div>
-        <div className="actions notebook-actions">
-          <button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 匯入題目</button>
-          <ActionMenu>
-            <button type="button" className={`learned-visibility-button ${hideLearned ? 'active' : ''}`} aria-pressed={hideLearned} title={`${hideLearned ? '目前隱藏' : '目前顯示'} ${learnedCount} 個已學習題目`} onClick={() => setHideLearned((current) => !current)}>
-              {hideLearned ? <EyeOff size={18} /> : <Eye size={18} />}{hideLearned ? '隱藏已學習' : '顯示已學習'}
-            </button>
-            <button type="button" onClick={copyJsonFormat}><Copy size={18} /> {formatCopied ? '已複製格式' : '複製 JSON 格式'}</button>
-          </ActionMenu>
-        </div>
-      </div>
-      <label className="search grammar-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋韓文文章、題目、選項或中文翻譯" /></label>
-      {actionError && <div className="form-error">{actionError}</div>}
-      {error && <div className="sync-error">Firebase 同步失敗：{error}</div>}
-      {filtered.length ? <div className="reading-test-grid">{filtered.map((test, index) => <ReadingTestCard key={test.id} test={test} index={index} onOpen={onOpen} onEdit={setEditing} onDelete={deleteTest} />)}</div>
-        : <div className="panel grammar-empty">{query ? '找不到符合的閱讀題。' : hideLearned && tests.length ? '目前沒有未學習的閱讀題。取消隱藏即可查看全部題目。' : '還沒有閱讀題，請用 JSON 一次匯入一題或多題。'}</div>}
-      {editing && <ReadingTestsEditorModal
-        test={editing.id ? editing : null}
-        existingTests={tests}
-        onSave={async (nextTests) => {
-          if (editing.id) await onSave(nextTests[0]);
-          else await onSaveMany(nextTests);
-          setEditing(null);
-        }}
-        onClose={() => setEditing(null)}
-      />}
-    </section>
-  );
-}
-
-const READING_TEST_JSON_SAMPLE = `{
-  "schemaVersion": 1,
-  "data": [
-    {
-      "passage": {
-        "ko": "최근에는 필요한 물건을 직접 사기보다 빌려 쓰는 사람들이 많아지고 있다.",
-        "zh": "最近，比起直接購買所需物品，租借使用的人愈來愈多。"
-      },
-      "question": {
-        "ko": "이 글의 내용과 같은 것을 고르십시오.",
-        "zh": "請選出與文章內容相符的選項。"
-      },
-      "options": [
-        { "id": "1", "ko": "캠핑 용품은 직접 사는 것이 더 싸다.", "zh": "露營用品直接購買比較便宜。" },
-        { "id": "2", "ko": "물건을 빌려 쓰는 사람은 점점 줄고 있다.", "zh": "租借物品使用的人正在逐漸減少。" },
-        { "id": "3", "ko": "자주 사용하지 않는 물건은 보관하기 편리하다.", "zh": "不常使用的物品很方便保管。" },
-        { "id": "4", "ko": "물건을 빌려 쓰면 비용과 자원을 아낄 수 있다.", "zh": "租借物品可以節省費用與資源。" }
-      ],
-      "answer": "4",
-      "learned": false
-    }
-  ]
-}`;
-
-function ReadingTestsEditorModal({ test, existingTests, onSave, onClose }) {
-  const [source, setSource] = useState(() => test ? formatReadingTestsJson([test]) : READING_TEST_JSON_SAMPLE);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const preview = useMemo(() => {
-    try {
-      const parsed = parseReadingTestsJson(source, existingTests);
-      if (test && parsed.length !== 1) throw new Error('編輯時 JSON 只能包含一題');
-      return { tests: parsed, error: '' };
-    } catch (parseError) {
-      return { tests: [], error: parseError.message || '格式無法解析' };
-    }
-  }, [existingTests, source, test]);
-  const submit = async (event) => {
-    event.preventDefault();
-    if (preview.error) { setError(preview.error); return; }
-    setSaving(true);
-    setError('');
-    try { await onSave(preview.tests); } catch (saveError) { setError(saveError.message || '儲存閱讀題失敗'); } finally { setSaving(false); }
-  };
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={test ? '編輯閱讀題' : '匯入閱讀題'}>
-      <form className="modal-panel reading-test-editor" onSubmit={submit}>
-        <button type="button" className="modal-close" disabled={saving} onClick={onClose} aria-label="關閉"><X size={18} /></button>
-        <div className="grammar-modal-head"><span className="eyebrow">Reading Practice JSON</span><h2>{test ? '編輯閱讀題' : '批次匯入閱讀題'}</h2></div>
-        <label className="grammar-field tagged-note-field">
-          <span>JSON 內容</span>
-          <textarea className="yt-subtitle-source" value={source} onChange={(event) => setSource(event.target.value)} rows={24} spellCheck={false} />
-          <small>`data` 可放多題；`passage` 是文章、`question` 是提問、`options` 是中韓選項，`answer` 必須填正確選項的 id，`learned` 預設 false。</small>
-          <small className={preview.error ? 'subtitle-parse-error' : 'subtitle-parse-success'}>{preview.error || `格式正確，可儲存 ${preview.tests.length} 題`}</small>
-        </label>
-        {error && <div className="json-edit-error">{error}</div>}
-        <div className="actions grammar-editor-actions"><button type="button" disabled={saving} onClick={onClose}>取消</button><button type="submit" className="primary" disabled={saving || !!preview.error}><Check size={17} /> {saving ? '儲存中' : test ? '儲存修改' : `匯入 ${preview.tests.length || ''} 題`}</button></div>
-      </form>
-    </div>
-  );
-}
-
 function ReadingKoreanText({ entry, words = [], highlights = [], onSelectWord, onSelectHighlight }) {
   const knownMatches = subtitleWordMatches(entry.ko, words);
   const highlightMatches = highlights.filter((highlight) => (
@@ -6713,229 +5177,6 @@ function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onUp
       {quickAdd && <SubtitleQuickAddModal selection={quickAdd} entries={entries} allItems={allItems} sourceLabel="閱讀題" includeInitialExample={false} initialMarkLearned={false} onAddRecords={(records, options) => onAddRecords(test, records, options)} onClose={() => setQuickAdd(null)} />}
       {editingWord && <AddItemsModal title="編輯單字" date={editingWord.date} lockedDate editItem={editingWord} allItems={allItems} onUpdateRecord={onUpdateRecord} onClose={() => setEditingWord(null)} />}
     </section>
-  );
-}
-
-function YoutubeSubtitleCard({ note, onOpen, onEdit, onDelete }) {
-  return (
-    <article className="yt-subtitle-note-card clickable-card" onClick={() => onOpen(note.id)}>
-      <div className="card-head">
-        <div><span className="eyebrow">{note.mode === YT_SUBTITLE_MODE_SRT ? 'SRT subtitles' : 'Bilingual subtitles'}</span><h2>{note.title}</h2></div>
-        <div className="card-actions">
-          <EditIconButton label="編輯字幕筆記" onClick={() => onEdit(note)} />
-          <button
-            type="button"
-            className="edit-icon-button delete-icon-button"
-            title="刪除字幕筆記"
-            aria-label="刪除字幕筆記"
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete(note);
-            }}
-          >
-            <Trash2 size={15} />
-          </button>
-        </div>
-      </div>
-      <p>{note.mode === YT_SUBTITLE_MODE_SRT ? '可點擊字幕跳轉影片時間' : '中韓逐句字幕'}</p>
-      <div className="yt-subtitle-note-meta">
-        <span className="yt-subtitle-tag-chip">{youtubeSubtitleTagLabel(note)}</span>
-        {note.learned && <span className="yt-subtitle-learned-chip"><Check size={13} /> 已學習</span>}
-        <span>{note.entries.length} 句</span>
-        <span>{note.videoId ? '已嵌入影片' : '沒有影片連結'}</span>
-        <span>{grammarTimestamp(note.updatedAt || note.createdAt)}</span>
-      </div>
-    </article>
-  );
-}
-
-function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, onOpen }) {
-  const [query, setQuery] = useState('');
-  const [editing, setEditing] = useState(null);
-  const [actionError, setActionError] = useState('');
-  const [collapsedTags, setCollapsedTags] = useState(() => new Set());
-  const [hideLearned, setHideLearned] = useState(true);
-  const visibleNotes = useMemo(() => (hideLearned ? notes.filter((note) => !note.learned) : notes), [hideLearned, notes]);
-  const learnedCount = notes.filter((note) => note.learned).length;
-  const filtered = useMemo(() => {
-    const keyword = query.trim().toLocaleLowerCase('zh-TW');
-    if (!keyword) return visibleNotes;
-    return visibleNotes.filter((note) => [note.title, note.tag, note.youtubeUrl, ...note.entries.flatMap((entry) => [entry.ko, entry.zh])]
-      .filter(Boolean)
-      .join(' ')
-      .toLocaleLowerCase('zh-TW')
-      .includes(keyword));
-  }, [query, visibleNotes]);
-  const groups = useMemo(() => groupYoutubeSubtitlesByTag(filtered), [filtered]);
-  const tagSuggestions = useMemo(() => groupYoutubeSubtitlesByTag(notes)
-    .filter((group) => group.label !== UNTAGGED_FOLDER_LABEL)
-    .map((group) => group.label), [notes]);
-  const toggleTag = (tag) => setCollapsedTags((current) => {
-    const next = new Set(current);
-    if (next.has(tag)) next.delete(tag);
-    else next.add(tag);
-    return next;
-  });
-  const deleteNote = async (note) => {
-    if (!window.confirm(`確定要刪除「${note.title}」嗎？`)) return;
-    setActionError('');
-    try {
-      await onDelete(note.id);
-    } catch (deleteError) {
-      setActionError(deleteError.message || '刪除字幕筆記失敗');
-    }
-  };
-
-  return (
-    <section className="page yt-subtitles-page">
-      <div className="topbar">
-        <div><span className="eyebrow">YouTube Subtitles</span><h1>YT 字幕</h1></div>
-        <div className="actions notebook-actions">
-          <button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 新增字幕</button>
-          <ActionMenu>
-            <button
-              type="button"
-              className={`learned-visibility-button ${hideLearned ? 'active' : ''}`}
-              aria-pressed={hideLearned}
-              title={`${hideLearned ? '目前隱藏' : '目前顯示'} ${learnedCount} 個已學習字幕檔案`}
-              onClick={() => setHideLearned((current) => !current)}
-            >
-              {hideLearned ? <EyeOff size={18} /> : <Eye size={18} />}
-              {hideLearned ? '隱藏已學習' : '顯示已學習'}
-            </button>
-          </ActionMenu>
-        </div>
-      </div>
-      <label className="search grammar-search">
-        <Search size={18} />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋標題、標籤、影片連結或字幕內容" />
-      </label>
-      {actionError && <div className="form-error">{actionError}</div>}
-      {error && <div className="sync-error">Firebase 同步失敗：{error}</div>}
-      {filtered.length ? (
-        <div className="folder-tag-groups yt-subtitle-tag-groups">
-          {groups.map((group) => {
-            const collapsed = collapsedTags.has(group.label);
-            return (
-              <section className={`folder-tag-group ${collapsed ? 'collapsed' : ''}`} key={group.label}>
-                <div className="folder-tag-group-head">
-                  <button
-                    type="button"
-                    className="folder-tag-group-toggle"
-                    aria-expanded={!collapsed}
-                    onClick={() => toggleTag(group.label)}
-                    title={collapsed ? `展開${group.label}` : `收合${group.label}`}
-                  >
-                    <span className="folder-tag-group-heading"><span className="folder-tag-mark">標籤</span><h2>{group.label}</h2></span>
-                    <ChevronDown size={18} />
-                  </button>
-                  <span>{group.notes.length} 個字幕檔案</span>
-                </div>
-                {!collapsed && (
-                  <div className="yt-subtitle-note-grid">
-                    {group.notes.map((note) => <YoutubeSubtitleCard key={note.id} note={note} onOpen={onOpen} onEdit={setEditing} onDelete={deleteNote} />)}
-                  </div>
-                )}
-              </section>
-            );
-          })}
-        </div>
-      ) : <div className="panel grammar-empty">{query ? '找不到符合的字幕筆記。' : hideLearned && notes.length ? '目前沒有未學習的字幕筆記。取消隱藏即可查看全部字幕。' : '還沒有字幕筆記。新增一篇後即可放入中韓字幕。'}</div>}
-      {editing && (
-        <YoutubeSubtitleEditorModal
-          note={editing.id ? editing : null}
-          tagSuggestions={tagSuggestions}
-          onSave={async (note) => {
-            await onSave(note);
-            setEditing(null);
-          }}
-          onClose={() => setEditing(null)}
-        />
-      )}
-    </section>
-  );
-}
-
-function YoutubeSubtitleEditorModal({ note, tagSuggestions = [], onSave, onClose }) {
-  const initialMode = note?.mode === YT_SUBTITLE_MODE_SRT ? YT_SUBTITLE_MODE_SRT : YT_SUBTITLE_MODE_JSON;
-  const [title, setTitle] = useState(note?.title || '');
-  const [tag, setTag] = useState(note?.tag || '');
-  const [learned, setLearned] = useState(note?.learned === true);
-  const [youtubeUrl, setYoutubeUrl] = useState(note?.youtubeUrl || '');
-  const [mode, setMode] = useState(initialMode);
-  const [jsonText, setJsonText] = useState(() => formatYoutubeSubtitleJson(note?.entries || []));
-  const [srtText, setSrtText] = useState(() => formatYoutubeSubtitleSrt(note?.entries || []));
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const activeText = mode === YT_SUBTITLE_MODE_SRT ? srtText : jsonText;
-  const setActiveText = mode === YT_SUBTITLE_MODE_SRT ? setSrtText : setJsonText;
-  const preview = useMemo(() => {
-    if (!activeText.trim()) return null;
-    try {
-      const entries = mode === YT_SUBTITLE_MODE_SRT ? parseYoutubeSubtitleSrt(activeText, note?.entries || []) : parseYoutubeSubtitleJson(activeText, note?.entries || []);
-      return { count: entries.length, error: '' };
-    } catch (parseError) {
-      return { count: 0, error: parseError.message || '格式無法解析' };
-    }
-  }, [activeText, mode, note?.entries]);
-  const submit = async (event) => {
-    event.preventDefault();
-    setSaving(true);
-    setError('');
-    try {
-      const entries = mode === YT_SUBTITLE_MODE_SRT
-        ? parseYoutubeSubtitleSrt(srtText, note?.entries || [])
-        : parseYoutubeSubtitleJson(jsonText, note?.entries || []);
-      await onSave({ ...note, title, tag, learned, youtubeUrl, mode, entries });
-    } catch (saveError) {
-      setError(saveError.message || '儲存字幕筆記失敗');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <form className="modal-panel yt-subtitle-editor" onSubmit={submit}>
-        <button type="button" className="modal-close" disabled={saving} onClick={onClose} aria-label="關閉"><X size={18} /></button>
-        <div className="grammar-modal-head"><span className="eyebrow">YouTube Subtitles</span><h2>{note ? '編輯字幕筆記' : '新增字幕筆記'}</h2></div>
-        <label className="grammar-field"><span>標題</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：影片名稱或主題" autoFocus required /></label>
-        <label className="grammar-field">
-          <span>標籤 <small>選填</small></span>
-          <input value={tag} onChange={(event) => setTag(event.target.value)} list="yt-subtitle-tag-suggestions" placeholder="留空會歸類為無標籤" />
-          {!!tagSuggestions.length && <datalist id="yt-subtitle-tag-suggestions">{tagSuggestions.map((suggestion) => <option value={suggestion} key={suggestion} />)}</datalist>}
-        </label>
-        <label className="yt-subtitle-learned-option">
-          <input type="checkbox" checked={learned} onChange={(event) => setLearned(event.target.checked)} />
-          <span><strong>已學習</strong><small>標示完成後，預設不顯示在 YT 字幕列表中。</small></span>
-        </label>
-        <label className="grammar-field"><span>YouTube 連結 <small>選填</small></span><input type="url" value={youtubeUrl} onChange={(event) => setYoutubeUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=..." /></label>
-        <div className="grammar-field">
-          <span>字幕格式</span>
-          <div className="segmented compact note-category-control">
-            <button type="button" className={mode === YT_SUBTITLE_MODE_JSON ? 'active' : ''} onClick={() => setMode(YT_SUBTITLE_MODE_JSON)}>JSON 逐句字幕</button>
-            <button type="button" className={mode === YT_SUBTITLE_MODE_SRT ? 'active' : ''} onClick={() => setMode(YT_SUBTITLE_MODE_SRT)}>SRT 時間字幕</button>
-          </div>
-        </div>
-        <label className="grammar-field tagged-note-field">
-          <span>{mode === YT_SUBTITLE_MODE_SRT ? 'SRT 字幕內容' : 'JSON 字幕內容'}</span>
-          <textarea
-            className="yt-subtitle-source"
-            value={activeText}
-            onChange={(event) => setActiveText(event.target.value)}
-            spellCheck={false}
-            rows={18}
-            placeholder={mode === YT_SUBTITLE_MODE_SRT
-              ? '1\n00:00:01,000 --> 00:00:04,000\n안녕하세요.\n你好。'
-              : '{\n  "data": [\n    { "ko": "안녕하세요.", "zh": "你好。" }\n  ]\n}'}
-          />
-          <small>{mode === YT_SUBTITLE_MODE_SRT ? '每一段依序填入時間戳、韓文、中文。點擊字幕會跳轉到開始時間。' : '請使用 { "data": [{ "ko": "韓文", "zh": "中文" }] } 格式。'}</small>
-          {preview && <small className={preview.error ? 'subtitle-parse-error' : 'subtitle-parse-success'}>{preview.error || `可匯入 ${preview.count} 句字幕`}</small>}
-        </label>
-        {error && <div className="json-edit-error">{error}</div>}
-        <div className="actions grammar-editor-actions"><button type="button" disabled={saving} onClick={onClose}>取消</button><button className="primary" disabled={saving} type="submit"><Check size={17} /> {saving ? '儲存中' : '儲存字幕筆記'}</button></div>
-      </form>
-    </div>
   );
 }
 
@@ -7389,54 +5630,6 @@ function SubtitleQuickAddModal({ selection, entries = [], allItems, sourceLabel 
         {error && <div className="form-error">{error}</div>}
         <div className="actions grammar-editor-actions"><button type="button" onClick={onClose} disabled={saving}>取消</button><button className="primary" type="submit" disabled={saving}><Plus size={17} /> {saving ? '新增中' : '新增到單字本'}</button></div>
       </form>
-    </div>
-  );
-}
-
-function GrammarDetailModal({ note, category, onEdit, onDelete, onPractice, onClose }) {
-  const meta = noteCategoryMeta(category);
-  useEffect(() => {
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape' && !event.isComposing) onClose();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
-
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <div className="modal-panel grammar-detail-panel">
-        <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
-        <div className="grammar-detail-head">
-          <div><span className="eyebrow">{meta.eyebrow}</span><h2>{note.title}</h2></div>
-          <div className="card-actions">
-            <button className="small grammar-detail-practice" disabled={!grammarPracticeQuestions([note]).length} onClick={() => onPractice(note)}><Dumbbell size={16} /> 練習</button>
-            <EditIconButton onClick={() => onEdit(note)} label={`編輯${meta.item}`} />
-            <button className="edit-icon-button delete-icon-button" onClick={() => onDelete(note)} aria-label={`刪除${meta.item}`} title={`刪除${meta.item}`}><Trash2 size={15} /></button>
-          </div>
-        </div>
-        <div className="grammar-created-at">建立於 {grammarTimestamp(note.createdAt)}</div>
-        {note.notes && (
-          <section className="grammar-detail-section">
-            <h3>筆記</h3>
-            <div className="grammar-notes-content">{note.notes}</div>
-          </section>
-        )}
-        {!!note.examples.length && (
-          <section className="grammar-detail-section">
-            <h3>例句 <span>{note.examples.length}</span></h3>
-            <div className="grammar-example-list">
-              {note.examples.map((example, index) => (
-                <article className="grammar-example" key={example.id}>
-                  <div className="grammar-example-number">{index + 1}</div>
-                  {example.ko && <p className="grammar-example-ko"><span>{example.ko}</span><TextSpeakButton text={example.ko} lang="ko-KR" label="播放韓文例句" /></p>}
-                  {example.zh && <p className="grammar-example-zh"><span>{example.zh}</span><TextSpeakButton text={example.zh} lang="zh-TW" label="播放中文翻譯" /></p>}
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-      </div>
     </div>
   );
 }

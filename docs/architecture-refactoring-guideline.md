@@ -510,10 +510,17 @@ src/
 
 ### Phase 4：資料層與 App 拆分
 
-- 將 CRUD 移到 repositories/services。
-- 將 collection hook 改為共用 adapter pattern。
-- 拆 `AppDataProvider` 與導航。
-- 將 feature pages 從 `main.jsx` 移出並 lazy load。
+**狀態：已完成（2026-09-16）**
+
+- [x] 建立 user content、folder 與 Firestore write repositories，將筆記、字幕、閱讀題與資料夾 CRUD 移出 UI。
+- [x] 建立 `wordLibraryService`，集中單字批次寫入、來源資料夾指派與永久刪除時的 reference 清理。
+- [x] 四個 collection hook 改為 repository adapter，不再 import Firebase SDK 或組合 Firestore path。
+- [x] 建立 `AppDataProvider`、route data policy、可測試的 navigation stack 與 `AppShell`。
+- [x] 筆記、YT 字幕列表與閱讀測驗列表移出 `main.jsx`，透過 `React.lazy` 產生獨立 route chunks。
+- [x] 共用的語音、ActionMenu、剪貼簿、時間格式與 JSON parser 各自移到單一 owner，lazy routes 不反向依賴 app entry。
+- [x] 補上 route collection policy、逐層返回與 feature hook repository boundary 測試。
+
+Firestore schema、collection 名稱、增量 checkpoint、tombstone 與離線寫入策略均未更動。後續 feature 不得把 Firebase SDK 呼叫放回 page component；新增 collection 時應先建立 repository，再由 hook 對 UI 提供 actions。
 
 ### Phase 5：內容工具與 Terminal
 
