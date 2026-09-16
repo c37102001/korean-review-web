@@ -948,7 +948,7 @@ Phase 1～14 已完成資料層、domain、共用元件、entry、bundle 與 CI 
 
 ### Phase 15：Web App orchestration 完整拆分
 
-**狀態：待實作**
+**狀態：已完成（2026-09-16）**
 
 目前問題：
 
@@ -995,6 +995,14 @@ src/features/
 - architecture test 阻止 App 再次直接取得 Firestore SDK。
 
 建議 commit：`refactor web app orchestration`
+
+實際結果：
+
+- `App.jsx` 由 2,437 行降至 365 行，只保留登入 gate、provider、navigation composition 與既有測試 helper exports。
+- Firebase/auth/offline/store lifecycle 集中於 `AppRuntime.jsx`；`App.jsx` 與頁面 owners 不再直接 import Firebase SDK。
+- workspace route composition、登入／語音／自選練習 dialogs、首頁／日曆，以及單字本／資料夾頁面已分成獨立 owners。
+- architecture test 將 App 500 行與禁止 Firebase SDK 依賴設為硬性門檻。
+- Web tests、Terminal tests、production build 與 200 KiB entry budget 全部通過。
 
 ### Phase 16：Terminal screens 真正拆分
 

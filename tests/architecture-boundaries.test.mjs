@@ -48,3 +48,10 @@ test('compatibility entries stay bootstrap-only', async () => {
   assert.ok(terminalEntry.split('\n').length <= 100, 'terminal_review_practice.py exceeds 100 lines');
   assert.doesNotMatch(terminalEntry, /class FirebaseClient|def run_terminal_ui/);
 });
+
+test('App is orchestration-only and does not access Firebase SDK directly', async () => {
+  const source = await readFile(path.join(ROOT, 'src/app/App.jsx'), 'utf8');
+  assert.ok(source.split('\n').length <= 500, 'src/app/App.jsx exceeds 500 lines');
+  assert.doesNotMatch(source, /from ['"]firebase\/(?:auth|firestore)['"]/);
+  assert.doesNotMatch(source, /function (?:HomePage|CalendarPage|NotebookPage|FoldersPage|AppWorkspace)\b/);
+});

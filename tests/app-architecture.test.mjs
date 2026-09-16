@@ -45,7 +45,7 @@ test('feature collection hooks depend on repositories instead of Firebase SDK', 
 });
 
 test('content library routes are lazy chunks and never import the app entry', async () => {
-  const appSource = await readFile(new URL('../src/app/App.jsx', import.meta.url), 'utf8');
+  const runtimeSource = await readFile(new URL('../src/app/AppRuntime.jsx', import.meta.url), 'utf8');
   const mainSource = await readFile(new URL('../src/main.jsx', import.meta.url), 'utf8');
   const routePaths = [
     '../src/features/notes/pages/NotesNotebookPage.jsx',
@@ -56,7 +56,7 @@ test('content library routes are lazy chunks and never import the app entry', as
   ];
   routePaths.forEach((path) => {
     const modulePath = path.replace('../src/', '../');
-    assert.match(appSource, new RegExp(`lazy\\(\\(\\) => import\\('${modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'\\)`));
+    assert.match(runtimeSource, new RegExp(`lazy\\(\\(\\) => import\\('${modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'\\)`));
   });
   assert.doesNotMatch(mainSource, /lazy\(|features\//);
   const routeSources = await Promise.all(routePaths.map((path) => readFile(new URL(path, import.meta.url), 'utf8')));
@@ -78,10 +78,10 @@ test('web entry is bootstrap-only and feature readers do not depend on App', asy
 });
 
 test('study and practice pages are owned by the sessions feature', async () => {
-  const appSource = await readFile(new URL('../src/app/App.jsx', import.meta.url), 'utf8');
+  const runtimeSource = await readFile(new URL('../src/app/AppRuntime.jsx', import.meta.url), 'utf8');
   const sessionSource = await readFile(new URL('../src/features/sessions/SessionPages.jsx', import.meta.url), 'utf8');
-  assert.doesNotMatch(appSource, /function (?:StudyPage|PracticePage)\b/);
-  assert.match(appSource, /lazy\(\(\) => import\('\.\.\/features\/sessions\/SessionPages\.jsx'\)/);
+  assert.doesNotMatch(runtimeSource, /function (?:StudyPage|PracticePage)\b/);
+  assert.match(runtimeSource, /lazy\(\(\) => import\('\.\.\/features\/sessions\/SessionPages\.jsx'\)/);
   assert.match(sessionSource, /export function StudyPage/);
   assert.match(sessionSource, /export function PracticePage/);
 });
