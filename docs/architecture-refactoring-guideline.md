@@ -665,7 +665,7 @@ terminal_review_practice.py (compatibility entry)
 
 ### Phase 6：單字匯入與編輯 domain
 
-**狀態：待實作**
+**狀態：已完成（2026-09-16）**
 
 目標目錄：
 
