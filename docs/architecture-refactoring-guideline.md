@@ -917,7 +917,7 @@ terminal_app/ui/
 
 ### Phase 14：架構守門與 CI
 
-**狀態：待實作**
+**狀態：已完成**
 
 工作：
 
@@ -934,6 +934,13 @@ terminal_app/ui/
 - README 說明如何執行每一層測試與新增 feature 的標準位置。
 
 建議 commit：`add architecture and integration guardrails`
+
+實際結果：
+
+- dependency boundary tests 會阻止 feature 回頭依賴 entry、domain 依賴 Firebase，以及 Terminal domain 依賴 curses/API。
+- entry 行數成為硬性限制；大型 owner 先以 CI annotation 警告並持續追蹤。
+- Emulator suite 新增穩態增量讀取預算與多 client merge，所有 fixture 使用獨立測試 project。
+- CI 分開呈現 Web、Terminal、architecture、Emulator 與 build 的失敗範圍，部署不接觸測試帳號。
 
 ## 20. 每階段的固定執行流程
 

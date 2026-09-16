@@ -100,8 +100,23 @@ npx firebase deploy --only firestore:rules,firestore:indexes --project korean-re
 一般測試：
 
 ```bash
-npm test
+npm run test:web
+npm run test:terminal
+npm run test:architecture
+npm run build
 ```
+
+測試分層如下：
+
+- `test:web`：Web domain、repository、session 與 component characterization tests。
+- `test:terminal`：Terminal API、同步、domain、audio、navigation 與離線流程。
+- `test:architecture`：依賴方向、entry 大小與大型檔案 advisory report。
+- `test:emulator`：只連本機 Firestore Emulator，驗證 rules、增量同步、tombstone、多 client merge 與讀取上限。
+- `build`：production bundle、PWA 產物與初始 entry 200 KiB gzip 預算。
+
+新增功能時，pure rules 放在 feature/domain model，Firestore 存取放在 `repositories/`，
+React route 放在 `src/features/<feature>/pages/`；Terminal domain 不得 import curses，畫面與導航放在
+`terminal_app/ui/`。不要由 feature 回頭 import `main.jsx`、`App.jsx` 或 Terminal compatibility entry。
 
 Firestore Emulator 整合測試涵蓋使用者隔離、shard 上限、tombstone 增量同步及多客戶端
 同時追加作答。執行前需要 Java 21 或更新版本：
@@ -109,6 +124,9 @@ Firestore Emulator 整合測試涵蓋使用者隔離、shard 上限、tombstone 
 ```bash
 npm run test:emulator
 ```
+
+Emulator 使用獨立的 `korean-review-web-test` project id 和測試登入 context，不會連線到 production
+Firebase，也不會消耗正式專案 quota。
 
 內容 schema v2：
 

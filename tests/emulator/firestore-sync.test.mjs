@@ -99,3 +99,44 @@ test('repository batches create a summary and segmented attempt log', async () =
   assert.equal(segments.size, 1);
   assert.equal(segments.docs[0].data().attempts[0].id, 'attempt');
 });
+
+test('steady-state incremental sync reads only documents newer than its checkpoint', async () => {
+  const writer = environment.authenticatedContext('owner').firestore();
+  const reader = environment.authenticatedContext('owner').firestore();
+  const batch = writeBatch(writer);
+  for (let index = 0; index < 100; index += 1) {
+    batch.set(doc(writer, `users/owner/records/old-${index}`), {
+      id: `old-${index}`,
+      updatedAt: Timestamp.fromMillis(1_000),
+    });
+  }
+  for (let index = 0; index < 3; index += 1) {
+    batch.set(doc(writer, `users/owner/records/new-${index}`), {
+      id: `new-${index}`,
+      updatedAt: Timestamp.fromMillis(3_000 + index),
+    });
+  }
+  await batch.commit();
+
+  const snapshot = await getDocs(query(
+    collection(reader, 'users/owner/records'),
+    where('updatedAt', '>', Timestamp.fromMillis(2_000)),
+  ));
+
+  assert.equal(snapshot.size, 3, 'incremental startup must not reload the 100 unchanged records');
+});
+
+test('offline-style field merges from two clients preserve independent changes', async () => {
+  const first = environment.authenticatedContext('owner').firestore();
+  const second = environment.authenticatedContext('owner').firestore();
+  const referenceA = doc(first, 'users/owner/settings/review');
+  const referenceB = doc(second, 'users/owner/settings/review');
+
+  await setDoc(referenceA, { starred: { wordA: true } }, { merge: true });
+  await setDoc(referenceB, { completedDates: { '2026-09-16': true } }, { merge: true });
+
+  const snapshot = await getDocs(collection(first, 'users/owner/settings'));
+  const review = snapshot.docs.find((entry) => entry.id === 'review').data();
+  assert.deepEqual(review.starred, { wordA: true });
+  assert.deepEqual(review.completedDates, { '2026-09-16': true });
+});

@@ -8,6 +8,9 @@
     "build": "vite build && node scripts/check_bundle_budget.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --test tests/*.test.mjs",
+    "test:web": "node --test tests/*.test.mjs",
+    "test:terminal": "python -m unittest discover -s tests -p 'test_terminal*.py'",
+    "test:architecture": "node --test tests/architecture-boundaries.test.mjs && node scripts/report_file_sizes.mjs",
     "test:emulator": "firebase emulators:exec --only firestore --project korean-review-web-test \"node --test tests/emulator/*.test.mjs\"",
     "db:migrate-review-days": "node --env-file=.env scripts/migrate_review_days.mjs"
   },

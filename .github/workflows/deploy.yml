@@ -15,7 +15,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  web-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run test:web
+
+  terminal-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -p 'test_terminal*.py'
+
+  architecture-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run test:architecture
+
+  emulator-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,12 +59,10 @@ jobs:
           distribution: temurin
           java-version: 21
       - run: npm ci
-      - run: npm test
-      - run: python -m unittest tests.test_terminal_offline tests.test_terminal_optional_practice
       - run: npm run test:emulator
 
   build:
-    needs: test
+    needs: [web-test, terminal-test, architecture-test, emulator-test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
