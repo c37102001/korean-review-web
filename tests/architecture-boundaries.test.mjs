@@ -88,3 +88,19 @@ test('study and practice sessions have independent bounded page owners', async (
     assert.doesNotMatch(source, /firebase\/|repositories\//, `${file} must not access persistence adapters`);
   }
 });
+
+test('canonical word and session styles have a single owner', async () => {
+  const styleFiles = await sourceFiles('src', ['.css']);
+  const sources = new Map(await Promise.all(styleFiles.map(async (file) => [
+    file,
+    await readFile(path.join(ROOT, file), 'utf8'),
+  ])));
+  const wordOwner = 'src/features/word-library/components/word-presentation.css';
+  const wordSelectorFiles = [...sources]
+    .filter(([, source]) => /\.word-card(?:\b|[- ])|\.word-meta\b|\.word-folder-tags\b/.test(source))
+    .map(([file]) => file);
+  assert.deepEqual(wordSelectorFiles, [wordOwner]);
+
+  const responsive = sources.get('src/styles/responsive.css');
+  assert.doesNotMatch(responsive, /\.(?:study-page|practice-page|flashcard|practice-shell|practice-answer-panel|quiz-options)\b/);
+});

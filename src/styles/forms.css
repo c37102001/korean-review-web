@@ -923,47 +923,6 @@
   white-space: nowrap;
 }
 
-.word-card {
-  display: grid;
-  gap: 12px;
-}
-
-.word-card-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
-}
-
-.word-card-head .speakable-heading {
-  width: 100%;
-  min-width: 0;
-  margin: 0;
-  word-break: keep-all;
-  overflow-wrap: anywhere;
-}
-
-.word-card-head .speakable-heading > span {
-  min-width: 0;
-}
-
-.word-card-head .card-actions {
-  width: 100%;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-}
-
-.word-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.word-meta span {
-  padding: 5px 8px;
-  border-radius: 999px;
-  background: #f2f5f5;
-}
-
 .pagination {
   display: flex;
   align-items: center;
@@ -1145,4 +1104,3 @@
   color: #9f2936;
   background: #ffe1e5;
 }
-

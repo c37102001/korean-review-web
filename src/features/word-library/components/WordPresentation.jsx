@@ -6,6 +6,7 @@ import { Folder, Trash2 } from 'lucide-react';
 
 import { EditIconButton, KoreanSpeakButton, StarButton } from '../../../components/actions/ContentActionButtons.jsx';
 import { relatedWords, wordExamples } from '../../../words/records.js';
+import './word-presentation.css';
 
 const MARKDOWN_PLUGINS = [remarkGfm];
 

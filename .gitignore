@@ -5,3 +5,5 @@ dist
 .env
 __pycache__/
 firebase-debug.log
+playwright-report/
+test-results/

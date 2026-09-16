@@ -1122,7 +1122,16 @@ src/features/sessions/
 
 ### Phase 18：CSS ownership 與自動化視覺回歸收尾
 
-**狀態：待實作**
+**狀態：已完成（2026-09-16）**
+
+實作結果：
+
+- Study／Practice 的 mobile rules 已移回 session stylesheet；`responsive.css` 不再擁有 session component selectors。
+- WordCard、metadata、folder tags 與其 responsive variants 已集中到 `word-presentation.css`，由 canonical component 自行 import。
+- 新增不載入 App 或 Firebase 的固定資料 fixture，涵蓋 WordCard、單字本、資料夾、Study、Practice、YT reader、筆記與閱讀測驗。
+- 建立 360px、390px、desktop 共 24 組 Playwright baselines，並檢查水平 overflow、韓文標題寬度、Study 翻面、Practice 公布答案、YT 中譯切換高度及閱讀作答。
+- CI 新增獨立 visual job；失敗時上傳 screenshot diff 與 HTML report，並阻止 build／deploy。
+- 架構測試會阻止 WordCard selector 再次分散，以及 session selectors 回流 `responsive.css`。
 
 目前問題：
 
