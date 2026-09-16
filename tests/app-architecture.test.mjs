@@ -81,7 +81,9 @@ test('study and practice pages are owned by the sessions feature', async () => {
   const runtimeSource = await readFile(new URL('../src/app/AppRuntime.jsx', import.meta.url), 'utf8');
   const sessionSource = await readFile(new URL('../src/features/sessions/SessionPages.jsx', import.meta.url), 'utf8');
   assert.doesNotMatch(runtimeSource, /function (?:StudyPage|PracticePage)\b/);
-  assert.match(runtimeSource, /lazy\(\(\) => import\('\.\.\/features\/sessions\/SessionPages\.jsx'\)/);
-  assert.match(sessionSource, /export function StudyPage/);
-  assert.match(sessionSource, /export function PracticePage/);
+  assert.match(runtimeSource, /import\('\.\.\/features\/sessions\/study\/StudyPage\.jsx'\)/);
+  assert.match(runtimeSource, /import\('\.\.\/features\/sessions\/practice\/PracticePage\.jsx'\)/);
+  assert.doesNotMatch(sessionSource, /function |useState|useEffect/);
+  assert.match(sessionSource, /export \{ StudyPage \}/);
+  assert.match(sessionSource, /export \{ PracticePage \}/);
 });

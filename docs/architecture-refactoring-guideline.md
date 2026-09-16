@@ -1067,7 +1067,15 @@ terminal_app/
 
 ### Phase 17：Session UI 分拆與共用互動元件
 
-**狀態：待實作**
+**狀態：已完成（2026-09-16）**
+
+實作結果：
+
+- `SessionPages.jsx` 由 1,234 行縮減為 2 行相容 exports；App route 直接 lazy-load Study 與 Practice owner。
+- Study 與 Practice 分別由 `study/StudyPage.jsx`、`practice/PracticePage.jsx` 負責，行數分別為 320 與 492。
+- 答案呈現、完成／錯題檢討、分類操作、單字編輯、語音與 keyboard/touch navigation 已拆成獨立元件或 hook。
+- 補齊原大型檔案內隱含的語音、shuffle 與 question selection 依賴，所有依賴改為明確 import。
+- 架構與 file-size tests 會阻止聚合頁面重新出現，並將 Study／Practice 的 500 行上限設為 hard failure。
 
 目前問題：
 

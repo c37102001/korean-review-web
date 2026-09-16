@@ -8,6 +8,8 @@ const limits = [
 
 const hardLimits = [
   { file: 'terminal_app/app.py', maximum: 600 },
+  { file: 'src/features/sessions/study/StudyPage.jsx', maximum: 500 },
+  { file: 'src/features/sessions/practice/PracticePage.jsx', maximum: 500 },
 ];
 
 function walk(directory, extensions) {

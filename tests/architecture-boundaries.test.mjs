@@ -73,3 +73,18 @@ test('terminal app is orchestration-only and extracted screens stay bounded', as
     );
   }
 });
+
+test('study and practice sessions have independent bounded page owners', async () => {
+  const facade = await readFile(path.join(ROOT, 'src/features/sessions/SessionPages.jsx'), 'utf8');
+  assert.ok(facade.split('\n').length <= 20, 'SessionPages.jsx must remain an export-only facade');
+  assert.doesNotMatch(facade, /function |useState|useEffect/);
+
+  for (const [file, maximum] of [
+    ['src/features/sessions/study/StudyPage.jsx', 500],
+    ['src/features/sessions/practice/PracticePage.jsx', 500],
+  ]) {
+    const source = await readFile(path.join(ROOT, file), 'utf8');
+    assert.ok(source.split('\n').length <= maximum, `${file} exceeds ${maximum} lines`);
+    assert.doesNotMatch(source, /firebase\/|repositories\//, `${file} must not access persistence adapters`);
+  }
+});
