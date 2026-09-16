@@ -6,6 +6,10 @@ const limits = [
   { directory: 'terminal_app', extensions: ['.py'], warning: 1500 },
 ];
 
+const hardLimits = [
+  { file: 'terminal_app/app.py', maximum: 600 },
+];
+
 function walk(directory, extensions) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const target = path.join(directory, entry.name);
@@ -25,6 +29,16 @@ for (const group of limits) {
   }
 }
 
+let failures = 0;
+for (const { file, maximum } of hardLimits) {
+  const lines = readFileSync(file, 'utf8').split('\n').length;
+  if (lines > maximum) {
+    failures += 1;
+    console.error(`::error file=${file}::${lines} lines exceeds the ${maximum}-line hard limit`);
+  }
+}
+
 const trackedBytes = limits.flatMap((group) => walk(group.directory, group.extensions))
   .reduce((sum, file) => sum + statSync(file).size, 0);
-console.log(`Architecture size report: ${warnings} warning(s), ${(trackedBytes / 1024).toFixed(1)} KiB tracked source.`);
+console.log(`Architecture size report: ${failures} failure(s), ${warnings} warning(s), ${(trackedBytes / 1024).toFixed(1)} KiB tracked source.`);
+if (failures) process.exitCode = 1;

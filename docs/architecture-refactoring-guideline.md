@@ -1006,7 +1006,15 @@ src/features/
 
 ### Phase 16：Terminal screens 真正拆分
 
-**狀態：待實作**
+**狀態：已完成（2026-09-16）**
+
+實作結果：
+
+- `terminal_app/app.py` 由約 4,874 行縮減為不到 300 行，只保留 CLI、登入、依賴組裝與 top-level loop。
+- Firebase/cache/domain 共用執行環境移至 `terminal_app/runtime.py`；curses primitives 移至 `terminal_app/ui/curses_helpers.py`。
+- notes、subtitles、reading、optional practice、session setup、grammar、recognition、practice session、study、library 已拆成獨立 screen owner，個別檔案均低於 700 行。
+- `terminal_review_practice.py` 的歷史 import 與 monkeypatch 介面由 compatibility module forwarding 保留，`--offline`、`--sync` 介面不變。
+- 架構測試會拒絕超過 600 行的 `terminal_app/app.py`、超過 700 行的 screen，以及 screen 直接匯入 HTTP、subprocess 或 repository。
 
 目前問題：
 

@@ -55,3 +55,21 @@ test('App is orchestration-only and does not access Firebase SDK directly', asyn
   assert.doesNotMatch(source, /from ['"]firebase\/(?:auth|firestore)['"]/);
   assert.doesNotMatch(source, /function (?:HomePage|CalendarPage|NotebookPage|FoldersPage|AppWorkspace)\b/);
 });
+
+test('terminal app is orchestration-only and extracted screens stay bounded', async () => {
+  const app = await readFile(path.join(ROOT, 'terminal_app/app.py'), 'utf8');
+  assert.ok(app.split('\n').length <= 600, 'terminal_app/app.py exceeds 600 lines');
+  assert.doesNotMatch(app, /^(?:from|import)\s+(?:urllib|requests|subprocess|terminal_app\.repositories)\b/m);
+  assert.doesNotMatch(app, /^class FirebaseClient\b|^def run_(?:study|practice|notebook|calendar)\b/m);
+
+  const screens = await sourceFiles('terminal_app/ui/screens', ['.py']);
+  for (const file of screens) {
+    const source = await readFile(path.join(ROOT, file), 'utf8');
+    assert.ok(source.split('\n').length <= 700, `${file} exceeds 700 lines`);
+    assert.doesNotMatch(
+      source,
+      /^(?:from|import)\s+(?:urllib|requests|subprocess|terminal_app\.repositories)\b/m,
+      `${file} must use application services instead of transport or repositories`,
+    );
+  }
+});
