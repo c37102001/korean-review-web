@@ -4,3 +4,4 @@ dist
 *.local
 .env
 __pycache__/
+firebase-debug.log
