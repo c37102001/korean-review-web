@@ -120,9 +120,7 @@ function item(ko, zh, extra = {}) {
 }
 
 test('user-created optional tasks never write daily scores or scheduling results', () => {
-  for (const optionalKind of ['words', 'listening', 'reading', 'grammar']) {
-    assert.equal(helpers.shouldRecordPracticeResults({ optionalKind, dailyReview: true, allowResultRecording: true, recordResults: true }), false);
-  }
+  assert.equal(helpers.shouldRecordPracticeResults({ policy: { result: 'update-optional-pool' } }, true), false);
 });
 
 test('replacing an existing duplicate becomes one update with no second conflict', () => {
@@ -402,11 +400,10 @@ test('daily wrong answers count for both translation directions', () => {
 });
 
 test('daily reviews always record while notebook and folder tests require opt-in', () => {
-  assert.equal(helpers.shouldRecordPracticeResults({ dailyReview: true, dueOnly: true }), true);
-  assert.equal(helpers.shouldRecordPracticeResults({ dueOnly: true }), false);
-  assert.equal(helpers.shouldRecordPracticeResults({ recordResults: true }), false);
-  assert.equal(helpers.shouldRecordPracticeResults({ allowResultRecording: true, recordResults: false }), false);
-  assert.equal(helpers.shouldRecordPracticeResults({ allowResultRecording: true, recordResults: true }), true);
+  assert.equal(helpers.shouldRecordPracticeResults({ policy: { result: 'record-daily-review' } }), true);
+  assert.equal(helpers.shouldRecordPracticeResults({ policy: { result: 'do-not-record' } }), false);
+  assert.equal(helpers.shouldRecordPracticeResults({ policy: { result: 'record-if-enabled' } }, false), false);
+  assert.equal(helpers.shouldRecordPracticeResults({ policy: { result: 'record-if-enabled' } }, true), true);
   assert.equal(helpers.shouldRecordPracticeResults({}), false);
 });
 

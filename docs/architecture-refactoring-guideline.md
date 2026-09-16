@@ -497,10 +497,16 @@ src/
 
 ### Phase 3：整理學習／測驗 session
 
-- 先建立 session factories 與具名 policy，不改 UI。
-- 將 queue、result、retry、audio controller 從 `PracticePage`／`StudyPage` 抽出。
-- 共用 `WordDetails`、分類按鈕、編輯 modal 與導航元件。
-- 最後移除舊 boolean branches。
+**狀態：已完成（2026-09-16）**
+
+- [x] 建立 daily review、collection、wrong answer、optional、grammar、fixed word 與 study session factories。
+- [x] 以具名 order／result／retry／reveal policy 取代 `PracticePage` 內的舊 boolean 組合。
+- [x] 將選題、queue 排序、錯題重練與 persistence decision 搬到可直接測試的 session model。
+- [x] 將學習語音序列與 wake lock lifecycle 搬出 `StudyPage`。
+- [x] 學習與測驗共用 `WordDetails`、`useWordClassification`、`WordFolderButtons` 與單字編輯 dialog。
+- [x] 為各 session kind 補上排序、紀錄、重試及完成 callback 的純函式測試。
+
+頁面目前只依 session 的語意 view／policy 呈現，不再直接解讀 `dueOnly`、`dailyReview`、`wrongReview`、`optionalKind` 等啟動旗標。新增模式時應新增 factory 與 policy 測試，不得重新把模式判斷散回 `PracticePage`。
 
 ### Phase 4：資料層與 App 拆分
 

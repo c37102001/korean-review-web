@@ -26,6 +26,33 @@ import {
 import { useWordCollection } from './features/word-library/hooks/useWordCollection.js';
 import { useWordCollectionDialogs } from './features/word-library/hooks/useWordCollectionDialogs.js';
 import {
+  createDailyReviewSession,
+  createPracticeSession,
+  createStudySession,
+  PRACTICE_SESSION_KIND,
+} from './features/sessions/core/sessionDefinitions.js';
+import { useWordClassification } from './features/sessions/core/useWordClassification.js';
+import { useSessionWakeLock } from './features/sessions/core/useSessionWakeLock.js';
+import {
+  activePracticeDirection,
+  buildPracticeQueue,
+  initialPracticeDirection,
+  isSelfGradeAnswerMode,
+  orderReviewQuestions,
+  practiceMistakeReviewQuestions,
+  practiceResultEffect,
+  practiceSessionView,
+  selectPracticeQuestions,
+  shouldAutoPronouncePracticePrompt,
+  shouldRecordPracticeResults,
+  shuffleItems,
+} from './features/sessions/practice/model.js';
+import {
+  buildStudyAutoPlaySpeechSequence,
+  shouldShowStudyChinese,
+  studyCardDoubleTapAction,
+} from './features/sessions/study/model.js';
+import {
   ArrowDown,
   ArrowUp,
   BookOpen,
@@ -156,8 +183,7 @@ import './styles.css';
 
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
 const DAILY_RECOGNITION_LIMIT = 50;
-const DAILY_RECOGNITION_MODE = 'daily-recognition';
-const DAILY_GRAMMAR_MODE = 'daily-grammar';
+const DAILY_RECOGNITION_MODE = PRACTICE_SESSION_KIND.DAILY_RECOGNITION;
 const DAILY_WRONG_REVIEW_MODE = 'daily-wrong-review';
 const CONTENT_SCHEMA_VERSION = 2;
 const FIRESTORE_SCHEMA_VERSION = 3;
@@ -2259,19 +2285,6 @@ function dueQuestions(store, questions, date = todayString()) {
   return questions.filter((question) => getProgress(store, question).nextDue <= date);
 }
 
-function orderReviewQuestions(questions) {
-  const kindRank = { term: 0, example: 1 };
-  return [...questions].sort((a, b) => {
-    const kindDiff = (kindRank[a.kind] ?? 99) - (kindRank[b.kind] ?? 99);
-    if (kindDiff) return kindDiff;
-    if (a.date !== b.date) return a.date.localeCompare(b.date);
-    const aIndex = a.source?.index ?? 0;
-    const bIndex = b.source?.index ?? 0;
-    if (aIndex !== bIndex) return aIndex - bIndex;
-    return a.id.localeCompare(b.id);
-  });
-}
-
 function reviewQuestions(questions) {
   return orderReviewQuestions(questions.filter((question) => question.kind === 'term' || question.kind === 'example'));
 }
@@ -2835,44 +2848,6 @@ function speakPracticeAnswer(question, useChinese = false, onError = () => {}) {
   synth.speak(utterance);
 }
 
-function shouldShowStudyChinese(hideChineseInitially, cardChineseRevealed) {
-  return !hideChineseInitially || cardChineseRevealed;
-}
-
-function studyCardDoubleTapAction(clientX, left, width) {
-  if (!Number.isFinite(clientX) || !Number.isFinite(left) || !Number.isFinite(width) || width <= 0) return '';
-  const position = (clientX - left) / width;
-  if (position < 1 / 3) return 'previous';
-  if (position > 2 / 3) return 'next';
-  return 'flip';
-}
-
-function buildStudyAutoPlaySpeechSequence(item, {
-  frontSide = 'ko',
-  hideChineseInitially = true,
-  playExampleVoice = true,
-  voiceRepeatCount = 1,
-} = {}) {
-  if (!item) return [];
-  const repeatCount = Math.min(3, Math.max(1, Number(voiceRepeatCount) || 1));
-  const includeChinese = !hideChineseInitially;
-  const cycle = [{
-    text: item.ko,
-    lang: 'ko-KR',
-    face: frontSide === 'ko' || hideChineseInitially ? 'front' : 'back',
-  }];
-  if (includeChinese && item.zh) {
-    cycle.push({ text: item.zh, lang: 'zh-TW', face: frontSide === 'zh' ? 'front' : 'back' });
-  }
-  if (playExampleVoice) {
-    wordExamples(item).forEach((example) => {
-      if (example.ko) cycle.push({ text: example.ko, lang: 'ko-KR', face: 'back' });
-      if (includeChinese && example.zh) cycle.push({ text: example.zh, lang: 'zh-TW', face: 'back' });
-    });
-  }
-  return Array.from({ length: repeatCount }, () => cycle).flat();
-}
-
 function playResultSound(correct) {
   const AudioContext = window.AudioContext || window.webkitAudioContext;
   if (!AudioContext) return;
@@ -2903,28 +2878,6 @@ function playResultSound(correct) {
   window.setTimeout(() => context.close(), 520);
 }
 
-function shuffleItems(items, seed) {
-  const result = [...items];
-  let value = seed || 1;
-  for (let i = result.length - 1; i > 0; i -= 1) {
-    value = (value * 9301 + 49297) % 233280;
-    const j = Math.floor((value / 233280) * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
-}
-
-function shuffleReviewQuestionsByKind(questions, seed = Date.now()) {
-  const terms = questions.filter((question) => question.kind === 'term');
-  const examples = questions.filter((question) => question.kind === 'example');
-  const others = questions.filter((question) => question.kind !== 'term' && question.kind !== 'example');
-  return [
-    ...shuffleItems(terms, seed),
-    ...shuffleItems(examples, seed + 17),
-    ...shuffleItems(others, seed + 31),
-  ];
-}
-
 function App() {
   const { loading: authLoading, user } = useAuthUser();
   const [store, updateStore, storeLoading, storeError, markDateComplete] = useFirestoreStore(user);
@@ -2933,7 +2886,11 @@ function App() {
   const [practiceSet, setPracticeSet] = useState(null);
   const grammarEnabled = page === 'home'
     || page === 'notes'
-    || (page === 'practice' && practiceSet?.mode === DAILY_GRAMMAR_MODE);
+    || (page === 'practice' && [
+      PRACTICE_SESSION_KIND.DAILY_GRAMMAR,
+      PRACTICE_SESSION_KIND.OPTIONAL_GRAMMAR,
+      PRACTICE_SESSION_KIND.GRAMMAR_EXAMPLES,
+    ].includes(practiceSet?.kind));
   const ytEnabled = page === 'ytSubtitles' || page === 'ytSubtitle';
   const readingEnabled = page === 'readingTests' || page === 'readingTest';
   const foldersEnabled = !['calendar', 'notes', 'ytSubtitles', 'readingTests'].includes(page);
@@ -3020,28 +2977,11 @@ function App() {
     setPageStack(pageStack.slice(0, -1));
   };
   const startPractice = (sourceQuestions, label, options = {}) => {
-    setPracticeSet({
-      questions: sourceQuestions,
-      label,
-      dueOnly: !!options.dueOnly,
-      dailyReview: !!options.dailyReview,
-      grammarOnly: !!options.grammarOnly,
-      repeatable: !!options.repeatable,
-      wrongReview: !!options.wrongReview,
-      allowAlphabeticalOrder: !!options.allowAlphabeticalOrder,
-      mode: options.mode || '',
-      grammarNote: options.grammarNote || null,
-      noteCategory: options.noteCategory || NOTE_CATEGORY_GRAMMAR,
-      onComplete: options.onComplete || null,
-      allowResultRecording: !!options.allowResultRecording,
-      optionalKind: options.optionalKind || '',
-      onOptionalAnswer: options.onOptionalAnswer || null,
-      direction: options.direction || 'ko-zh',
-    });
+    setPracticeSet(createPracticeSession(sourceQuestions, label, options));
     navChild('practice');
   };
   const startStudy = (sourceItems, label) => {
-    setStudySet({ items: sourceItems, label });
+    setStudySet(createStudySession(sourceItems, label));
     navChild('study');
   };
   const addLearningRecords = async (records, onProgress, folderIds = []) => {
@@ -3105,8 +3045,8 @@ function App() {
     home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} optionalPractice={optionalPractice} grammarNotes={grammar.notes} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} offlineMode={offlineMode} fontScale={fontScale} onFontScaleChange={setFontScale} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('dateNotes')} />,
     dateNotes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
-    study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} folders={folders.folders} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
-    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} allItems={items} folders={folders.folders} onUpdateRecord={updateLearningRecord} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
+    study: <StudyPage store={store} updateStore={updateStore} set={studySet || createStudySession(items, '全部內容')} allItems={items} folders={folders.folders} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
+    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || createDailyReviewSession(todayDailyQuestions)} allItems={items} folders={folders.folders} onUpdateRecord={updateLearningRecord} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
     notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     folders: <FoldersPage folders={folders.folders} items={items} loading={folders.loading} error={folders.error} onSave={folders.save} onDelete={folders.remove} onOpen={openFolder} />,
     folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
@@ -4691,6 +4631,22 @@ function ItemDetailModal({ item, allItems = [], onEdit, onDelete, onOpenItem, on
   );
 }
 
+function SessionWordEditDialog({ item, allItems, folders, onUpdateRecord, onClose }) {
+  if (!item || !onUpdateRecord) return null;
+  return (
+    <AddItemsModal
+      title="編輯單字"
+      date={item.date}
+      lockedDate
+      editItem={item}
+      allItems={allItems}
+      folders={folders}
+      onUpdateRecord={onUpdateRecord}
+      onClose={onClose}
+    />
+  );
+}
+
 function StudyPage({ store, updateStore, set, allItems = [], folders = [], onUpdateRecord, onBack, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onToggleLearned, onToggleUnfamiliar }) {
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
@@ -4708,13 +4664,12 @@ function StudyPage({ store, updateStore, set, allItems = [], folders = [], onUpd
   const [starredOnly, setStarredOnly] = useState(false);
   const [instantReset, setInstantReset] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
-  const [markedLearnedIds, setMarkedLearnedIds] = useState(() => new Set());
-  const [removedLearnedIds, setRemovedLearnedIds] = useState(() => new Set());
-  const [markedUnfamiliarIds, setMarkedUnfamiliarIds] = useState(() => new Set());
-  const [removedUnfamiliarIds, setRemovedUnfamiliarIds] = useState(() => new Set());
-  const [folderActionSaving, setFolderActionSaving] = useState('');
-  const [folderActionError, setFolderActionError] = useState('');
-  const wakeLockRef = useRef(null);
+  const classification = useWordClassification({
+    learnedWordIds,
+    unfamiliarWordIds,
+    onToggleLearned,
+    onToggleUnfamiliar,
+  });
   const flashcardWrapRef = useRef(null);
   const cardPointerRef = useRef({ start: null, lastTap: null });
   const ignoreTouchClickUntilRef = useRef(0);
@@ -4732,12 +4687,8 @@ function StudyPage({ store, updateStore, set, allItems = [], folders = [], onUpd
   const ordered = useMemo(() => (random ? shuffleItems(filtered, shuffleSeed) : filtered), [filtered, random, shuffleSeed]);
   const item = ordered[index % Math.max(ordered.length, 1)];
   const isStarred = !!item && (store.starred || []).includes(item.id);
-  const isLearned = !!item
-    && !removedLearnedIds.has(item.id)
-    && (folderWordIdsInclude(learnedWordIds, item.id) || markedLearnedIds.has(String(item.id)));
-  const isUnfamiliar = !!item
-    && !removedUnfamiliarIds.has(item.id)
-    && (folderWordIdsInclude(unfamiliarWordIds, item.id) || markedUnfamiliarIds.has(String(item.id)));
+  const isLearned = !!item && classification.isLearned(item.id);
+  const isUnfamiliar = !!item && classification.isUnfamiliar(item.id);
   const showChinese = shouldShowStudyChinese(hideChineseInitially, cardChineseRevealed);
   const frontShowsChinese = frontSide === 'zh' && showChinese;
   const frontText = frontShowsChinese ? item?.zh : item?.ko;
@@ -4752,14 +4703,7 @@ function StudyPage({ store, updateStore, set, allItems = [], folders = [], onUpd
     playExampleVoice,
     voiceRepeatCount,
   }), [item, frontSide, hideChineseInitially, playExampleVoice, voiceRepeatCount]);
-  useEffect(() => {
-    setMarkedLearnedIds((current) => new Set([...current].filter((id) => !learnedWordIds.has(id))));
-    setRemovedLearnedIds((current) => new Set([...current].filter((id) => learnedWordIds.has(id))));
-  }, [learnedWordIds]);
-  useEffect(() => {
-    setMarkedUnfamiliarIds((current) => new Set([...current].filter((id) => !unfamiliarWordIds.has(id))));
-    setRemovedUnfamiliarIds((current) => new Set([...current].filter((id) => unfamiliarWordIds.has(id))));
-  }, [unfamiliarWordIds]);
+  useSessionWakeLock(autoPlay);
   const toggleCard = () => {
     const next = !flipped;
     setFlipped(next);
@@ -4772,6 +4716,7 @@ function StudyPage({ store, updateStore, set, allItems = [], folders = [], onUpd
     }
     setFlipped(false);
     setCardChineseRevealed(false);
+    classification.clearErrors();
     setIndex(nextIndex);
   };
   const goPrev = () => {
@@ -4850,53 +4795,6 @@ function StudyPage({ store, updateStore, set, allItems = [], folders = [], onUpd
     setIndex(targetIndex);
     setFlipped(true);
   };
-  const markCurrentFolder = async (folderType) => {
-    if (!item || folderActionSaving) return;
-    setFolderActionSaving(folderType);
-    setFolderActionError('');
-    try {
-      if (folderType === 'learned') {
-        await onToggleLearned(item.id, isLearned);
-        if (isLearned) {
-          setMarkedLearnedIds((current) => {
-            const next = new Set(current);
-            next.delete(item.id);
-            return next;
-          });
-          setRemovedLearnedIds((current) => new Set(current).add(item.id));
-        } else {
-          setMarkedLearnedIds((current) => new Set(current).add(item.id));
-          setRemovedLearnedIds((current) => {
-            const next = new Set(current);
-            next.delete(item.id);
-            return next;
-          });
-        }
-      } else {
-        await onToggleUnfamiliar(item.id, isUnfamiliar);
-        if (isUnfamiliar) {
-          setMarkedUnfamiliarIds((current) => {
-            const next = new Set(current);
-            next.delete(item.id);
-            return next;
-          });
-          setRemovedUnfamiliarIds((current) => new Set(current).add(item.id));
-        } else {
-          setMarkedUnfamiliarIds((current) => new Set(current).add(item.id));
-          setRemovedUnfamiliarIds((current) => {
-            const next = new Set(current);
-            next.delete(item.id);
-            return next;
-          });
-        }
-      }
-    } catch (error) {
-      setFolderActionError(error.message || '加入資料夾失敗');
-    } finally {
-      setFolderActionSaving('');
-    }
-  };
-
   useLayoutEffect(() => {
     setFlipped(false);
     setCardChineseRevealed(false);
@@ -4912,49 +4810,6 @@ function StudyPage({ store, updateStore, set, allItems = [], folders = [], onUpd
     if (autoPlay || !playVoice || !item) return;
     speakText(frontText, frontLang);
   }, [autoPlay, playVoice, item?.id, frontSide]);
-
-  useEffect(() => {
-    let active = true;
-    const releaseWakeLock = async () => {
-      const wakeLock = wakeLockRef.current;
-      wakeLockRef.current = null;
-      if (wakeLock && !wakeLock.released) {
-        try {
-          await wakeLock.release();
-        } catch {
-          // The browser may already have released it after hiding the page.
-        }
-      }
-    };
-    const requestWakeLock = async () => {
-      if (!active || !autoPlay || document.visibilityState !== 'visible' || !navigator.wakeLock || wakeLockRef.current) return;
-      try {
-        const wakeLock = await navigator.wakeLock.request('screen');
-        if (!active || !autoPlay) {
-          await wakeLock.release();
-          return;
-        }
-        wakeLockRef.current = wakeLock;
-        wakeLock.addEventListener('release', () => {
-          if (wakeLockRef.current === wakeLock) wakeLockRef.current = null;
-        });
-      } catch {
-        // Unsupported devices keep their normal screen timeout behavior.
-      }
-    };
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') requestWakeLock();
-      else releaseWakeLock();
-    };
-
-    if (autoPlay) requestWakeLock();
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => {
-      active = false;
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      releaseWakeLock();
-    };
-  }, [autoPlay]);
 
   useEffect(() => {
     if (!autoPlay || !item) return undefined;
@@ -5067,7 +4922,7 @@ function StudyPage({ store, updateStore, set, allItems = [], folders = [], onUpd
         <button className={starredOnly ? 'selected-soft' : ''} onClick={() => setStarredOnly((current) => !current)}><Star size={16} /> 有星號</button>
         {onBack && <button className="study-back-button" onClick={onBack}><ChevronLeft size={18} /> 返回上一層</button>}
       </div>
-      {folderActionError && <div className="form-error study-folder-error">{folderActionError}</div>}
+      {(classification.errors.learned || classification.errors.unfamiliar) && <div className="form-error study-folder-error">{classification.errors.learned || classification.errors.unfamiliar}</div>}
       <div className="flashcard-wrap" ref={flashcardWrapRef}>
         <button className="card-arrow left" onClick={goPrev} aria-label="上一張"><ChevronLeft size={26} /></button>
         <div className={`flashcard ${flipped ? 'flipped' : ''} ${instantReset ? 'instant-reset' : ''}`} role="button" tabIndex={0}
@@ -5082,10 +4937,10 @@ function StudyPage({ store, updateStore, set, allItems = [], folders = [], onUpd
               compact
               isLearned={isLearned}
               isUnfamiliar={isUnfamiliar}
-              learnedSaving={folderActionSaving === 'learned'}
-              unfamiliarSaving={folderActionSaving === 'unfamiliar'}
-              onMarkLearned={() => markCurrentFolder('learned')}
-              onMarkUnfamiliar={() => markCurrentFolder('unfamiliar')}
+              learnedSaving={classification.saving === 'learned'}
+              unfamiliarSaving={classification.saving === 'unfamiliar'}
+              onMarkLearned={() => classification.toggleLearned(item.id)}
+              onMarkUnfamiliar={() => classification.toggleUnfamiliar(item.id)}
             />
           </div>
           <div className="flashcard-star">
@@ -5139,80 +4994,46 @@ function StudyPage({ store, updateStore, set, allItems = [], folders = [], onUpd
         </div>
         <button className="card-arrow right" onClick={goNext} aria-label="下一張"><ChevronRight size={26} /></button>
       </div>
-      {editingItem && (
-        <AddItemsModal
-          title="編輯單字"
-          date={editingItem.date}
-          lockedDate
-          editItem={editingItem}
-          allItems={allItems}
-          folders={folders}
-          onUpdateRecord={onUpdateRecord}
-          onClose={() => setEditingItem(null)}
-        />
-      )}
+      <SessionWordEditDialog
+        item={editingItem}
+        allItems={allItems}
+        folders={folders}
+        onUpdateRecord={onUpdateRecord}
+        onClose={() => setEditingItem(null)}
+      />
     </section>
   );
 }
 
-function shouldRecordPracticeResults(practiceSet) {
-  if (practiceSet?.optionalKind) return false;
-  return Boolean(
-    practiceSet?.dailyReview
-    || (practiceSet?.allowResultRecording && practiceSet?.recordResults),
-  );
-}
-
-function isSelfGradeAnswerMode(direction, answerMode = 'typing') {
-  return direction === 'ko-zh' || answerMode === 'self-grade';
-}
-
-function initialPracticeDirection(practiceSet = {}) {
-  return practiceSet.direction || 'ko-zh';
-}
-
-function practiceMistakeReviewQuestions(questions = [], wrongQuestionIds = []) {
-  const wrongIds = new Set(wrongQuestionIds);
-  const seen = new Set();
-  return questions.filter((question) => {
-    if (!wrongIds.has(question.id)) return false;
-    const reviewKey = question.kind === 'grammar-example'
-      ? `grammar:${question.id}`
-      : `word:${question.itemId || question.source?.id || question.id}`;
-    if (seen.has(reviewKey)) return false;
-    seen.add(reviewKey);
-    return true;
-  });
-}
-
-function shouldAutoPronouncePracticePrompt({ started, recognitionMode, grammarMode, activeDirection, autoPronounce, recognitionWordVisible, revealed, graded, question }) {
-  if (!started || !question || revealed || graded) return false;
-  if (recognitionMode || grammarMode) return !recognitionWordVisible;
-  return activeDirection === 'ko-zh' && autoPronounce;
-}
-
 function PracticePage({ store, updateStore, set, allItems = [], folders = [], onUpdateRecord, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onToggleLearned, onToggleUnfamiliar }) {
-  const optionalMode = Boolean(set.optionalKind);
-  const readingMode = set.optionalKind === 'reading';
+  const sessionView = practiceSessionView(set);
+  const {
+    optionalMode,
+    readingMode,
+    recognitionMode,
+    grammarMode,
+    grammarPracticeMode,
+    dailyWordMode,
+    wrongReviewMode,
+    configurableWordMode,
+    fixedSource,
+    canChooseResultRecording,
+    canRetryMistakes,
+    canRepeatSession,
+    startsImmediately,
+  } = sessionView;
   const [direction, setDirection] = useState(() => initialPracticeDirection(set));
   const [source, setSource] = useState('term');
   const [starredOnly, setStarredOnly] = useState(false);
   const [randomOrder, setRandomOrder] = useState(true);
   const [recordResults, setRecordResults] = useState(false);
-  const [answerMode, setAnswerMode] = useState(optionalMode ? 'self-grade' : 'typing');
-  const recognitionMode = set.mode === DAILY_RECOGNITION_MODE || set.optionalKind === 'listening';
-  const grammarMode = set.mode === DAILY_GRAMMAR_MODE || set.optionalKind === 'grammar';
-  const grammarPracticeMode = !!set.grammarOnly;
+  const [answerMode, setAnswerMode] = useState(set.policy?.answer === 'self-grade' ? 'self-grade' : 'typing');
   const practiceNoteMeta = noteCategoryMeta(set.noteCategory || NOTE_CATEGORY_GRAMMAR);
-  const dailyWordMode = Boolean(set.dailyReview && !recognitionMode && !grammarMode);
-  const configurableWordMode = Boolean(dailyWordMode || set.repeatable);
-  const fixedSource = set.termOnly || set.dueOnly || grammarPracticeMode;
-  const activeDirection = recognitionMode || grammarMode || readingMode ? 'ko-zh' : direction;
-  const shouldRecordResults = shouldRecordPracticeResults({ ...set, recordResults });
-  const canChooseResultRecording = Boolean(set.allowResultRecording && !set.dailyReview);
+  const activeDirection = activePracticeDirection(set, direction);
+  const shouldRecordResults = shouldRecordPracticeResults(set, recordResults);
   const selfGradeMode = isSelfGradeAnswerMode(activeDirection, answerMode);
   const [recognitionWordVisible, setRecognitionWordVisible] = useState(false);
-  const [started, setStarted] = useState(Boolean(set.dueOnly && !configurableWordMode));
+  const [started, setStarted] = useState(startsImmediately);
   const [questionQueue, setQuestionQueue] = useState([]);
   const [index, setIndex] = useState(0);
   const [input, setInput] = useState('');
@@ -5227,14 +5048,12 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
   const [mistakeRetryRound, setMistakeRetryRound] = useState(false);
   const [completionError, setCompletionError] = useState('');
   const [completionSaving, setCompletionSaving] = useState(false);
-  const [markedLearnedIds, setMarkedLearnedIds] = useState(() => new Set());
-  const [removedLearnedIds, setRemovedLearnedIds] = useState(() => new Set());
-  const [markedUnfamiliarIds, setMarkedUnfamiliarIds] = useState(() => new Set());
-  const [removedUnfamiliarIds, setRemovedUnfamiliarIds] = useState(() => new Set());
-  const [directLearnedSaving, setDirectLearnedSaving] = useState(false);
-  const [directLearnedError, setDirectLearnedError] = useState('');
-  const [directUnfamiliarSaving, setDirectUnfamiliarSaving] = useState(false);
-  const [directUnfamiliarError, setDirectUnfamiliarError] = useState('');
+  const classification = useWordClassification({
+    learnedWordIds,
+    unfamiliarWordIds,
+    onToggleLearned,
+    onToggleUnfamiliar,
+  });
   const completionStartedRef = useRef(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [autoPronounce, setAutoPronounce] = useState(!readingMode);
@@ -5254,19 +5073,12 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
     wrongQuestionIdsRef.current = next;
     setWrongQuestionIds([...next]);
   };
-  const sourceQuestions = useMemo(() => {
-    const starredSet = new Set(store.starred || []);
-    const applyStarFilter = (list) => (starredOnly ? list.filter((q) => starredSet.has(q.itemId)) : list);
-    if (optionalMode || recognitionMode || grammarMode) return set.questions;
-    if (grammarPracticeMode) return set.questions.filter((q) => q.kind === 'grammar-example');
-    if (set.allowAlphabeticalOrder) return [...set.questions].sort(compareQuestionsByKoreanAlphabet);
-    if (set.dueOnly) return orderReviewQuestions(set.questions);
-    if (direction === 'ko-zh') return applyStarFilter(set.questions.filter((q) => q.kind === 'term'));
-    const activeSource = set.termOnly ? 'term' : source;
-    const filtered = set.questions.filter((q) => activeSource === 'all' || q.kind === activeSource);
-    const orderedFiltered = activeSource === 'all' ? orderReviewQuestions(filtered) : filtered;
-    return applyStarFilter(orderedFiltered);
-  }, [set.questions, source, direction, set.termOnly, set.dueOnly, set.allowAlphabeticalOrder, optionalMode, recognitionMode, grammarMode, grammarPracticeMode, store, starredOnly]);
+  const sourceQuestions = useMemo(() => selectPracticeQuestions(set, {
+    direction,
+    source,
+    starredIds: store.starred || [],
+    starredOnly,
+  }), [set, source, direction, store.starred, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
   const currentAnswerItem = useMemo(() => {
@@ -5280,24 +5092,8 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
   ), [question, currentAnswerItem]);
   const useChineseAnswerSpeech = dailyWordMode && chinesePronunciation;
   const canClassifyCurrentWord = Boolean(question && !grammarMode && !grammarPracticeMode && question.kind !== 'grammar-example');
-  const isCurrentWordLearned = Boolean(
-    question
-    && !removedLearnedIds.has(question.itemId)
-    && (folderWordIdsInclude(learnedWordIds, question.itemId) || markedLearnedIds.has(String(question.itemId)))
-  );
-  const isCurrentWordUnfamiliar = Boolean(
-    question
-    && !removedUnfamiliarIds.has(question.itemId)
-    && (folderWordIdsInclude(unfamiliarWordIds, question.itemId) || markedUnfamiliarIds.has(String(question.itemId)))
-  );
-  useEffect(() => {
-    setMarkedLearnedIds((current) => new Set([...current].filter((id) => !learnedWordIds.has(id))));
-    setRemovedLearnedIds((current) => new Set([...current].filter((id) => learnedWordIds.has(id))));
-  }, [learnedWordIds]);
-  useEffect(() => {
-    setMarkedUnfamiliarIds((current) => new Set([...current].filter((id) => !unfamiliarWordIds.has(id))));
-    setRemovedUnfamiliarIds((current) => new Set([...current].filter((id) => unfamiliarWordIds.has(id))));
-  }, [unfamiliarWordIds]);
+  const isCurrentWordLearned = Boolean(question && classification.isLearned(question.itemId));
+  const isCurrentWordUnfamiliar = Boolean(question && classification.isUnfamiliar(question.itemId));
   const resetSession = () => {
     clearSessionMistakes();
     setSessionFinished(false);
@@ -5311,21 +5107,14 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
-    setDirectLearnedError('');
-    setDirectUnfamiliarError('');
+    classification.clearErrors();
     setRecognitionWordVisible(false);
     setCompletionError('');
     setCompletionSaving(false);
     completionStartedRef.current = false;
   };
   const startSession = () => {
-    const orderedQuestions = recognitionMode || grammarMode
-      ? sourceQuestions
-      : set.allowAlphabeticalOrder ? sourceQuestions
-        : set.dueOnly ? shuffleReviewQuestionsByKind(sourceQuestions) : sourceQuestions;
-    const nextQuestions = (set.allowAlphabeticalOrder || !set.dueOnly) && randomOrder
-      ? shuffleItems(orderedQuestions, Date.now())
-      : orderedQuestions;
+    const nextQuestions = buildPracticeQueue(set, sourceQuestions, { randomOrder, seed: Date.now() });
     if (!nextQuestions.length) {
       resetSession();
       return;
@@ -5342,8 +5131,7 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
     setGraded(false);
     setLastCorrect(null);
     setTypedAttempts(0);
-    setDirectLearnedError('');
-    setDirectUnfamiliarError('');
+    classification.clearErrors();
     setRecognitionWordVisible(false);
   };
   const startMistakeRetry = (mistakeQuestions) => {
@@ -5368,9 +5156,9 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
   };
 
   useEffect(() => {
-    if (!set.dueOnly || configurableWordMode) return;
+    if (!startsImmediately) return;
     if (questionQueue.length) return;
-    const nextQuestions = optionalMode || recognitionMode || grammarMode ? sourceQuestions : shuffleReviewQuestionsByKind(sourceQuestions);
+    const nextQuestions = buildPracticeQueue(set, sourceQuestions, { randomOrder, seed: Date.now() });
     setQuestionQueue(nextQuestions);
     clearSessionMistakes();
     setStarted(!!nextQuestions.length);
@@ -5382,7 +5170,7 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
     setLastCorrect(null);
     setTypedAttempts(0);
     setRecognitionWordVisible(false);
-  }, [set.dueOnly, configurableWordMode, optionalMode, recognitionMode, grammarMode, sourceQuestions, questionQueue.length]);
+  }, [set, startsImmediately, sourceQuestions, questionQueue.length, randomOrder]);
 
   useEffect(() => {
     if (!shouldAutoPronouncePracticePrompt({
@@ -5417,65 +5205,8 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
       })
       .finally(() => setCompletionSaving(false));
   };
-  const markCurrentWordAsLearned = async () => {
-    if (!question || directLearnedSaving) return;
-    setDirectLearnedSaving(true);
-    setDirectLearnedError('');
-    try {
-      await onToggleLearned(question.itemId, isCurrentWordLearned);
-      if (isCurrentWordLearned) {
-        setMarkedLearnedIds((current) => {
-          const next = new Set(current);
-          next.delete(question.itemId);
-          return next;
-        });
-        setRemovedLearnedIds((current) => new Set(current).add(question.itemId));
-      } else {
-        setMarkedLearnedIds((current) => new Set(current).add(question.itemId));
-        setRemovedLearnedIds((current) => {
-          const next = new Set(current);
-          next.delete(question.itemId);
-          return next;
-        });
-      }
-    } catch (error) {
-      setDirectLearnedError(error.message || '更新已學習資料夾失敗');
-    } finally {
-      setDirectLearnedSaving(false);
-    }
-  };
-  const persistCurrentWordAsUnfamiliar = async () => {
-    if (!question) return false;
-    await onToggleUnfamiliar(question.itemId, isCurrentWordUnfamiliar);
-    if (isCurrentWordUnfamiliar) {
-      setMarkedUnfamiliarIds((current) => {
-        const next = new Set(current);
-        next.delete(question.itemId);
-        return next;
-      });
-      setRemovedUnfamiliarIds((current) => new Set(current).add(question.itemId));
-    } else {
-      setMarkedUnfamiliarIds((current) => new Set(current).add(question.itemId));
-      setRemovedUnfamiliarIds((current) => {
-        const next = new Set(current);
-        next.delete(question.itemId);
-        return next;
-      });
-    }
-    return true;
-  };
-  const markCurrentWordAsUnfamiliar = async () => {
-    if (directUnfamiliarSaving) return;
-    setDirectUnfamiliarSaving(true);
-    setDirectUnfamiliarError('');
-    try {
-      await persistCurrentWordAsUnfamiliar();
-    } catch (error) {
-      setDirectUnfamiliarError(error.message || '更新不熟悉資料夾失敗');
-    } finally {
-      setDirectUnfamiliarSaving(false);
-    }
-  };
+  const markCurrentWordAsLearned = () => question && classification.toggleLearned(question.itemId);
+  const markCurrentWordAsUnfamiliar = () => question && classification.toggleUnfamiliar(question.itemId);
   const goNext = () => {
     setInput('');
     setResult(null);
@@ -5484,14 +5215,12 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
     setLastCorrect(null);
     setTypedAttempts(0);
     setRecognitionWordVisible(false);
-    setDirectLearnedError('');
-    setDirectUnfamiliarError('');
+    classification.clearErrors();
     let nextIndex = index + 1;
     if (optionalMode && !grammarMode) {
       while (nextIndex < queue.length) {
         const itemId = queue[nextIndex].itemId;
-        const learned = (learnedWordIds.has(itemId) || markedLearnedIds.has(itemId)) && !removedLearnedIds.has(itemId);
-        if (!learned) break;
+        if (!classification.isLearned(itemId)) break;
         nextIndex += 1;
       }
     }
@@ -5501,23 +5230,8 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
   // Self-directed tests never alter long-term accuracy. Daily listening rounds
   // still update their dedicated rotation state in the recognition branch.
   const submit = async (correct) => {
-    if (set.wrongReview) {
-      updateStore((current) => recordDailyWrongReviewAnswer(current, question, correct));
-      rememberSessionResult(question, correct);
-      if (soundEnabled) playResultSound(correct);
-      goNext();
-      return;
-    }
-    if (mistakeRetryRound) {
-      if (shouldRecordResults) {
-        updateStore((current) => recordDailyReviewAnswer(current, question, correct, activeDirection));
-      }
-      rememberSessionResult(question, correct);
-      if (soundEnabled) playResultSound(correct);
-      goNext();
-      return;
-    }
-    if (optionalMode) {
+    const effect = practiceResultEffect(set, { mistakeRetryRound, recordResults });
+    if (effect === 'optional-pool') {
       if (optionalSavingRef.current) return;
       optionalSavingRef.current = true;
       setOptionalSaving(true);
@@ -5530,10 +5244,14 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
       finally { optionalSavingRef.current = false; setOptionalSaving(false); }
       return;
     }
-    if (recognitionMode) {
+    if (effect === 'daily-wrong-review') {
+      updateStore((current) => recordDailyWrongReviewAnswer(current, question, correct));
+    } else if (effect === 'recognition-round') {
       updateStore((current) => recordDailyRecognitionAnswer(current, question, correct));
-    } else if (shouldRecordResults) {
+    } else if (effect === 'daily-review') {
       updateStore((current) => recordDailyReviewAnswer(current, question, correct, activeDirection));
+    } else if (effect === 'record-answer') {
+      updateStore((current) => recordAnswer(current, question, correct));
     }
     rememberSessionResult(question, correct);
     if (soundEnabled) playResultSound(correct);
@@ -5543,9 +5261,10 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
   // away (no manual 答對/答錯 choice) but keeps the question on screen so the
   // outcome is visible until the user presses Enter for the next one.
   const finalizeTypedGrade = (correct) => {
-    if (set.wrongReview) {
+    const effect = practiceResultEffect(set, { mistakeRetryRound, recordResults, typed: true });
+    if (effect === 'daily-wrong-review') {
       updateStore((current) => recordDailyWrongReviewAnswer(current, question, correct));
-    } else if (shouldRecordResults) {
+    } else if (effect === 'record-answer' || effect === 'daily-review') {
       updateStore((current) => recordAnswer(current, question, correct));
     }
     rememberSessionResult(question, correct);
@@ -5632,7 +5351,7 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [started, revealed, graded, question, index, queue.length, recognitionMode, grammarMode, recognitionWordVisible, useChineseAnswerSpeech, editingItem]);
 
-  if (!started && (!set.dueOnly || configurableWordMode)) {
+  if (!started && configurableWordMode) {
     return (
       <section className="page practice-start">
         <div className="panel start-panel">
@@ -5662,7 +5381,7 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
             <button className={starredOnly ? 'active' : ''} onClick={() => setStarredOnly(true)}><Star size={16} /> 有星號</button>
           </div>}
           {!dailyWordMode && <div className="segmented compact">
-            <button className={!randomOrder ? 'active' : ''} onClick={() => setRandomOrder(false)}>{set.allowAlphabeticalOrder ? '韓文字母順序' : '依原順序'}</button>
+            <button className={!randomOrder ? 'active' : ''} onClick={() => setRandomOrder(false)}>{set.policy.order === 'alphabetical-option' ? '韓文字母順序' : '依原順序'}</button>
             <button className={randomOrder ? 'active' : ''} onClick={() => setRandomOrder(true)}><Shuffle size={16} /> 隨機順序</button>
           </div>}
           {canChooseResultRecording && <div className="segmented compact">
@@ -5701,11 +5420,11 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
           <p>這一組的 {questionQueue.length} 題已全部作答。</p>
           <PracticeMistakeReview
             questions={mistakeQuestions}
-            onRetry={!set.dailyReview && mistakeQuestions.length
+            onRetry={canRetryMistakes && mistakeQuestions.length
               ? () => startMistakeRetry(mistakeQuestions)
               : null}
           />
-          {set.repeatable && !set.wrongReview && (
+          {canRepeatSession && !wrongReviewMode && (
             <button className="primary wide" onClick={startSession}><RotateCcw size={18} /> 再練一次</button>
           )}
           {completionSaving && <p>正在儲存今日文法進度...</p>}
@@ -5804,13 +5523,13 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
                       compact
                       isLearned={isCurrentWordLearned}
                       isUnfamiliar={isCurrentWordUnfamiliar}
-                      learnedSaving={directLearnedSaving}
-                      unfamiliarSaving={directUnfamiliarSaving}
+                      learnedSaving={classification.saving === 'learned'}
+                      unfamiliarSaving={classification.saving === 'unfamiliar'}
                       onMarkLearned={markCurrentWordAsLearned}
                       onMarkUnfamiliar={markCurrentWordAsUnfamiliar}
                     />
-                    {directLearnedError && <small className="form-error">{directLearnedError}</small>}
-                    {directUnfamiliarError && <small className="form-error">{directUnfamiliarError}</small>}
+                    {classification.errors.learned && <small className="form-error">{classification.errors.learned}</small>}
+                    {classification.errors.unfamiliar && <small className="form-error">{classification.errors.unfamiliar}</small>}
                   </div>
                 )}
               </div>
@@ -5845,10 +5564,10 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
                   canClassify={canClassifyCurrentWord}
                   isLearned={isCurrentWordLearned}
                   isUnfamiliar={isCurrentWordUnfamiliar}
-                  learnedSaving={directLearnedSaving}
-                  unfamiliarSaving={directUnfamiliarSaving}
-                  learnedError={directLearnedError}
-                  unfamiliarError={directUnfamiliarError}
+                  learnedSaving={classification.saving === 'learned'}
+                  unfamiliarSaving={classification.saving === 'unfamiliar'}
+                  learnedError={classification.errors.learned}
+                  unfamiliarError={classification.errors.unfamiliar}
                   onToggleLearned={markCurrentWordAsLearned}
                   onToggleUnfamiliar={markCurrentWordAsUnfamiliar}
                   onCorrect={() => submit(true)}
@@ -5869,18 +5588,13 @@ function PracticePage({ store, updateStore, set, allItems = [], folders = [], on
         />
       </div>
     </section>
-    {editingItem && (
-      <AddItemsModal
-        title="編輯單字"
-        date={editingItem.date}
-        lockedDate
-        editItem={editingItem}
-        allItems={allItems}
-        folders={folders}
-        onUpdateRecord={onUpdateRecord}
-        onClose={() => setEditingItem(null)}
-      />
-    )}
+    <SessionWordEditDialog
+      item={editingItem}
+      allItems={allItems}
+      folders={folders}
+      onUpdateRecord={onUpdateRecord}
+      onClose={() => setEditingItem(null)}
+    />
     </>
   );
 }
