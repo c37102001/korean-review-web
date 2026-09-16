@@ -452,7 +452,6 @@ main {
 
 .stat,
 .panel,
-.note-card,
 .word-card {
   background: rgba(255, 255, 255, 0.84);
   border: 1px solid rgba(255, 255, 255, 0.9);
@@ -599,8 +598,7 @@ main {
 }
 
 .task-card p,
-.word-card p,
-.note-card p {
+.word-card p {
   margin-bottom: 0;
   color: #59656e;
 }
@@ -831,7 +829,6 @@ main {
   background: linear-gradient(135deg, #7479d9, #37b9a5);
 }
 
-.notes-grid,
 .word-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2760,12 +2757,10 @@ main {
   padding-left: 16px;
 }
 
-.note-card,
 .word-card {
   padding: 20px;
 }
 
-.note-card h3,
 .word-card h3 {
   font-size: calc(28.6px * var(--user-font-scale, 1));
   line-height: 1.15;
@@ -2803,32 +2798,12 @@ main {
   box-shadow: 0 18px 42px rgba(58, 73, 84, 0.14);
 }
 
-.compact-card {
-  min-height: 168px;
-}
-
-.compact-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 14px;
-}
-
-.compact-meta span {
-  padding: 5px 8px;
-  border-radius: 999px;
-  color: #5d6b73;
-  background: #f2f5f5;
-  font-size: calc(14.3px * var(--user-font-scale, 1));
-  font-weight: 800;
-}
-
 .detail-panel {
   width: min(820px, 100%);
   overflow: visible;
 }
 
-.detail-panel .note-card {
+.detail-panel .word-detail-card {
   box-shadow: none;
   border: 0;
   background: transparent;
@@ -2845,7 +2820,7 @@ main {
   color: #33434b !important;
 }
 
-.detail-panel .note-card h3 {
+.detail-panel .word-detail-card h3 {
   font-size: calc(41.8px * var(--user-font-scale, 1));
 }
 
@@ -3801,7 +3776,7 @@ main {
   font-weight: 800;
 }
 
-.practice-answer-panel .note-card {
+.practice-answer-panel .word-detail-card {
   padding: 0;
   border: 0;
   box-shadow: none;
@@ -5674,7 +5649,6 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 
-  .notes-grid,
   .word-grid,
   .folder-grid,
   .grammar-grid,
@@ -6148,11 +6122,11 @@ textarea:focus {
     margin-bottom: 10px;
   }
 
-  .practice-answer-panel .note-card h3 {
+  .practice-answer-panel .word-detail-card h3 {
     font-size: calc(24.2px * var(--user-font-scale, 1));
   }
 
-  .practice-answer-panel .note-card {
+  .practice-answer-panel .word-detail-card {
     font-size: calc(15.4px * var(--user-font-scale, 1));
   }
 
@@ -6440,7 +6414,7 @@ textarea:focus {
     border-radius: 20px;
   }
 
-  .detail-panel .note-card {
+  .detail-panel .word-detail-card {
     min-width: 0;
     padding-top: 0;
   }

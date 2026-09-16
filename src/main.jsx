@@ -1,9 +1,12 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { useOptionalPractice } from './practice/optionalPractice.js';
+import { EditIconButton, KoreanSpeakButton, StarButton } from './components/actions/ContentActionButtons.jsx';
+import {
+  WordCard,
+  WordDetailCard,
+  WordDetails,
+} from './features/word-library/components/WordPresentation.jsx';
 import {
   ArrowDown,
   ArrowUp,
@@ -130,7 +133,7 @@ import {
   YT_SUBTITLE_MODE_JSON,
   YT_SUBTITLE_MODE_SRT,
 } from './subtitles/model.js';
-import { recordOrder, sortRecords } from './words/records.js';
+import { recordOrder, sortRecords, wordChineseSummary, wordExamples } from './words/records.js';
 import './styles.css';
 
 const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 90];
@@ -150,7 +153,6 @@ const SPEECH_SAMPLE_TEXT = {
   ko: '오늘도 즐겁게 한국어를 공부해요.',
   zh: '今天也一起開心地學習韓文。',
 };
-const MARKDOWN_PLUGINS = [remarkGfm];
 
 let youtubeIframeApiPromise = null;
 
@@ -1445,19 +1447,6 @@ function normalizeRecordSet(records) {
   }));
 }
 
-function itemZh(item) {
-  return (item.meanings || []).map((meaning) => meaning.zh).filter(Boolean).join('；');
-}
-
-function itemExamples(item) {
-  return (item.meanings || []).flatMap((meaning) => meaning.examples || []);
-}
-
-function displayRelated(item, allItems = []) {
-  const byId = new Map(allItems.map((entry) => [entry.id, entry]));
-  return (item.related || []).map((id) => byId.get(id)).filter(Boolean);
-}
-
 function normalizeRecords(records) {
   const normalizedRecords = normalizeRecordSet(records);
   const items = normalizedRecords.map((record, index) => ({
@@ -1468,7 +1457,7 @@ function normalizeRecords(records) {
     updatedAt: record.updatedAt,
     order: recordOrder(record),
     index,
-    zh: itemZh(record.item),
+    zh: wordChineseSummary(record.item),
   }));
 
   const questions = [];
@@ -2826,10 +2815,6 @@ function compareAnswer(input, answer) {
   };
 }
 
-function MasteryBadge({ level }) {
-  return <span className={`badge mastery-${level}`}>{level}</span>;
-}
-
 function normalizeSpeechLanguage(lang) {
   return String(lang || '').replaceAll('_', '-').toLowerCase();
 }
@@ -2966,7 +2951,7 @@ function buildStudyAutoPlaySpeechSequence(item, {
     cycle.push({ text: item.zh, lang: 'zh-TW', face: frontSide === 'zh' ? 'front' : 'back' });
   }
   if (playExampleVoice) {
-    itemExamples(item).forEach((example) => {
+    wordExamples(item).forEach((example) => {
       if (example.ko) cycle.push({ text: example.ko, lang: 'ko-KR', face: 'back' });
       if (includeChinese && example.zh) cycle.push({ text: example.zh, lang: 'zh-TW', face: 'back' });
     });
@@ -3812,9 +3797,17 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, folde
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectedFolderIds, setSelectedFolderIds] = useState([]);
   const starredSet = new Set(store.starred || []);
+  const itemQuestionIds = useMemo(
+    () => new Map(items.map((item) => [item.id, questions.filter((question) => question.itemId === item.id).map((question) => question.id)])),
+    [items, questions],
+  );
+  const enrichedItems = useMemo(() => items.map((item) => ({
+    ...item,
+    ...aggregateItemStats(store, itemQuestionIds.get(item.id) || [item.id]),
+  })), [items, itemQuestionIds, store]);
   const filteredItems = useMemo(
-    () => filterItemsByFolderSelection(items, folders, selectedFolderIds),
-    [items, folders, selectedFolderIds],
+    () => filterItemsByFolderSelection(enrichedItems, folders, selectedFolderIds),
+    [enrichedItems, folders, selectedFolderIds],
   );
   const filteredItemIds = useMemo(() => new Set(filteredItems.map((item) => item.id)), [filteredItems]);
   const filteredQuestions = questions.filter((question) => filteredItemIds.has(question.itemId));
@@ -3941,16 +3934,15 @@ function NotesPage({ store, updateStore, items, questions, date, allItems, folde
         onCreateFolderAndAssign={onCreateFolderAndAssign}
         onDeleteRecords={onDeleteRecords}
       />
-      {filteredItems.length ? <div className="notes-grid">{filteredItems.map((item) => (
-        <NoteCard
+      {filteredItems.length ? <div className="word-grid">{filteredItems.map((item) => (
+        <WordCard
           key={item.id}
-          item={item}
-          allItems={allItems}
+          word={item}
           folders={folders}
-          compact
           onOpen={setViewingItem}
           onEdit={setEditingItem}
           onDelete={onDeleteRecord}
+          onSpeak={speakText}
           isStarred={starredSet.has(item.id)}
           onToggleStar={() => toggleStarredItem(updateStore, item.id)}
           selectable
@@ -4624,7 +4616,7 @@ function ImportCompareCard({ label, item }) {
       <span>{label}</span>
       <strong>{item.ko}</strong>
       {item.pos && <small>{item.pos}</small>}
-      <p>{itemZh(item)}</p>
+      <p>{wordChineseSummary(item)}</p>
       {!!item.meanings?.length && (
         <div className="import-meaning-list">
           {item.meanings.map((meaning, index) => (
@@ -5011,40 +5003,6 @@ function GroupedFolderMultiSelect({ folders, selectedValues, onToggle, onToggleG
   );
 }
 
-function EditIconButton({ onClick, label = '編輯' }) {
-  return (
-    <button
-      className="edit-icon-button"
-      onClick={(event) => {
-        event.stopPropagation();
-        onClick();
-      }}
-      aria-label={label}
-      title={label}
-    >
-      <Pencil size={15} />
-    </button>
-  );
-}
-
-function DeleteIconButton({ item, onDelete, label = '刪除', confirmMessage }) {
-  if (!onDelete) return null;
-  return (
-    <button
-      className="edit-icon-button delete-icon-button"
-      onClick={async (event) => {
-        event.stopPropagation();
-        if (!window.confirm(confirmMessage || `確定要刪除「${item.ko}」嗎？`)) return;
-        await onDelete(item.id);
-      }}
-      aria-label={label}
-      title={label}
-    >
-      <Trash2 size={15} />
-    </button>
-  );
-}
-
 function ItemDetailModal({ item, allItems = [], onEdit, onDelete, onOpenItem, onClose, isStarred = false, onToggleStar }) {
   const deleteAndClose = onDelete
     ? async (itemId) => {
@@ -5067,250 +5025,17 @@ function ItemDetailModal({ item, allItems = [], onEdit, onDelete, onOpenItem, on
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <div className="modal-panel detail-panel">
         <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
-        <NoteCard item={item} allItems={allItems} onEdit={onEdit} onDelete={deleteAndClose} onOpenItem={onOpenItem} isStarred={isStarred} onToggleStar={onToggleStar} />
+        <WordDetailCard
+          word={item}
+          allWords={allItems}
+          onSpeak={speakText}
+          onEdit={onEdit}
+          onDelete={deleteAndClose}
+          onOpenWord={onOpenItem}
+          isStarred={isStarred}
+          onToggleStar={onToggleStar}
+        />
       </div>
-    </div>
-  );
-}
-
-function StarButton({ active, onClick }) {
-  if (!onClick) return null;
-  return (
-    <button
-      type="button"
-      className={`star-button ${active ? 'active' : ''}`}
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onClick();
-      }}
-      aria-label={active ? '取消星號' : '打星號'}
-      title={active ? '取消星號' : '打星號'}
-    >
-      <Star size={17} />
-    </button>
-  );
-}
-
-function KoreanSpeakButton({ text, label = '播放韓文發音' }) {
-  if (!text) return null;
-  return (
-    <button
-      type="button"
-      className="speak-icon-button"
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        speakText(text, 'ko-KR');
-      }}
-      aria-label={label}
-      title={label}
-    >
-      <Volume2 size={15} />
-    </button>
-  );
-}
-
-function NoteCard({ item, allItems = [], folders = [], onEdit, onDelete, deleteLabel, deleteConfirmMessage, compact = false, onOpen, onOpenItem, isStarred = false, onToggleStar, selectable = false, selected = false, onToggleSelected }) {
-  const examplesCount = itemExamples(item).length;
-  const relatedItems = displayRelated(item, allItems);
-  return (
-    <article className={`note-card ${compact ? 'compact-card clickable-card' : ''} ${selected ? 'selected-word-card' : ''}`} onClick={compact ? () => onOpen(item) : undefined}>
-      <div className="card-head">
-        <h3 className="speakable-heading"><span>{item.ko}</span><KoreanSpeakButton text={item.ko} /></h3>
-        <div className="card-actions">
-          {selectable && <label className="word-select-control" title="選取單字" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected} onChange={() => onToggleSelected(item.id)} /><span className="sr-only">選取 {item.ko}</span></label>}
-          <StarButton active={isStarred} onClick={onToggleStar} />
-          {onEdit && <EditIconButton onClick={() => onEdit(item)} />}
-          <DeleteIconButton item={item} onDelete={onDelete} label={deleteLabel} confirmMessage={deleteConfirmMessage} />
-          {item.pos && <span className="badge">{item.pos}</span>}
-        </div>
-      </div>
-      <p className="zh">{item.zh}</p>
-      {compact && (
-        <>
-          <div className="compact-meta">
-            <span>{item.date}</span>
-            {!!examplesCount && <span>{examplesCount} 個例句</span>}
-            {!!item.notes?.length && <span>{item.notes.length} 則筆記</span>}
-          </div>
-          <WordFolderTags itemId={item.id} folders={folders} />
-        </>
-      )}
-      {!compact && <>
-      <CardRichDetails item={item} relatedItems={relatedItems} onOpenItem={onOpenItem} />
-      </>}
-    </article>
-  );
-}
-
-function CardRichDetails({ item, relatedItems = [], onOpenItem, showChinese = true }) {
-  const visibleMeanings = showChinese
-    ? item.meanings || []
-    : (item.meanings || []).filter((meaning) => (meaning.examples || []).some((example) => example.ko));
-  return (
-    <div className="rich-details">
-      {!!visibleMeanings.length && (
-        <section className="detail-section meanings-section">
-          <div className="detail-section-title"><span>{showChinese ? '意思' : '例句'}</span><small>{visibleMeanings.length} 組</small></div>
-          <div className="meaning-list">
-            {visibleMeanings.map((meaning, index) => (
-              <article key={meaning.id} className="meaning-block">
-                <div className="meaning-head">
-                  <span>{index + 1}</span>
-                  {showChinese && <strong>{meaning.zh}</strong>}
-                </div>
-                {showChinese && meaning.pattern && <div className="meaning-pattern">{meaning.pattern}</div>}
-                {!!meaning.examples?.length && (
-                  <div className="example-list">
-                    {meaning.examples.map((ex) => (
-                      <div key={ex.id || ex.ko} className="example-row">
-                        <p className="example-ko"><span>{ex.ko}</span><KoreanSpeakButton text={ex.ko} /></p>
-                        {showChinese && <p className="example-zh">{ex.zh}</p>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-      {showChinese && !!item.notes?.length && (
-        <section className="detail-section note-section">
-          <div className="detail-section-title"><span>筆記</span></div>
-          <MarkdownContent value={item.notes} className="note-markdown" />
-        </section>
-      )}
-      {showChinese && !!relatedItems.length && (
-        <section className="detail-section related-section">
-          <div className="detail-section-title"><span>相關詞</span></div>
-          <div className="tags rich-tags">
-            {relatedItems.map((entry) => <RelatedWordTag key={entry.id} item={entry} onOpenItem={onOpenItem} />)}
-          </div>
-        </section>
-      )}
-    </div>
-  );
-}
-
-function MarkdownContent({ value, className = '' }) {
-  const markdown = (Array.isArray(value) ? value : [value])
-    .map((entry) => String(entry || '').trim())
-    .filter(Boolean)
-    .join('\n\n');
-  if (!markdown) return null;
-  return (
-    <div className={`markdown-content ${className}`.trim()}>
-      <ReactMarkdown
-        remarkPlugins={MARKDOWN_PLUGINS}
-        components={{
-          a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
-        }}
-      >{markdown}</ReactMarkdown>
-    </div>
-  );
-}
-
-function RelatedWordTag({ item, onOpenItem }) {
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewPosition, setPreviewPosition] = useState(null);
-  const wrapRef = useRef(null);
-  const touchPreviewRef = useRef(false);
-  const label = `${item.ko}${item.zh ? ` · ${item.zh}` : ''}`;
-  const Tag = onOpenItem ? 'button' : 'span';
-  const updatePreviewPosition = () => {
-    if (!wrapRef.current || window.matchMedia('(max-width: 920px)').matches) {
-      setPreviewPosition(null);
-      return;
-    }
-    const rect = wrapRef.current.getBoundingClientRect();
-    const cardWidth = Math.min(360, window.innerWidth - 32);
-    const edgePadding = 18;
-    const left = Math.min(
-      Math.max(rect.left + rect.width / 2, cardWidth / 2 + edgePadding),
-      window.innerWidth - cardWidth / 2 - edgePadding,
-    );
-    const placeAbove = rect.top > 300;
-    setPreviewPosition({
-      left,
-      top: placeAbove ? rect.top - 12 : rect.bottom + 12,
-      transform: placeAbove ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
-      placement: placeAbove ? 'top' : 'bottom',
-    });
-  };
-  const openPreview = () => {
-    updatePreviewPosition();
-    setPreviewOpen(true);
-  };
-
-  useEffect(() => {
-    if (!previewOpen) return undefined;
-    const reposition = () => updatePreviewPosition();
-    window.addEventListener('resize', reposition);
-    window.addEventListener('scroll', reposition, true);
-    return () => {
-      window.removeEventListener('resize', reposition);
-      window.removeEventListener('scroll', reposition, true);
-    };
-  }, [previewOpen]);
-
-  return (
-    <span
-      ref={wrapRef}
-      className="related-tag-wrap"
-      onMouseEnter={openPreview}
-      onMouseLeave={() => setPreviewOpen(false)}
-      onTouchStart={(event) => {
-        event.preventDefault();
-        touchPreviewRef.current = true;
-        openPreview();
-      }}
-      onTouchEnd={() => {
-        setPreviewOpen(false);
-        setTimeout(() => {
-          touchPreviewRef.current = false;
-        }, 250);
-      }}
-      onTouchCancel={() => {
-        setPreviewOpen(false);
-        touchPreviewRef.current = false;
-      }}
-    >
-      <Tag
-        type={onOpenItem ? 'button' : undefined}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (touchPreviewRef.current) return;
-          onOpenItem?.(item);
-        }}
-      >
-        {label}
-      </Tag>
-      {previewOpen && createPortal(<RelatedPreviewCard item={item} position={previewPosition} />, document.body)}
-    </span>
-  );
-}
-
-function RelatedPreviewCard({ item, position }) {
-  const firstExamples = itemExamples(item).slice(0, 2);
-  const style = position ? { left: position.left, top: position.top, transform: position.transform } : undefined;
-  return (
-    <div className="related-preview-card" style={style} data-placement={position?.placement || 'mobile'} role="tooltip">
-      <div className="preview-head">
-        <strong>{item.ko}</strong>
-        {item.pos && <span>{item.pos}</span>}
-      </div>
-      <p className="preview-zh">{item.zh}</p>
-      {!!item.notes?.length && <MarkdownContent value={item.notes} className="preview-note" />}
-      {!!firstExamples.length && (
-        <div className="preview-examples">
-          {firstExamples.map((example) => (
-            <p key={example.id || example.ko}>{example.ko}<br /><span>{example.zh}</span></p>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -5748,7 +5473,16 @@ function StudyPage({ store, updateStore, set, allItems = [], folders = [], onUpd
                   )}
                 </div>
               </div>
-              <StudyDetails item={item} allItems={currentItems} onOpenItem={jumpToItem} showChinese={showChinese} />
+              <div className="study-details">
+                <WordDetails
+                  word={item}
+                  allWords={currentItems}
+                  onOpenWord={jumpToItem}
+                  onSpeak={speakText}
+                  showChinese={showChinese}
+                  emptyMessage="這張卡片沒有韓文例句。"
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -5767,19 +5501,6 @@ function StudyPage({ store, updateStore, set, allItems = [], folders = [], onUpd
         />
       )}
     </section>
-  );
-}
-
-function StudyDetails({ item, allItems, onOpenItem, showChinese }) {
-  const relatedItems = displayRelated(item, allItems);
-  const hasDetails = showChinese
-    ? item.meanings?.length || item.notes?.length || relatedItems.length
-    : itemExamples(item).some((example) => example.ko);
-  if (!hasDetails) return <div className="empty">這張卡片沒有韓文例句。</div>;
-  return (
-    <div className="study-details">
-      <CardRichDetails item={item} relatedItems={relatedItems} onOpenItem={onOpenItem} showChinese={showChinese} />
-    </div>
   );
 }
 
@@ -6597,7 +6318,7 @@ function PracticeMistakeReview({ questions = [], onRetry = null }) {
               <article className="practice-mistake-card" key={question.id}>
                 <div className="practice-mistake-word">
                   <h3>{korean}</h3>
-                  <KoreanSpeakButton text={korean} />
+                  <KoreanSpeakButton text={korean} onSpeak={speakText} />
                 </div>
                 <p>{chinese}</p>
                 {question.kind === 'example' && question.ko !== korean && (
@@ -6641,7 +6362,13 @@ function PracticeAnswerPanel({ question, visible, graded, correct, isStarred = f
                   </div>
                 </div>
               ) : (
-                <NoteCard item={question.source} isStarred={isStarred} onToggleStar={onToggleStar} onEdit={onEdit} />
+                <WordDetailCard
+                  word={question.source}
+                  onSpeak={speakText}
+                  isStarred={isStarred}
+                  onToggleStar={onToggleStar}
+                  onEdit={onEdit}
+                />
               )}
             </div>
           </>
@@ -8349,16 +8076,6 @@ function GrammarDetailModal({ note, category, onEdit, onDelete, onPractice, onCl
   );
 }
 
-function WordFolderTags({ itemId, folders = [] }) {
-  const memberships = folders.filter((folder) => folder.wordIds.includes(itemId));
-  if (!memberships.length) return null;
-  return (
-    <div className="word-folder-tags" aria-label="所屬資料夾">
-      {memberships.map((folder) => <span key={folder.id}><Folder size={12} /> {folder.name}</span>)}
-    </div>
-  );
-}
-
 function FolderPickerDropdown({ folders, selectedFolderIds, requiredFolderIds = [], onToggle, showCounts = false, title = '加入資料夾', wide = true }) {
   const selectedSet = new Set(selectedFolderIds);
   const requiredSet = new Set(requiredFolderIds);
@@ -8868,18 +8585,17 @@ function FolderDetailPage({ folder, folders, store, updateStore, items, question
         currentFolder={folder}
         onRemoveFromCurrentFolder={onRemoveWords}
       />
-      {pagedItems.length ? <div className="notes-grid">{pagedItems.map((item) => (
-        <NoteCard
+      {pagedItems.length ? <div className="word-grid">{pagedItems.map((item) => (
+        <WordCard
           key={item.id}
-          item={item}
-          allItems={items}
+          word={item}
           folders={folders}
-          compact
           onOpen={setViewingItem}
           onEdit={setEditingItem}
           onDelete={(itemId) => onRemoveWords(folder.id, [itemId])}
           deleteLabel="從資料夾移除"
           deleteConfirmMessage={`確定要將「${item.ko}」從資料夾移除嗎？單字本中的卡片不會被刪除。`}
+          onSpeak={speakText}
           isStarred={starredSet.has(item.id)}
           onToggleStar={() => toggleStarredItem(updateStore, item.id)}
           selectable
@@ -9075,8 +8791,9 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
         {pagedItems.map((item) => (
           <WordCard
             key={item.id}
-            item={item}
+            word={item}
             folders={folders}
+            onSpeak={speakText}
             onEdit={setEditingItem}
             onDelete={onDeleteRecord}
             onOpen={setViewingItem}
@@ -9094,26 +8811,6 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
         <button disabled={pageNumber >= pageCount} onClick={() => setPageNumber(pageNumber + 1)}>下一頁 <ChevronRight size={18} /></button>
       </div>
     </section>
-  );
-}
-
-function WordCard({ item, folders = [], onEdit, onDelete, onOpen, isStarred = false, onToggleStar, selectable = false, selected = false, onToggleSelected }) {
-  return (
-    <article className={`word-card clickable-card ${selected ? 'selected-word-card' : ''}`} onClick={() => onOpen(item)}>
-      <div className="card-head word-card-head">
-        <h3 className="speakable-heading"><span>{item.ko}</span><KoreanSpeakButton text={item.ko} /></h3>
-        <div className="card-actions">
-          {selectable && <label className="word-select-control" title="選取單字" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selected} onChange={() => onToggleSelected(item.id)} /><span className="sr-only">選取 {item.ko}</span></label>}
-          <StarButton active={isStarred} onClick={onToggleStar} />
-          <EditIconButton onClick={() => onEdit(item)} />
-          <DeleteIconButton item={item} onDelete={onDelete} />
-          <MasteryBadge level={item.level} />
-        </div>
-      </div>
-      <p>{item.zh}</p>
-      <div className="word-meta"><span>{item.pos || '未分類'}</span><span>{item.date}</span><span>{item.total} 次</span><span>熟悉分數 {item.score > 0 ? `+${item.score}` : item.score}</span></div>
-      <WordFolderTags itemId={item.id} folders={folders} />
-    </article>
   );
 }
 

@@ -14,3 +14,16 @@ export function sortRecords(records) {
     return left.date.localeCompare(right.date);
   });
 }
+
+export function wordChineseSummary(word) {
+  return (word?.meanings || []).map((meaning) => meaning.zh).filter(Boolean).join('；');
+}
+
+export function wordExamples(word) {
+  return (word?.meanings || []).flatMap((meaning) => meaning.examples || []);
+}
+
+export function relatedWords(word, allWords = []) {
+  const byId = new Map(allWords.map((entry) => [entry.id, entry]));
+  return (word?.related || []).map((id) => byId.get(id)).filter(Boolean);
+}
