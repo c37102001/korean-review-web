@@ -752,7 +752,7 @@ src/review-engine/
 
 ### Phase 9：Study／Practice controllers 與 UI 拆分
 
-**狀態：待實作**
+**狀態：已完成（2026-09-16）**
 
 目標：
 

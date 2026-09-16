@@ -76,3 +76,12 @@ test('web entry is bootstrap-only and feature readers do not depend on App', asy
   ].map((path) => readFile(new URL(path, import.meta.url), 'utf8')));
   readers.forEach((source) => assert.doesNotMatch(source, /app\/App|main\.jsx/));
 });
+
+test('study and practice pages are owned by the sessions feature', async () => {
+  const appSource = await readFile(new URL('../src/app/App.jsx', import.meta.url), 'utf8');
+  const sessionSource = await readFile(new URL('../src/features/sessions/SessionPages.jsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(appSource, /function (?:StudyPage|PracticePage)\b/);
+  assert.match(appSource, /lazy\(\(\) => import\('\.\.\/features\/sessions\/SessionPages\.jsx'\)/);
+  assert.match(sessionSource, /export function StudyPage/);
+  assert.match(sessionSource, /export function PracticePage/);
+});
