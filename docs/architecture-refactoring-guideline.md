@@ -891,7 +891,7 @@ terminal_app/ui/
 
 ### Phase 13：CSS ownership、bundle 與視覺回歸
 
-**狀態：待實作**
+**狀態：已完成**
 
 工作：
 
@@ -907,6 +907,13 @@ terminal_app/ui/
 - 初始主 chunk 有明確預算；建議壓縮後低於 200 KB，超過必須在 PR 說明原因。
 
 建議 commit：`refactor feature styles and route bundles`
+
+實際結果：
+
+- 將單一 stylesheet 依序拆為 tokens、base、layout、content libraries、sessions、forms 與 responsive owners。
+- 保留原有 cascade 順序，feature 樣式不再與全域 reset 存在同一檔案。
+- React、Firebase、icons 與 Markdown 改為穩定 vendor chunks，既有大型頁面維持 lazy load。
+- build 新增 200 KiB gzip 初始 entry 預算檢查，超標會直接失敗。
 
 ### Phase 14：架構守門與 CI
 

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "vite build",
+    "build": "vite build && node scripts/check_bundle_budget.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --test tests/*.test.mjs",
     "test:emulator": "firebase emulators:exec --only firestore --project korean-review-web-test \"node --test tests/emulator/*.test.mjs\"",

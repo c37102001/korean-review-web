@@ -1,0 +1,8 @@
+:root {
+  color: #263238;
+  background: #fff8ef;
+  font-size: calc(110% * var(--user-font-scale, 1));
+  font-family: Inter, "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}

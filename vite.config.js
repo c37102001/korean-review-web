@@ -30,4 +30,18 @@ export default defineConfig({
     }),
   ],
   base: '/korean-review-web/',
+  build: {
+    manifest: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined;
+          if (id.includes('/firebase/') || id.includes('/@firebase/')) return 'vendor-firebase';
+          if (id.includes('/lucide-react/')) return 'vendor-icons';
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) return 'vendor-react';
+          return 'vendor';
+        },
+      },
+    },
+  },
 });
