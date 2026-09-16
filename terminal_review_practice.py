@@ -3878,7 +3878,25 @@ def run_grammar_practice(
             return
 
 
-def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[str, Any], client: FirebaseClient, session: AuthSession) -> None:
+def ordered_study_cards(cards: List[Card], order_mode: str) -> List[Card]:
+    ordered = list(cards)
+    if order_mode == "alphabetical":
+        ordered.sort(key=lambda card: (unicodedata.normalize("NFC", card.ko).casefold(), card.zh, card.id))
+    elif order_mode == "random":
+        random.shuffle(ordered)
+    return ordered
+
+
+def run_study(
+    stdscr: curses.window,
+    title: str,
+    cards: List[Card],
+    state: Dict[str, Any],
+    client: FirebaseClient,
+    session: AuthSession,
+    front_side: str = "ko",
+) -> None:
+    front_side = "zh" if front_side == "zh" else "ko"
     idx = 0
     show_details = False
     show_chinese = False
@@ -3917,7 +3935,7 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             stdscr,
             1,
             2,
-            f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回 A=自動:{'開' if auto_playing else '關'} 1/2/3=重複:{repeat_count} {auto_audio_control_label()} 0=星號 *=不熟悉 5=中文 9=單字 7=例句 +=下一例句 8=詳情 ↑↓=捲動 4/6=上下張",
+            f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回 A=自動:{'開' if auto_playing else '關'} 1/2/3=重複:{repeat_count} {auto_audio_control_label()} 0=星號 *=不熟悉 5={'中文' if front_side == 'ko' else '韓文'} 9=單字 7=例句 +=下一例句 8=詳情 ↑↓=捲動 4/6=上下張",
             curses.A_BOLD,
         )
         folder_notice, display_message = folder_prompt_notice(message)
@@ -3928,10 +3946,13 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             for line in _split_by_cell_width(str(text), line_width):
                 detail_lines.append((line, indent, attr))
 
-        append_detail(f"{'★' if card.is_starred else '☆'} {card.ko}{folder_notice}", attr=curses.A_BOLD)
+        front_text = card.ko if front_side == "ko" else card.zh
+        append_detail(f"{'★' if card.is_starred else '☆'} {front_text}{folder_notice}", attr=curses.A_BOLD)
         on_back = auto_face != "front"
-        show_full_details = show_chinese or show_details
-        if on_back and show_chinese and card.zh:
+        show_full_details = show_chinese or show_details or auto_face == "back"
+        if front_side == "zh" and show_full_details:
+            append_detail(f"韓文: {card.ko}", attr=curses.A_BOLD)
+        if front_side == "ko" and on_back and show_chinese and card.zh:
             append_detail(f"中文: {card.zh}", attr=curses.A_BOLD)
         if on_back and show_full_details and card.meanings:
             append_detail("意思與句型:", attr=curses.A_DIM)
@@ -3943,13 +3964,14 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
                     detail_parts.append(str(meaning.get("pattern")))
                 if detail_parts:
                     append_detail(f"{meaning_index}. {' · '.join(detail_parts)}", indent=2)
-        if on_back and examples:
+        show_examples = on_back and (front_side == "ko" or show_full_details)
+        if show_examples and examples:
             append_detail("例句:", attr=curses.A_DIM)
             for current_index, example in enumerate(examples):
                 marker = "▶" if current_index == example_index else " "
                 attr = curses.A_BOLD if current_index == example_index else 0
                 append_detail(f"{marker} {current_index + 1}. {example.get('ko', '')}", indent=2, attr=attr)
-                if show_chinese and example.get("zh"):
+                if (show_chinese or front_side == "zh") and example.get("zh"):
                     append_detail(str(example.get("zh")), indent=5, attr=curses.A_DIM)
         if on_back and show_full_details and card.notes:
             append_detail("筆記:", attr=curses.A_DIM)
@@ -4036,7 +4058,8 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             if key == "5":
                 show_chinese = not show_chinese
                 scroll_offset = 0
-                message = "已顯示中文。" if show_chinese else "已隱藏中文。"
+                content_label = "中文" if front_side == "ko" else "韓文與完整內容"
+                message = f"已顯示{content_label}。" if show_chinese else f"已隱藏{content_label}。"
             elif key == "4":
                 idx = max(0, idx - 1)
                 show_details = False
@@ -4073,7 +4096,7 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
                 scroll_offset = 0
                 message = ""
             continue
-        if _AUTO_PLAY_AUDIO and spoken_card_id != card.id:
+        if _AUTO_PLAY_AUDIO and front_side == "ko" and spoken_card_id != card.id:
             spoken_card_id = card.id
             message = (
                 "已自動播放韓文單字。"
@@ -4091,6 +4114,9 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
             scroll_offset = min(max_scroll, scroll_offset + 1)
             continue
         if key in ("a", "A"):
+            if front_side == "zh":
+                message = "中文正面暫不支援完整自動播放；按 5 顯示韓文後可用 9、7 播放語音。"
+                continue
             if not _AUTO_PLAY_AUDIO:
                 message = "請先按 . 開啟自動語音，再啟動完整自動播放。"
                 continue
@@ -4127,7 +4153,8 @@ def run_study(stdscr: curses.window, title: str, cards: List[Card], state: Dict[
         elif key == "5":
             show_chinese = not show_chinese
             scroll_offset = 0
-            message = "已顯示中文。" if show_chinese else "已隱藏中文。"
+            content_label = "中文" if front_side == "ko" else "韓文與完整內容"
+            message = f"已顯示{content_label}。" if show_chinese else f"已隱藏{content_label}。"
         elif key == "9":
             message = (
                 "已重播韓文單字。"
@@ -5278,66 +5305,105 @@ def run_due_reviews(
 
             leave_task = False
             while not leave_task:
+                wrong_mode = menu(
+                    stdscr,
+                    "今日答錯題目 | 模式",
+                    [("study", "學習錯題"), ("practice", "測驗錯題")],
+                )
+                if not wrong_mode:
+                    break
+                if wrong_mode == "study":
+                    front_side = menu(
+                        stdscr,
+                        "今日答錯題目 | 學習正面",
+                        [("ko", "韓文正面"), ("zh", "中文正面")],
+                    )
+                    if not front_side:
+                        continue
+                    study_order = menu(
+                        stdscr,
+                        "今日答錯題目 | 學習順序",
+                        [
+                            ("original", "原本順序"),
+                            ("alphabetical", "韓文字母順序"),
+                            ("random", "隨機打亂順序"),
+                        ],
+                    )
+                    if not study_order:
+                        continue
+                    wrong_cards_by_id = {
+                        question.source.id: question.source
+                        for question in selected
+                        if question.source and question.source.id
+                    }
+                    run_study(
+                        stdscr,
+                        "今日答錯題目",
+                        ordered_study_cards(list(wrong_cards_by_id.values()), study_order),
+                        state,
+                        client,
+                        session,
+                        front_side=front_side,
+                    )
+                    continue
+
                 answer_setup = translation_answer_mode_menu(stdscr, "今日答錯題目 | 選擇測驗方式")
                 if not answer_setup:
-                    break
+                    continue
                 direction, answer_mode = answer_setup
+                order_mode = menu(
+                    stdscr,
+                    "今日答錯題目 | 選擇出題順序",
+                    [("alphabetical", "韓文字母順序"), ("random", "隨機打亂順序")],
+                )
+                if not order_mode:
+                    continue
                 while True:
-                    order_mode = menu(
+                    active_wrong_review = list(selected)
+                    if order_mode == "random":
+                        random.shuffle(active_wrong_review)
+                    completed_wrong_review = run_practice(
                         stdscr,
-                        "今日答錯題目 | 選擇出題順序",
-                        [("alphabetical", "韓文字母順序"), ("random", "隨機打亂順序")],
+                        "今日答錯題目",
+                        active_wrong_review,
+                        {
+                            "direction": direction,
+                            "answer_mode": answer_mode,
+                            "source": "term",
+                            "starred": False,
+                            "random": False,
+                            "record_results": False,
+                            "on_result": save_wrong_review_result,
+                            "allow_mistake_retry": False,
+                            "show_mistake_review": False,
+                            "enforce_answer_length": direction == "zh-ko" and answer_mode == "typing",
+                            "daily_review": False,
+                        },
+                        state,
+                        client,
+                        session,
                     )
-                    if not order_mode:
+                    if not completed_wrong_review:
                         break
-                    while True:
-                        active_wrong_review = list(selected)
-                        if order_mode == "random":
-                            random.shuffle(active_wrong_review)
-                        completed_wrong_review = run_practice(
-                            stdscr,
-                            "今日答錯題目",
-                            active_wrong_review,
-                            {
-                                "direction": direction,
-                                "answer_mode": answer_mode,
-                                "source": "term",
-                                "starred": False,
-                                "random": False,
-                                "record_results": False,
-                                "on_result": save_wrong_review_result,
-                                "allow_mistake_retry": False,
-                                "show_mistake_review": False,
-                                "enforce_answer_length": direction == "zh-ko" and answer_mode == "typing",
-                                "daily_review": False,
-                            },
-                            state,
-                            client,
-                            session,
-                        )
-                        if not completed_wrong_review:
-                            break
-                        remaining_wrong = daily_wrong_term_questions(state, questions)
-                        if not remaining_wrong:
-                            wait_message(stdscr, "今日答錯題目", "所有錯題都已經答對。")
-                            leave_task = True
-                            break
-                        replay = menu(
-                            stdscr,
-                            "今日答錯題目已完成",
-                            [
-                                ("again", f"只重測仍答錯的 {len(remaining_wrong)} 題"),
-                                ("back", "返回今日複習題"),
-                            ],
-                            "這組練習不會寫入熟悉分數或間隔排程。",
-                        )
-                        if replay == "again":
-                            selected = remaining_wrong
-                            continue
+                    remaining_wrong = daily_wrong_term_questions(state, questions)
+                    if not remaining_wrong:
+                        wait_message(stdscr, "今日答錯題目", "所有錯題都已經答對。")
                         leave_task = True
                         break
-                    if leave_task:
-                        break
+                    replay = menu(
+                        stdscr,
+                        "今日答錯題目已完成",
+                        [
+                            ("again", f"只重測仍答錯的 {len(remaining_wrong)} 題"),
+                            ("back", "返回今日複習題"),
+                        ],
+                        "這組練習不會寫入熟悉分數或間隔排程。",
+                    )
+                    if replay == "again":
+                        selected = remaining_wrong
+                        continue
+                    leave_task = True
+                    break
         else:
             while True:
                 answer_setup = translation_answer_mode_menu(stdscr, "每日單字測驗 | 選擇測驗方式")

@@ -3203,11 +3203,11 @@ function App() {
   }
 
   const views = {
-    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} optionalPractice={optionalPractice} grammarNotes={grammar.notes} onPractice={startPractice} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} offlineMode={offlineMode} fontScale={fontScale} onFontScaleChange={setFontScale} />,
+    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} optionalPractice={optionalPractice} grammarNotes={grammar.notes} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} offlineMode={offlineMode} fontScale={fontScale} onFontScaleChange={setFontScale} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('dateNotes')} />,
     dateNotes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     study: <StudyPage store={store} updateStore={updateStore} set={studySet || { items, label: '全部內容' }} allItems={items} folders={folders.folders} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
-    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
+    practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || { questions: todayDailyQuestions, label: '今日測驗', dueOnly: true }} allItems={items} folders={folders.folders} onUpdateRecord={updateLearningRecord} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
     notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     folders: <FoldersPage folders={folders.folders} items={items} loading={folders.loading} error={folders.error} onSave={folders.save} onDelete={folders.remove} onOpen={openFolder} />,
     folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
@@ -3521,7 +3521,7 @@ export function OptionalPracticeModal({ store, questions, grammarQuestions, fold
   </div>;
 }
 
-function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestionsForToday, optionalPractice, grammarNotes, onPractice, onAddRecords, onUpdateRecord, onWriteRecords, folders = [], offlineMode, fontScale, onFontScaleChange }) {
+function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestionsForToday, optionalPractice, grammarNotes, onPractice, onStudy, onAddRecords, onUpdateRecord, onWriteRecords, folders = [], offlineMode, fontScale, onFontScaleChange }) {
   const [addOpen, setAddOpen] = useState(false);
   const [practiceCreatorOpen, setPracticeCreatorOpen] = useState(false);
   const [practiceError, setPracticeError] = useState('');
@@ -3530,6 +3530,11 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
   const today = todayString();
   const due = dueQuestionsForToday;
   const wrongReview = due.length ? [] : wrongQuestionsForToday;
+  const wrongReviewItems = [...new Map(
+    wrongReview
+      .filter((question) => question.source?.id)
+      .map((question) => [question.source.id, question.source]),
+  ).values()];
   const grammarQuestions = grammarPracticeQuestions(grammarNotes.filter((note) => note.category !== NOTE_CATEGORY_VOCABULARY));
   const questionById = new Map([...questions, ...grammarQuestions].map((question) => [question.id, question]));
   const practiceTasks = optionalPractice.tasks.map((task) => ({
@@ -3656,11 +3661,14 @@ function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestion
                   <h3>今日答錯題目</h3>
                   <p>今日答錯的 {wrongReview.length} 個單字 · 不紀錄結果，可重複練習</p>
                 </div>
-                <button className="primary small" onClick={() => onPractice(
-                  wrongReview,
-                  '今日答錯題目',
-                  { dueOnly: true, repeatable: true, wrongReview: true, allowAlphabeticalOrder: true },
-                )}>開始</button>
+                <div className="actions wrong-review-actions">
+                  <button className="small" disabled={!wrongReviewItems.length} onClick={() => onStudy(wrongReviewItems, '今日答錯題目')}><BookOpen size={16} /> 學習</button>
+                  <button className="primary small" onClick={() => onPractice(
+                    wrongReview,
+                    '今日答錯題目',
+                    { dueOnly: true, repeatable: true, wrongReview: true, allowAlphabeticalOrder: true },
+                  )}><Dumbbell size={16} /> 測驗</button>
+                </div>
               </div>
             )}
             {practiceTasks.map((task) => <div className="task-card" key={task.id}>
@@ -5811,7 +5819,7 @@ function shouldAutoPronouncePracticePrompt({ started, recognitionMode, grammarMo
   return activeDirection === 'ko-zh' && autoPronounce;
 }
 
-function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onToggleLearned, onToggleUnfamiliar }) {
+function PracticePage({ store, updateStore, set, allItems = [], folders = [], onUpdateRecord, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onToggleLearned, onToggleUnfamiliar }) {
   const optionalMode = Boolean(set.optionalKind);
   const readingMode = set.optionalKind === 'reading';
   const [direction, setDirection] = useState(() => initialPracticeDirection(set));
@@ -5861,6 +5869,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   const [chinesePronunciation, setChinesePronunciation] = useState(true);
   const [answerSpeechError, setAnswerSpeechError] = useState('');
   const [optionalSaving, setOptionalSaving] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
   const optionalSavingRef = useRef(false);
   const clearSessionMistakes = () => {
     wrongQuestionIdsRef.current = new Set();
@@ -5888,6 +5897,15 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   }, [set.questions, source, direction, set.termOnly, set.dueOnly, set.allowAlphabeticalOrder, optionalMode, recognitionMode, grammarMode, grammarPracticeMode, store, starredOnly]);
   const queue = started ? questionQueue : sourceQuestions;
   const question = queue[index];
+  const currentAnswerItem = useMemo(() => {
+    if (!question || question.kind === 'grammar-example') return question?.source || null;
+    return allItems.find((item) => item.id === question.itemId || item.id === question.source?.id) || question.source;
+  }, [allItems, question]);
+  const displayQuestion = useMemo(() => (
+    question && currentAnswerItem && currentAnswerItem !== question.source
+      ? { ...question, source: currentAnswerItem }
+      : question
+  ), [question, currentAnswerItem]);
   const useChineseAnswerSpeech = dailyWordMode && chinesePronunciation;
   const canClassifyCurrentWord = Boolean(question && !grammarMode && !grammarPracticeMode && question.kind !== 'grammar-example');
   const isCurrentWordLearned = Boolean(
@@ -6222,6 +6240,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   useEffect(() => {
     if (!started) return undefined;
     const onKeyDown = (event) => {
+      if (editingItem) return;
       if (event.key === ' ' && (recognitionMode || grammarMode) && !event.isComposing) {
         event.preventDefault();
         replayCurrentSpeech();
@@ -6239,7 +6258,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [started, revealed, graded, question, index, queue.length, recognitionMode, grammarMode, recognitionWordVisible, useChineseAnswerSpeech]);
+  }, [started, revealed, graded, question, index, queue.length, recognitionMode, grammarMode, recognitionWordVisible, useChineseAnswerSpeech, editingItem]);
 
   if (!started && (!set.dueOnly || configurableWordMode)) {
     return (
@@ -6342,6 +6361,7 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
   }
 
   return (
+    <>
     <section className="page practice-page">
       <div className="practice-layout">
         <div className="practice-shell">
@@ -6467,15 +6487,29 @@ function PracticePage({ store, updateStore, set, learnedWordIds = new Set(), unf
           )}
         </div>
         <PracticeAnswerPanel
-          question={question}
+          question={displayQuestion}
           visible={revealed || graded}
           graded={graded}
           correct={lastCorrect}
-          isStarred={(store.starred || []).includes(question.source?.id)}
+          isStarred={(store.starred || []).includes(displayQuestion.source?.id)}
           onToggleStar={grammarMode || grammarPracticeMode ? null : () => toggleStarredItem(updateStore, question.source.id)}
+          onEdit={displayQuestion.kind === 'grammar-example' || !onUpdateRecord ? null : setEditingItem}
         />
       </div>
     </section>
+    {editingItem && (
+      <AddItemsModal
+        title="編輯單字"
+        date={editingItem.date}
+        lockedDate
+        editItem={editingItem}
+        allItems={allItems}
+        folders={folders}
+        onUpdateRecord={onUpdateRecord}
+        onClose={() => setEditingItem(null)}
+      />
+    )}
+    </>
   );
 }
 
@@ -6580,7 +6614,7 @@ function PracticeMistakeReview({ questions = [], onRetry = null }) {
   );
 }
 
-function PracticeAnswerPanel({ question, visible, graded, correct, isStarred = false, onToggleStar }) {
+function PracticeAnswerPanel({ question, visible, graded, correct, isStarred = false, onToggleStar, onEdit }) {
   return (
     <aside className={`practice-answer-panel ${visible ? 'visible' : ''}`}>
       <div className="answer-panel-inner">
@@ -6607,7 +6641,7 @@ function PracticeAnswerPanel({ question, visible, graded, correct, isStarred = f
                   </div>
                 </div>
               ) : (
-                <NoteCard item={question.source} isStarred={isStarred} onToggleStar={onToggleStar} />
+                <NoteCard item={question.source} isStarred={isStarred} onToggleStar={onToggleStar} onEdit={onEdit} />
               )}
             </div>
           </>
@@ -8874,11 +8908,10 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
   const [showLearned, setShowLearned] = useState(false);
   const starredSet = new Set(store.starred || []);
   const learnedWordIds = new Set(folders.find(isLearnedFolder)?.wordIds || []);
-  const folderWordIds = useMemo(
-    () => folderFilterWordIds(folders, selectedFolderIds),
-    [folders, selectedFolderIds],
-  );
   const notebookItems = showLearned ? items : items.filter((item) => !learnedWordIds.has(item.id));
+  const folderFilteredItems = filterItemsByFolderSelection(notebookItems, folders, selectedFolderIds);
+  const assignedWordIds = new Set(folders.flatMap((folder) => folder.wordIds || []));
+  const unfiledCount = notebookItems.filter((item) => !assignedWordIds.has(item.id)).length;
   const toggleSelected = (itemId) => setSelectedIds((current) => (
     current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]
   ));
@@ -8890,14 +8923,13 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
   ));
   const toggleFolderTag = (folderIds) => setSelectedFolderIds((current) => toggleFolderGroupSelection(current, folderIds));
   const itemQuestionIds = new Map(items.map((item) => [item.id, questions.filter((q) => q.itemId === item.id).map((q) => q.id)]));
-  const enriched = notebookItems.map((item) => {
+  const enriched = folderFilteredItems.map((item) => {
     const ids = itemQuestionIds.get(item.id) || [item.id];
     return { ...item, ...aggregateItemStats(store, ids) };
   }).filter((item) => {
     const matchesQuery = itemMatchesSearch(item, query, searchScope);
     const matchesLevel = matchesFamiliarityLevels(item.level, selectedLevels, item.score);
-    const matchesFolder = !folderWordIds || folderWordIds.has(item.id);
-    return matchesQuery && matchesLevel && matchesFolder;
+    return matchesQuery && matchesLevel;
   }).sort((a, b) => {
     if (sort === 'alphabetical') return compareItemsByKoreanAlphabet(a, b);
     if (sort === 'score') return a.score - b.score;
@@ -8915,7 +8947,7 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
   }, [query, searchScope, selectedLevels, selectedFolderIds, sort]);
 
   useEffect(() => {
-    const availableFolderIds = new Set(folders.map((folder) => folder.id));
+    const availableFolderIds = new Set([UNFILED_FOLDER_FILTER_ID, ...folders.map((folder) => folder.id)]);
     setSelectedFolderIds((current) => current.filter((folderId) => availableFolderIds.has(folderId)));
   }, [folders]);
 
@@ -8978,6 +9010,8 @@ function NotebookPage({ store, updateStore, items, questions, folders = [], onAs
           onToggle={toggleFolderFilter}
           onToggleGroup={toggleFolderTag}
           onClear={() => setSelectedFolderIds([])}
+          includeUnfiled
+          unfiledCount={unfiledCount}
         />
         <select value={sort} onChange={(e) => setSort(e.target.value)}>
           <option value="default">最新</option>

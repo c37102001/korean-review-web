@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import terminal_review_practice as terminal
 
@@ -253,6 +253,55 @@ class OptionalPracticeTests(unittest.TestCase):
         practice.assert_called_once()
         self.assertEqual(setup.call_count, 2)
         self.assertEqual(tasks.call_count, 2)
+
+    def test_daily_wrong_review_can_start_configured_study_mode(self):
+        card, question = self.card_and_question()
+        with patch.object(
+            terminal,
+            "due_task_menu",
+            side_effect=[(terminal.DAILY_WRONG_REVIEW_MODE, [question]), None],
+        ), patch.object(
+            terminal,
+            "menu",
+            side_effect=["study", "zh", "alphabetical", None],
+        ) as choices, patch.object(
+            terminal,
+            "run_study",
+        ) as study, patch.object(
+            terminal,
+            "daily_due_questions",
+            return_value=[question],
+        ):
+            terminal.run_due_reviews(object(), {}, [question], object(), object())
+
+        study.assert_called_once_with(
+            ANY,
+            "今日答錯題目",
+            [card],
+            {},
+            ANY,
+            ANY,
+            front_side="zh",
+        )
+        self.assertEqual(
+            [call.args[1] for call in choices.call_args_list],
+            [
+                "今日答錯題目 | 模式",
+                "今日答錯題目 | 學習正面",
+                "今日答錯題目 | 學習順序",
+                "今日答錯題目 | 模式",
+            ],
+        )
+
+    def test_study_card_ordering_keeps_input_unchanged(self):
+        first = terminal.Card("first", "2026-09-10", "하늘", "天空")
+        second = terminal.Card("second", "2026-09-10", "가방", "包包")
+        cards = [first, second]
+
+        ordered = terminal.ordered_study_cards(cards, "alphabetical")
+
+        self.assertEqual([card.id for card in ordered], ["second", "first"])
+        self.assertEqual([card.id for card in cards], ["first", "second"])
 
     def test_daily_wrong_review_correct_answers_remove_only_the_review_item(self):
         card, question = self.card_and_question()
