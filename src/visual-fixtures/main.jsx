@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import '../styles.css';
 import { WordCard } from '../features/word-library/components/WordPresentation.jsx';
 import NotesNotebookPage from '../features/notes/pages/NotesNotebookPage.jsx';
 import { YoutubeSubtitleReader } from '../features/subtitles/pages/YoutubeSubtitleReader.jsx';
@@ -10,6 +9,7 @@ import { StudyPage } from '../features/sessions/study/StudyPage.jsx';
 import { PracticePage } from '../features/sessions/practice/PracticePage.jsx';
 import { createFixedWordPracticeSession, createStudySession, PRACTICE_ORDER_POLICY } from '../features/sessions/core/sessionDefinitions.js';
 import { folders, notes, questions, readingTest, subtitle, words } from './data.js';
+import '../styles.css';
 
 const noop = () => {};
 const asyncNoop = async () => {};

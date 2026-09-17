@@ -45,6 +45,9 @@ for (const viewport of VIEWPORTS) {
           const box = await koreanHeading.boundingBox();
           expect(box?.width || 0).toBeGreaterThan(80);
           expect(box?.height || 0).toBeLessThan(100);
+
+          const actionsBox = await page.locator('.word-card-head .card-actions').first().boundingBox();
+          expect(actionsBox?.y || 0).toBeGreaterThanOrEqual((box?.y || 0) + (box?.height || 0) - 1);
         }
 
         if (fixture === 'study') {
