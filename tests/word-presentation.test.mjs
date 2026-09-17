@@ -136,3 +136,39 @@ test('folder collections keep remove-membership and permanent-delete actions dis
   assert.match(markup, /移出資料夾/);
   assert.match(markup, /永久刪除/);
 });
+
+test('wrong-review collections reuse word cards without batch actions or selection', () => {
+  const markup = renderToStaticMarkup(React.createElement(collectionView.WordCollectionView, {
+    collection: {
+      pagedItems: [word], selectedIds: [], visibleIds: [word.id],
+      pageCount: 1, pageNumber: 1, totalCount: 1,
+      isChineseVisible: () => false,
+      toggleChinese: () => {},
+    },
+    folders: [],
+    onSpeak: () => {},
+    onOpen: () => {},
+    onEdit: () => {},
+    onToggleStar: () => {},
+    showBulkActions: false,
+  }));
+
+  assert.match(markup, /어쩌피/);
+  assert.match(markup, /aria-label="編輯"/);
+  assert.match(markup, /aria-label="顯示中文"/);
+  assert.doesNotMatch(markup, /批次選取|選取 어쩌피|永久刪除/);
+});
+
+test('word detail modal reuses the shared word detail card', () => {
+  const markup = renderToStaticMarkup(React.createElement(presentation.ItemDetailModal, {
+    item: word,
+    allItems: [word],
+    onSpeak: () => {},
+    onEdit: () => {},
+    onClose: () => {},
+  }));
+
+  assert.match(markup, /role="dialog"/);
+  assert.match(markup, /어차피 해야 해요\./);
+  assert.match(markup, /aria-label="關閉"/);
+});

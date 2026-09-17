@@ -20,6 +20,7 @@ import { FolderPickerDropdown } from '../features/word-library/components/BulkWo
 import { GroupedFolderMultiSelect, MultiSelectFilter, SearchScopeControl } from '../features/word-library/components/WordCollectionFilters.jsx';
 import { WordChineseVisibilityButton, WordCollectionView } from '../features/word-library/components/WordCollectionView.jsx';
 import {
+  ItemDetailModal,
   WordDetailCard,
   WordDetails,
 } from '../features/word-library/components/WordPresentation.jsx';
@@ -710,6 +711,7 @@ export function FolderDetailPage({ folder, folders, store, updateStore, items, q
         <ItemDetailModal
           item={dialogs.viewingWord}
           allItems={items}
+          onSpeak={speakText}
           isStarred={starredSet.has(dialogs.viewingWord.id)}
           onToggleStar={() => toggleStarredItem(updateStore, dialogs.viewingWord.id)}
           onOpenItem={dialogs.openViewer}
@@ -860,6 +862,7 @@ export function NotebookPage({ store, updateStore, items, questions, folders = [
         <ItemDetailModal
           item={dialogs.viewingWord}
           allItems={items}
+          onSpeak={speakText}
           isStarred={starredSet.has(dialogs.viewingWord.id)}
           onToggleStar={() => toggleStarredItem(updateStore, dialogs.viewingWord.id)}
           onOpenItem={dialogs.openViewer}
@@ -882,6 +885,96 @@ export function NotebookPage({ store, updateStore, items, questions, folders = [
         onDeleteRecords={onDeleteRecords}
         emptyMessage="找不到符合的單字"
         showPagination="always"
+      />
+    </section>
+  );
+}
+
+export function WrongReviewPage({
+  store,
+  updateStore,
+  questions = [],
+  allItems = [],
+  folders = [],
+  onPractice,
+  onStudy,
+  onUpdateRecord,
+}) {
+  const starredSet = new Set(store.starred || []);
+  const itemById = useMemo(() => new Map(allItems.map((item) => [item.id, item])), [allItems]);
+  const wrongItems = useMemo(() => [...new Map(
+    questions
+      .map((question) => itemById.get(question.itemId) || question.source)
+      .filter(Boolean)
+      .map((item) => [item.id, item]),
+  ).values()], [questions, itemById]);
+  const collection = useWordCollection({
+    items: wrongItems,
+    questions,
+    store,
+    folders,
+    sourceKey: 'today-wrong-review',
+    pageSize: 30,
+  });
+  const dialogs = useWordCollectionDialogs('today-wrong-review');
+
+  return (
+    <section className="page">
+      <div className="topbar">
+        <div><span className="eyebrow">Review · 今日錯題</span><h1>今日答錯題目</h1></div>
+        <div className="actions notebook-actions">
+          <button disabled={!collection.filteredItems.length} onClick={() => onStudy(collection.filteredItems, '今日答錯題目')}><BookOpen size={18} /> 學習</button>
+          <button
+            className="primary"
+            disabled={!collection.filteredQuestions.length}
+            onClick={() => onPractice(
+              collection.filteredQuestions,
+              '今日答錯題目',
+              { dueOnly: true, repeatable: true, wrongReview: true, allowAlphabeticalOrder: true },
+            )}
+          ><Dumbbell size={18} /> 測驗</button>
+          <WordChineseVisibilityButton visible={collection.showAllChinese} onToggle={collection.toggleAllChinese} />
+        </div>
+      </div>
+      <div className="word-search-tools folder-word-search">
+        <label className="search"><Search size={18} /><input value={collection.query} onChange={(event) => collection.setQuery(event.target.value)} placeholder={collection.searchScope === 'word' ? '搜尋韓文單字或中文意思' : '搜尋今日錯題的全部卡片內容'} /></label>
+        <SearchScopeControl value={collection.searchScope} onChange={collection.setSearchScope} />
+      </div>
+      {dialogs.editingWord && (
+        <AddItemsModal
+          title="編輯單字"
+          date={dialogs.editingWord.date}
+          lockedDate
+          editItem={dialogs.editingWord}
+          allItems={allItems}
+          folders={folders}
+          onUpdateRecord={onUpdateRecord}
+          onClose={dialogs.closeEditor}
+        />
+      )}
+      {dialogs.viewingWord && (
+        <ItemDetailModal
+          item={dialogs.viewingWord}
+          allItems={allItems}
+          onSpeak={speakText}
+          isStarred={starredSet.has(dialogs.viewingWord.id)}
+          onToggleStar={() => toggleStarredItem(updateStore, dialogs.viewingWord.id)}
+          onOpenItem={dialogs.openViewer}
+          onEdit={dialogs.editFromViewer}
+          onClose={dialogs.closeViewer}
+        />
+      )}
+      <WordCollectionView
+        collection={collection}
+        folders={folders}
+        starredIds={starredSet}
+        onToggleStar={(word) => toggleStarredItem(updateStore, word.id)}
+        onSpeak={speakText}
+        onOpen={dialogs.openViewer}
+        onEdit={dialogs.openEditor}
+        emptyMessage={questions.length ? '找不到符合的錯題單字' : '今天的錯題都已經答對了'}
+        showPagination="always"
+        showBulkActions={false}
       />
     </section>
   );

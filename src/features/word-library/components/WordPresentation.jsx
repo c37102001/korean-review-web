@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Eye, EyeOff, Folder, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, Folder, Trash2, X } from 'lucide-react';
 
 import { EditIconButton, KoreanSpeakButton, StarButton } from '../../../components/actions/ContentActionButtons.jsx';
 import { relatedWords, wordExamples } from '../../../words/records.js';
@@ -353,5 +353,52 @@ export function WordDetailCard({
       <p className="zh">{word.zh}</p>
       <WordDetails word={word} allWords={allWords} onOpenWord={onOpenWord} onSpeak={onSpeak} />
     </article>
+  );
+}
+
+export function ItemDetailModal({
+  item,
+  allItems = [],
+  onSpeak,
+  onEdit,
+  onDelete,
+  onOpenItem,
+  onClose,
+  isStarred = false,
+  onToggleStar,
+}) {
+  const deleteAndClose = onDelete
+    ? async (itemId) => {
+      await onDelete(itemId);
+      onClose();
+    }
+    : null;
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape' || event.isComposing) return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <div className="modal-panel detail-panel">
+        <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
+        <WordDetailCard
+          word={item}
+          allWords={allItems}
+          onSpeak={onSpeak}
+          onEdit={onEdit}
+          onDelete={deleteAndClose}
+          onOpenWord={onOpenItem}
+          isStarred={isStarred}
+          onToggleStar={onToggleStar}
+        />
+      </div>
+    </div>
   );
 }

@@ -30,6 +30,16 @@ test('navigation stack always returns exactly one level', () => {
   assert.deepEqual(navigationTransition(folderList, { type: 'up' }), { page: 'home', stack: [] });
 });
 
+test('daily wrong review sits between home and its study or practice session', () => {
+  const home = { page: 'home', stack: [] };
+  const wrongReview = navigationTransition(home, { type: 'child', page: 'wrongReview' });
+  for (const page of ['study', 'practice']) {
+    const session = navigationTransition(wrongReview, { type: 'child', page });
+    assert.deepEqual(navigationTransition(session, { type: 'up' }), wrongReview);
+  }
+  assert.deepEqual(navigationTransition(wrongReview, { type: 'up' }), home);
+});
+
 test('feature collection hooks depend on repositories instead of Firebase SDK', async () => {
   const hookPaths = [
     '../src/features/folders/hooks/useWordFolders.js',

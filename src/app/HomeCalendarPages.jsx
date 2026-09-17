@@ -20,6 +20,7 @@ import { FolderPickerDropdown } from '../features/word-library/components/BulkWo
 import { GroupedFolderMultiSelect, MultiSelectFilter, SearchScopeControl } from '../features/word-library/components/WordCollectionFilters.jsx';
 import { WordChineseVisibilityButton, WordCollectionView } from '../features/word-library/components/WordCollectionView.jsx';
 import {
+  ItemDetailModal,
   WordDetailCard,
   WordDetails,
 } from '../features/word-library/components/WordPresentation.jsx';
@@ -251,7 +252,7 @@ import { recordOrder, sortRecords, wordChineseSummary, wordExamples } from '../w
 import '../styles.css';
 import { FONT_SCALE_MAX, FONT_SCALE_MIN, dateLabel, monthTitle } from './AppRuntime.jsx';
 import { OptionalPracticeModal, VoiceSettingsModal } from './AppDialogs.jsx';
-export function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestionsForToday, optionalPractice, grammarNotes, onPractice, onStudy, onAddRecords, onUpdateRecord, onWriteRecords, folders = [], offlineMode, fontScale, onFontScaleChange }) {
+export function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestionsForToday, optionalPractice, grammarNotes, onPractice, onOpenWrongReview, onAddRecords, onUpdateRecord, onWriteRecords, folders = [], offlineMode, fontScale, onFontScaleChange }) {
   const [addOpen, setAddOpen] = useState(false);
   const [practiceCreatorOpen, setPracticeCreatorOpen] = useState(false);
   const [practiceError, setPracticeError] = useState('');
@@ -260,11 +261,6 @@ export function HomePage({ store, items, questions, dueQuestionsForToday, wrongQ
   const today = todayString();
   const due = dueQuestionsForToday;
   const wrongReview = due.length ? [] : wrongQuestionsForToday;
-  const wrongReviewItems = [...new Map(
-    wrongReview
-      .filter((question) => question.source?.id)
-      .map((question) => [question.source.id, question.source]),
-  ).values()];
   const grammarQuestions = grammarPracticeQuestions(grammarNotes.filter((note) => note.category !== NOTE_CATEGORY_VOCABULARY));
   const questionById = new Map([...questions, ...grammarQuestions].map((question) => [question.id, question]));
   const practiceTasks = optionalPractice.tasks.map((task) => ({
@@ -392,12 +388,7 @@ export function HomePage({ store, items, questions, dueQuestionsForToday, wrongQ
                   <p>今日答錯的 {wrongReview.length} 個單字 · 不紀錄結果，可重複練習</p>
                 </div>
                 <div className="actions wrong-review-actions">
-                  <button className="small" disabled={!wrongReviewItems.length} onClick={() => onStudy(wrongReviewItems, '今日答錯題目')}><BookOpen size={16} /> 學習</button>
-                  <button className="primary small" onClick={() => onPractice(
-                    wrongReview,
-                    '今日答錯題目',
-                    { dueOnly: true, repeatable: true, wrongReview: true, allowAlphabeticalOrder: true },
-                  )}><Dumbbell size={16} /> 測驗</button>
+                  <button className="primary small" onClick={onOpenWrongReview}><Eye size={16} /> 查看</button>
                 </div>
               </div>
             )}
@@ -617,6 +608,7 @@ export function NotesPage({ store, updateStore, items, questions, date, allItems
         <ItemDetailModal
           item={dialogs.viewingWord}
           allItems={allItems}
+          onSpeak={speakText}
           isStarred={starredSet.has(dialogs.viewingWord.id)}
           onToggleStar={() => toggleStarredItem(updateStore, dialogs.viewingWord.id)}
           onOpenItem={dialogs.openViewer}

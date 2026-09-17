@@ -37,21 +37,24 @@ export function WordCollectionView({
   onRemoveFromCurrentFolder,
   emptyMessage = '沒有符合的單字',
   showPagination = false,
+  showBulkActions = true,
 }) {
   const starredSet = starredIds instanceof Set ? starredIds : new Set(starredIds);
   return (
     <>
-      <BulkWordActions
-        selectedIds={collection.selectedIds}
-        visibleIds={collection.visibleIds}
-        folders={folders}
-        onSelectionChange={collection.setSelectedIds}
-        onAssignFolders={onAssignFolders}
-        onCreateFolderAndAssign={onCreateFolderAndAssign}
-        onDeleteRecords={onDeleteRecords}
-        currentFolder={currentFolder}
-        onRemoveFromCurrentFolder={onRemoveFromCurrentFolder}
-      />
+      {showBulkActions && (
+        <BulkWordActions
+          selectedIds={collection.selectedIds}
+          visibleIds={collection.visibleIds}
+          folders={folders}
+          onSelectionChange={collection.setSelectedIds}
+          onAssignFolders={onAssignFolders}
+          onCreateFolderAndAssign={onCreateFolderAndAssign}
+          onDeleteRecords={onDeleteRecords}
+          currentFolder={currentFolder}
+          onRemoveFromCurrentFolder={onRemoveFromCurrentFolder}
+        />
+      )}
       {collection.pagedItems.length ? (
         <div className="word-grid">
           {collection.pagedItems.map((word) => (
@@ -67,7 +70,7 @@ export function WordCollectionView({
               deleteConfirmMessage={typeof deleteConfirmMessage === 'function' ? deleteConfirmMessage(word) : deleteConfirmMessage}
               isStarred={starredSet.has(word.id)}
               onToggleStar={() => onToggleStar(word)}
-              selectable
+              selectable={showBulkActions}
               selected={collection.selectedIds.includes(word.id)}
               onToggleSelected={collection.toggleSelected}
               showChinese={collection.isChineseVisible?.(word.id) || false}

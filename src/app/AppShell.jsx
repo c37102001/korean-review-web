@@ -27,7 +27,7 @@ export function AppShell({
   return (
     <div className="app">
       <aside className="sidebar">
-        <button className={`brand brand-button ${navClass(page, ['home'])}`} onClick={() => navTop('home')}><Sparkles size={24} /> 韓文筆記</button>
+        <button className={`brand brand-button ${navClass(page, ['home', 'wrongReview'])}`} onClick={() => navTop('home')}><Sparkles size={24} /> 韓文筆記</button>
         <button className={navClass(page, ['calendar', 'dateNotes'])} onClick={() => navTop('calendar')}><CalendarDays size={18} /> 日曆</button>
         <button className={navClass(page, ['notebook'])} onClick={() => navTop('notebook')}><LibraryBig size={18} /> 單字本</button>
         <button className={navClass(page, ['folders', 'folder'])} onClick={() => navTop('folders')}><Folder size={18} /> 資料夾</button>
