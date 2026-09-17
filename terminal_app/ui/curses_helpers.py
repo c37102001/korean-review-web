@@ -1,5 +1,6 @@
 
 from terminal_app.runtime import *
+from terminal_app.ui.theme import apply_text_style
 
 def draw_line(stdscr: curses.window, y: int, x: int, text: str, attr: int = 0) -> None:
     height, width = stdscr.getmaxyx()
@@ -11,7 +12,7 @@ def draw_line(stdscr: curses.window, y: int, x: int, text: str, attr: int = 0) -
         return
     clipped = _split_by_cell_width(text, available_cells)[0]
     try:
-        stdscr.addstr(y, start_x, clipped, attr)
+        stdscr.addstr(y, start_x, clipped, apply_text_style(attr))
     except curses.error:
         # A terminal resize can invalidate dimensions between getmaxyx/addstr.
         return

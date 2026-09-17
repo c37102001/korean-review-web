@@ -34,6 +34,8 @@ from terminal_app.ui.screens.setup import *
 from terminal_app.ui.screens.study import *
 from terminal_app.ui.screens.practice import *
 from terminal_app.ui.screens.library import *
+from terminal_app.ui.screens.settings import run_terminal_settings
+from terminal_app.ui.theme import load_text_style
 
 from terminal_app import runtime as _runtime_module
 from terminal_app.ui import curses_helpers as _curses_helpers_module
@@ -83,6 +85,7 @@ class _CompatibilityModule(ModuleType):
 sys.modules[__name__].__class__ = _CompatibilityModule
 
 def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: AuthSession) -> None:
+    load_text_style(CACHE_DIR, session.uid)
     initialize_terminal_appearance(stdscr)
     try:
         (state, cards, questions, grammar_notes, grammar_review, youtube_subtitles), using_cached_data = load_data_with_cache(client, session)
@@ -119,6 +122,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 ("vocabulary_notes", "單字筆記"),
                 ("youtube_subtitles", "YT字幕"),
                 ("reading_tests", "閱讀測驗"),
+                ("settings", "設定"),
                 ("refresh", "同步最新變更"),
                 ("full_refresh", "完整重新下載（維修）"),
                 ("offline", "切換至離線模式（使用本機備份）"),
@@ -134,6 +138,9 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 (state, cards, questions, grammar_notes, grammar_review, youtube_subtitles), using_cached_data = load_data_with_cache(client, session)
             except RuntimeError as exc:
                 wait_message(stdscr, "同步失敗", friendly_firebase_error(exc))
+            continue
+        if choice == "settings":
+            run_terminal_settings(stdscr, CACHE_DIR, session.uid)
             continue
         if choice == "full_refresh":
             try:
