@@ -107,7 +107,7 @@ import {
   X,
 } from 'lucide-react';
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { arrayUnion, collection, doc, FieldPath, getDocsFromCache, onSnapshot, query, serverTimestamp, setDoc, Timestamp, where } from 'firebase/firestore';
+import { arrayUnion, collection, doc, getDocsFromCache, onSnapshot, query, serverTimestamp, setDoc, Timestamp, where } from 'firebase/firestore';
 import { auth, db, prepareOfflineFirestoreData, setFirestoreNetworkEnabled, waitForFirestoreSync } from '../firebase.js';
 import {
   folderTagLabel,
@@ -155,23 +155,22 @@ import {
   parseTaggedNoteText,
 } from '../notes/model.js';
 import {
-  createReviewAttemptWriteOperations,
   attemptsFromSegmentsSnapshot,
   mergeReviewAttempts,
   reviewAttemptSegmentsRef,
   reviewDayRef,
 } from '../repositories/reviewDaysRepository.js';
 import {
-  commitFirestoreOperations,
   isTransientFirestoreError,
   retryFirestoreWrite,
 } from '../repositories/firestoreWriteRepository.js';
+import { persistFirestoreStoreChanges } from '../repositories/reviewStoreRepository.js';
 import {
   formatReadingTestsJson,
   normalizeReadingTest,
   parseReadingTestsJson,
 } from '../reading/model.js';
-import { attemptDate, emptyStore, progressShardId } from '../review-engine/store.js';
+import { attemptDate, emptyStore } from '../review-engine/store.js';
 import {
   calculateReviewStreaks,
   compareAnswer,
@@ -657,7 +656,7 @@ function useFirestoreStore(user) {
     writeQueueRef.current = writeQueueRef.current
       .catch(() => {})
       .then(async () => {
-        await persistFirestoreStoreChanges(user.uid, persistedStoreRef.current, next);
+        await persistFirestoreStoreChanges(user.uid, persistedStoreRef.current, next, FIRESTORE_SCHEMA_VERSION);
         persistedStoreRef.current = next;
       });
     const pendingWrite = writeQueueRef.current;

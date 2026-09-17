@@ -23,6 +23,8 @@ import {
   createReviewAttemptWriteOperations,
   reviewAttemptSegmentId,
 } from '../../src/repositories/reviewDaysRepository.js';
+import { createReviewStoreWriteOperations } from '../../src/repositories/reviewStoreRepository.js';
+import { emptyStore, progressShardId } from '../../src/review-engine/store.js';
 
 const PROJECT_ID = 'demo-korean-review-web';
 let environment;
@@ -99,6 +101,52 @@ test('repository batches create a summary and segmented attempt log', async () =
   const segments = await getDocs(collection(firestore, 'users/owner/reviewDays/2026-09-14/attemptSegments'));
   assert.equal(segments.size, 1);
   assert.equal(segments.docs[0].data().attempts[0].id, 'attempt');
+});
+
+test('review store writes first-time answers and updates existing progress without losing neighboring entries', async () => {
+  const firestore = environment.authenticatedContext('owner').firestore();
+  const uid = 'owner';
+  const date = '2026-09-14';
+  const questionId = 'word.1/ko';
+  const attempt = { id: 'wrong-1', date, time: `${date}T01:00:00Z`, correct: false };
+  const first = {
+    ...emptyStore(),
+    stats: { [questionId]: { correct: 0, wrong: 1 } },
+    progress: { [questionId]: { dueDate: '2026-09-15' } },
+    attempts: [attempt],
+    starred: ['word.1'],
+    recognition: { 'word.1': true },
+  };
+  const write = async (previous, next) => {
+    const batch = writeBatch(firestore);
+    createReviewStoreWriteOperations(firestore, uid, previous, next, 3)
+      .forEach((operation) => operation(batch));
+    await assertSucceeds(batch.commit());
+  };
+
+  await write(emptyStore(), first);
+  const shardRef = doc(firestore, `users/${uid}/progressShards/${progressShardId(questionId)}`);
+  assert.deepEqual((await getDoc(shardRef)).data().entries[questionId], {
+    stats: { correct: 0, wrong: 1 },
+    progress: { dueDate: '2026-09-15' },
+  });
+  const attempts = await getDocs(collection(firestore, `users/${uid}/reviewDays/${date}/attemptSegments`));
+  assert.equal(attempts.docs.flatMap((entry) => entry.data().attempts).length, 1);
+  assert.deepEqual((await getDoc(doc(firestore, `users/${uid}/settings/review`))).data().starred, ['word.1']);
+
+  const neighborId = 'neighbor';
+  await setDoc(shardRef, { entries: { [neighborId]: { stats: { correct: 2 } } } }, { merge: true });
+  const second = { ...first, stats: { [questionId]: { correct: 1, wrong: 1 } }, completedReviewDates: [date] };
+  await write(first, second);
+  const updated = (await getDoc(shardRef)).data().entries;
+  assert.equal(updated[questionId].stats.correct, 1);
+  assert.equal(updated[neighborId].stats.correct, 2);
+  assert.deepEqual((await getDoc(doc(firestore, `users/${uid}/settings/review`))).data().completedReviewDates, [date]);
+
+  await write(second, { ...second, stats: {}, progress: {} });
+  const cleared = (await getDoc(shardRef)).data().entries;
+  assert.equal(cleared[questionId], undefined);
+  assert.equal(cleared[neighborId].stats.correct, 2);
 });
 
 test('steady-state incremental sync reads only documents newer than its checkpoint', async () => {
