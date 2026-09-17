@@ -34,6 +34,9 @@ service cloud.firestore {
     match /users/{uid}/settings/review {
       allow read, create: if isOwner(uid);
       allow update: if isOwner(uid)
+        && !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['completedReviewDates']);
+      allow update: if isOwner(uid)
         && request.resource.data.get('completedReviewDates', []) is list
         && request.resource.data.get('completedReviewDates', [])
           .hasAll(resource.data.get('completedReviewDates', []));
