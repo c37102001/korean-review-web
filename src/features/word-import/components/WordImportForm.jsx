@@ -5,7 +5,7 @@ import { FolderPickerDropdown } from '../../word-library/components/BulkWordActi
 import { wordFolderIds } from '../../word-library/collection/model.js';
 import { copyText } from '../../../shared/clipboard.js';
 import { createId } from '../../../shared/id.js';
-import { formatPairLines, normalizeKoreanKey, parsePairLines, wordChineseSummary } from '../../../words/records.js';
+import { formatPairLines, normalizeKoreanKey, parsePairLines, recordOrder, wordChineseSummary } from '../../../words/records.js';
 import {
   buildJsonImportDraft,
   clearMissingImportRelated,
@@ -807,4 +807,3 @@ function mergeEditedItem(original, manual, allItems = []) {
   });
   return next;
 }
-
