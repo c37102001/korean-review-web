@@ -148,13 +148,12 @@ def set_cursor_visibility(visibility: int) -> int:
 
 
 def read_terminal_key(stdscr: curses.window, *, wide: bool = False) -> Any:
-    global _AUTO_PLAY_AUDIO
     key = stdscr.get_wch() if wide else stdscr.getch()
     is_audio_toggle = key == "." if isinstance(key, str) else key == ord(".")
     if is_audio_toggle:
-        _AUTO_PLAY_AUDIO = not _AUTO_PLAY_AUDIO
+        enabled = toggle_auto_audio_enabled()
         height, width = stdscr.getmaxyx()
-        status = f"自動播放語音：{'開啟' if _AUTO_PLAY_AUDIO else '關閉'}"
+        status = f"自動播放語音：{'開啟' if enabled else '關閉'}"
         draw_line(stdscr, height - 1, max(0, width - _text_cell_width(status) - 3), status, curses.A_BOLD)
         stdscr.refresh()
         time.sleep(0.45)
@@ -178,7 +177,7 @@ def read_terminal_key_with_timeout(
 
 
 def auto_audio_control_label() -> str:
-    return f".=自動語音:{'開' if _AUTO_PLAY_AUDIO else '關'}"
+    return f".=自動語音:{'開' if is_auto_audio_enabled() else '關'}"
 
 
 def wait_message(stdscr: curses.window, title: str, message: str) -> None:

@@ -122,6 +122,20 @@ def utc_now_iso() -> str:
 _AUTO_PLAY_AUDIO = True
 
 
+def is_auto_audio_enabled() -> bool:
+    return _AUTO_PLAY_AUDIO
+
+
+def set_auto_audio_enabled(enabled: bool) -> bool:
+    global _AUTO_PLAY_AUDIO
+    _AUTO_PLAY_AUDIO = bool(enabled)
+    return _AUTO_PLAY_AUDIO
+
+
+def toggle_auto_audio_enabled() -> bool:
+    return set_auto_audio_enabled(not is_auto_audio_enabled())
+
+
 class FirebaseClient:
     def __init__(self, api_key: str, project_id: str, transport=None) -> None:
         self.api_key = api_key

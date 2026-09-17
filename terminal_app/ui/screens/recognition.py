@@ -151,7 +151,7 @@ def run_daily_recognition(
         if footer:
             draw_line(stdscr, height - 1, 2, footer, wrong_result_attr if graded and not results[question.id] else curses.A_BOLD)
         update_curses_screen(stdscr)
-        if _AUTO_PLAY_AUDIO and not word_visible and not graded and spoken_question_id != question.id:
+        if is_auto_audio_enabled() and not word_visible and not graded and spoken_question_id != question.id:
             spoken_question_id = question.id
             if not speak_korean(question.ko):
                 message = "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
@@ -197,7 +197,7 @@ def run_daily_recognition(
                 else:
                     word_visible, revealed = True, True
             message = ""
-            if _AUTO_PLAY_AUDIO and not grammar_mode and not was_revealed and revealed:
+            if is_auto_audio_enabled() and not grammar_mode and not was_revealed and revealed:
                 message = (
                     "已自動播放所屬韓文單字。"
                     if speak_korean(card.ko)

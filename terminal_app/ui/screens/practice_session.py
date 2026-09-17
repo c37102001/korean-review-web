@@ -234,7 +234,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 audio_message = "無法播放例句語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
             message = " ".join(part for part in (result_message, audio_message) if part)
             continue
-        if config.get("auto_prompt_audio", True) and _AUTO_PLAY_AUDIO and config["direction"] == "ko-zh" and not answer_visible and spoken_question_id != question.id:
+        if config.get("auto_prompt_audio", True) and is_auto_audio_enabled() and config["direction"] == "ko-zh" and not answer_visible and spoken_question_id != question.id:
             spoken_question_id = question.id
             message = (
                 "已自動播放韓文題目。"
@@ -313,7 +313,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             else:
                 message = "答對，未紀錄。按 Enter 或 6 進入下一題。" if correct else "答錯，未紀錄。按 Enter 或 6 進入下一題。"
             result_message = message
-            pending_word_audio = auto_answer_audio and _AUTO_PLAY_AUDIO and bool(answer_word)
+            pending_word_audio = auto_answer_audio and is_auto_audio_enabled() and bool(answer_word)
             continue
         if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
             if graded:
@@ -396,7 +396,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 show_hint = revealing_answer
                 scroll_offset = 0
                 if revealing_answer:
-                    pending_word_audio = auto_answer_audio and _AUTO_PLAY_AUDIO and bool(answer_word)
+                    pending_word_audio = auto_answer_audio and is_auto_audio_enabled() and bool(answer_word)
             elif key in ("1", "2") and self_grade_mode:
                 if not show_hint:
                     message = "請先按 8 公佈答案。"

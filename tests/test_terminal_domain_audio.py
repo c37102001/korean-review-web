@@ -2,10 +2,13 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from terminal_app.audio.youtube import TerminalYoutubeAudioPlayer, download_youtube_audio
 from terminal_app.domain.content import normalize_grammar_notes, normalize_reading_tests, normalize_records, normalize_youtube_subtitles
 from terminal_app.domain.models import YoutubeSubtitle
+from terminal_app.runtime import is_auto_audio_enabled, set_auto_audio_enabled
+from terminal_app.ui.curses_helpers import auto_audio_control_label, read_terminal_key
 
 
 class FakeRunner:
@@ -52,7 +55,38 @@ class FakeProcess:
         self.running = False
 
 
+class FakeTerminalScreen:
+    def __init__(self, key):
+        self.key = key
+        self.lines = []
+
+    def getch(self):
+        return self.key
+
+    def getmaxyx(self):
+        return (24, 100)
+
+    def addstr(self, y, x, text, attr):
+        self.lines.append((y, x, text, attr))
+
+    def refresh(self):
+        return None
+
+
 class TerminalDomainAudioTests(unittest.TestCase):
+    def tearDown(self):
+        set_auto_audio_enabled(True)
+
+    def test_dot_key_toggles_the_shared_audio_state_used_by_every_screen(self):
+        set_auto_audio_enabled(True)
+        screen = FakeTerminalScreen(ord('.'))
+        with patch('terminal_app.ui.curses_helpers.time.sleep'):
+            read_terminal_key(screen)
+
+        self.assertFalse(is_auto_audio_enabled())
+        self.assertIn('自動語音:關', auto_audio_control_label())
+        self.assertTrue(any('自動播放語音：關閉' in line[2] for line in screen.lines))
+
     def test_domain_modules_do_not_import_ui_network_audio_or_cache(self):
         domain_dir = Path(__file__).parents[1] / 'terminal_app' / 'domain'
         source = '\n'.join(path.read_text(encoding='utf-8') for path in domain_dir.glob('*.py'))

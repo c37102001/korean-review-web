@@ -204,7 +204,7 @@ def run_study(
                 scroll_offset = 0
                 message = ""
                 continue
-            elif key == curses.KEY_RESIZE and not _AUTO_PLAY_AUDIO:
+            elif key == curses.KEY_RESIZE and not is_auto_audio_enabled():
                 auto_playing = False
                 message = "自動語音已關閉，完整自動播放已暫停。"
                 continue
@@ -220,7 +220,7 @@ def run_study(
                 scroll_offset = 0
                 message = ""
             continue
-        if _AUTO_PLAY_AUDIO and front_side == "ko" and spoken_card_id != card.id:
+        if is_auto_audio_enabled() and front_side == "ko" and spoken_card_id != card.id:
             spoken_card_id = card.id
             message = (
                 "已自動播放韓文單字。"
@@ -241,7 +241,7 @@ def run_study(
             if front_side == "zh":
                 message = "中文正面暫不支援完整自動播放；按 5 顯示韓文後可用 9、7 播放語音。"
                 continue
-            if not _AUTO_PLAY_AUDIO:
+            if not is_auto_audio_enabled():
                 message = "請先按 . 開啟自動語音，再啟動完整自動播放。"
                 continue
             auto_playing = True

@@ -109,7 +109,7 @@ def run_grammar_recall_practice(
             draw_line(stdscr, height - 1, 2, footer, wrong_result_attr if graded and not graded[question.id] else curses.A_BOLD)
         update_curses_screen(stdscr)
 
-        if _AUTO_PLAY_AUDIO and not revealed and spoken_question_id != question.id:
+        if is_auto_audio_enabled() and not revealed and spoken_question_id != question.id:
             spoken_question_id = question.id
             message = (
                 "已自動播放韓文題目。"
