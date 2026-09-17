@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Folder, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, Folder, Trash2 } from 'lucide-react';
 
 import { EditIconButton, KoreanSpeakButton, StarButton } from '../../../components/actions/ContentActionButtons.jsx';
 import { relatedWords, wordExamples } from '../../../words/records.js';
@@ -45,6 +45,8 @@ export function WordCardActions({
   selectable = false,
   selected = false,
   onToggleSelected,
+  showChinese = false,
+  onToggleChinese,
   badge,
 }) {
   return (
@@ -56,6 +58,21 @@ export function WordCardActions({
         </label>
       )}
       <StarButton active={isStarred} onClick={onToggleStar} />
+      {onToggleChinese && (
+        <button
+          type="button"
+          className="edit-icon-button word-chinese-toggle"
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleChinese();
+          }}
+          aria-label={showChinese ? '隱藏中文' : '顯示中文'}
+          title={showChinese ? '隱藏中文' : '顯示中文'}
+          aria-pressed={showChinese}
+        >
+          {showChinese ? <EyeOff size={15} /> : <Eye size={15} />}
+        </button>
+      )}
       {onEdit && <EditIconButton onClick={() => onEdit(word)} />}
       <DeleteIconButton word={word} onDelete={onDelete} label={deleteLabel} confirmMessage={deleteConfirmMessage} />
       {badge === 'mastery' ? <MasteryBadge level={word.level} /> : badge && <span className="badge">{badge}</span>}
@@ -100,6 +117,8 @@ export function WordCard({
   selectable = false,
   selected = false,
   onToggleSelected,
+  showChinese = false,
+  onToggleChinese,
 }) {
   return (
     <article
@@ -119,10 +138,12 @@ export function WordCard({
           selectable={selectable}
           selected={selected}
           onToggleSelected={onToggleSelected}
+          showChinese={showChinese}
+          onToggleChinese={onToggleChinese}
           badge="mastery"
         />
       </div>
-      <p>{word.zh}</p>
+      {showChinese && <p className="word-card-meaning">{word.zh}</p>}
       <WordMetadata word={word} />
       <WordFolderTags wordId={word.id} folders={folders} />
     </article>

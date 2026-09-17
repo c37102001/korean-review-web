@@ -18,7 +18,7 @@ import { EditIconButton, KoreanSpeakButton, StarButton } from '../components/act
 import { TextSpeakButton } from '../components/actions/TextSpeakButton.jsx';
 import { FolderPickerDropdown } from '../features/word-library/components/BulkWordActions.jsx';
 import { GroupedFolderMultiSelect, MultiSelectFilter, SearchScopeControl } from '../features/word-library/components/WordCollectionFilters.jsx';
-import { WordCollectionView } from '../features/word-library/components/WordCollectionView.jsx';
+import { WordChineseVisibilityButton, WordCollectionView } from '../features/word-library/components/WordCollectionView.jsx';
 import {
   WordDetailCard,
   WordDetails,
@@ -673,6 +673,7 @@ export function FolderDetailPage({ folder, folders, store, updateStore, items, q
           <button onClick={dialogs.openAdd}><Plus size={18} /> 新增</button>
           <button onClick={() => onStudy(folderItems, `${folder.name} 學習`)} disabled={!folderItems.length}><BookOpen size={18} /> 學習</button>
           <button className="primary" onClick={() => onPractice(folderQuestions, `${folder.name} 測驗`, { allowResultRecording: true })} disabled={!folderQuestions.length}><Dumbbell size={18} /> 測驗</button>
+          <WordChineseVisibilityButton visible={collection.showAllChinese} onToggle={collection.toggleAllChinese} />
           <ActionMenu>
             <button onClick={() => setAddExistingOpen(true)}><Link2 size={18} /> 加入現有單字</button>
             <button onClick={() => setRenameOpen(true)}><Pencil size={18} /> {isSystemFolder(folder) ? '編輯標籤' : '編輯資料夾'}</button>
@@ -771,6 +772,7 @@ export function NotebookPage({ store, updateStore, items, questions, folders = [
           <button className="add-date-button" onClick={dialogs.openAdd}><Plus size={18} /> 新增</button>
           <button onClick={() => onStudy(collection.filteredItems, '篩選結果')} disabled={!collection.filteredItems.length} title="學習目前篩選出的單字"><BookOpen size={18} /> 學習</button>
           <button className="primary" onClick={() => onPractice(collection.filteredQuestions, '篩選結果測驗', { allowResultRecording: true })} disabled={!collection.filteredQuestions.length} title="測驗目前篩選出的單字"><Dumbbell size={18} /> 測驗</button>
+          <WordChineseVisibilityButton visible={collection.showAllChinese} onToggle={collection.toggleAllChinese} />
           <ActionMenu>
             <button
               type="button"

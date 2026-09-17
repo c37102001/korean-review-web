@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { WordCard } from '../features/word-library/components/WordPresentation.jsx';
+import { WordChineseVisibilityButton } from '../features/word-library/components/WordCollectionView.jsx';
+import { useWordCollection } from '../features/word-library/hooks/useWordCollection.js';
 import NotesNotebookPage from '../features/notes/pages/NotesNotebookPage.jsx';
 import { YoutubeSubtitleReader } from '../features/subtitles/pages/YoutubeSubtitleReader.jsx';
 import { ReadingTestPage } from '../features/reading/pages/ReadingTestPage.jsx';
@@ -15,11 +17,15 @@ const noop = () => {};
 const asyncNoop = async () => {};
 
 function CollectionFixture({ folder = false }) {
+  const collection = useWordCollection({ items: words, questions, folders, sourceKey: folder ? 'folder' : 'notebook' });
   return (
     <section className="page notebook-page fixture-page">
-      <div className="topbar"><div><span className="eyebrow">{folder ? 'Folder' : 'Notebook'}</span><h1>{folder ? folders[0].name : '單字本'}</h1></div></div>
+      <div className="topbar">
+        <div><span className="eyebrow">{folder ? 'Folder' : 'Notebook'}</span><h1>{folder ? folders[0].name : '單字本'}</h1></div>
+        <div className="actions"><WordChineseVisibilityButton visible={collection.showAllChinese} onToggle={collection.toggleAllChinese} /></div>
+      </div>
       <div className="word-grid">
-        {words.map((word) => <WordCard key={word.id} word={word} folders={folders} onSpeak={noop} onEdit={noop} onDelete={asyncNoop} onToggleStar={noop} selectable onToggleSelected={noop} />)}
+        {words.map((word) => <WordCard key={word.id} word={word} folders={folders} onSpeak={noop} onEdit={noop} onDelete={asyncNoop} onToggleStar={noop} selectable onToggleSelected={noop} showChinese={collection.isChineseVisible(word.id)} onToggleChinese={() => collection.toggleChinese(word.id)} />)}
       </div>
     </section>
   );
@@ -34,7 +40,7 @@ function FixtureApp() {
     onToggleLearned: asyncNoop, onToggleUnfamiliar: asyncNoop,
   };
   let content;
-  if (fixture === 'word-card') content = <section className="page fixture-page"><WordCard word={words[1]} folders={folders} onSpeak={noop} onEdit={noop} onDelete={asyncNoop} onToggleStar={noop} selectable onToggleSelected={noop} /></section>;
+  if (fixture === 'word-card') content = <section className="page fixture-page"><WordCard word={words[1]} folders={folders} onSpeak={noop} onEdit={noop} onDelete={asyncNoop} onToggleStar={noop} selectable onToggleSelected={noop} onToggleChinese={noop} /></section>;
   else if (fixture === 'notebook') content = <CollectionFixture />;
   else if (fixture === 'folder') content = <CollectionFixture folder />;
   else if (fixture === 'study') content = <StudyPage store={store} updateStore={updateStore} set={createStudySession(words, '視覺測試')} allItems={words} folders={folders} onUpdateRecord={asyncNoop} {...commonClassification} />;

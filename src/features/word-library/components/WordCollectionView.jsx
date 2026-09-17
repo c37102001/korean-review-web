@@ -1,8 +1,23 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Eye, EyeOff } from 'lucide-react';
 
 import { BulkWordActions } from './BulkWordActions.jsx';
 import { WordCard } from './WordPresentation.jsx';
+
+export function WordChineseVisibilityButton({ visible = false, onToggle }) {
+  return (
+    <button
+      type="button"
+      className="word-chinese-visibility-button"
+      onClick={onToggle}
+      aria-pressed={visible}
+      title={visible ? '隱藏全部單字卡中文' : '顯示全部單字卡中文'}
+    >
+      {visible ? <EyeOff size={18} /> : <Eye size={18} />}
+      {visible ? '隱藏中文' : '顯示中文'}
+    </button>
+  );
+}
 
 export function WordCollectionView({
   collection,
@@ -55,6 +70,8 @@ export function WordCollectionView({
               selectable
               selected={collection.selectedIds.includes(word.id)}
               onToggleSelected={collection.toggleSelected}
+              showChinese={collection.isChineseVisible?.(word.id) || false}
+              onToggleChinese={collection.toggleChinese ? () => collection.toggleChinese(word.id) : undefined}
             />
           ))}
         </div>

@@ -56,6 +56,7 @@ test('the canonical word card owns the list layout, actions, metadata and folder
     selectable: true,
     selected: true,
     onToggleSelected: () => {},
+    onToggleChinese: () => {},
   }));
 
   assert.match(markup, /class="word-card clickable-card selected-word-card"/);
@@ -63,7 +64,20 @@ test('the canonical word card owns the list layout, actions, metadata and folder
   assert.match(markup, /熟悉分數 -2/);
   assert.match(markup, /常用副詞/);
   assert.match(markup, /不熟悉/);
+  assert.match(markup, /aria-label="顯示中文"/);
+  assert.doesNotMatch(markup, /反正、終究/);
   assert.doesNotMatch(markup, /note-card|compact-card/);
+});
+
+test('word card Chinese meaning is opt-in', () => {
+  const markup = renderToStaticMarkup(React.createElement(presentation.WordCard, {
+    word,
+    showChinese: true,
+    onToggleChinese: () => {},
+  }));
+
+  assert.match(markup, /aria-label="隱藏中文"/);
+  assert.match(markup, /class="word-card-meaning">反正、終究/);
 });
 
 test('word details are shared by detail, study and practice surfaces', () => {

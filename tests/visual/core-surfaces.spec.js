@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 const CASES = ['word-card', 'notebook', 'folder', 'study', 'practice', 'yt-reader', 'notes', 'reading'];
+const COLLECTION_FIXTURE_WORD_COUNT = 2;
 const VIEWPORTS = [
   { name: 'mobile-360', width: 360, height: 800 },
   { name: 'mobile-390', width: 390, height: 844 },
@@ -73,6 +74,15 @@ for (const viewport of VIEWPORTS) {
           await page.locator('.yt-reader-floating-button').last().click();
           const after = await firstSubtitle.boundingBox();
           expect(Math.abs((before?.height || 0) - (after?.height || 0))).toBeLessThanOrEqual(1);
+        } else if (fixture === 'notebook' || fixture === 'folder') {
+          const firstMeaning = page.locator('.word-card-meaning').first();
+          await expect(firstMeaning).toHaveCount(0);
+          await page.locator('.topbar').getByRole('button', { name: '顯示中文', exact: true }).click();
+          await expect(page.locator('.word-card-meaning')).toHaveCount(COLLECTION_FIXTURE_WORD_COUNT);
+          await page.locator('.word-card').first().getByRole('button', { name: '隱藏中文' }).click();
+          await expect(page.locator('.word-card-meaning')).toHaveCount(COLLECTION_FIXTURE_WORD_COUNT - 1);
+          await page.locator('.topbar').getByRole('button', { name: '隱藏中文', exact: true }).click();
+          await expect(page.locator('.word-card-meaning')).toHaveCount(0);
         }
 
         await page.waitForTimeout(100);

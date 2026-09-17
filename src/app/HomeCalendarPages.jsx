@@ -18,7 +18,7 @@ import { EditIconButton, KoreanSpeakButton, StarButton } from '../components/act
 import { TextSpeakButton } from '../components/actions/TextSpeakButton.jsx';
 import { FolderPickerDropdown } from '../features/word-library/components/BulkWordActions.jsx';
 import { GroupedFolderMultiSelect, MultiSelectFilter, SearchScopeControl } from '../features/word-library/components/WordCollectionFilters.jsx';
-import { WordCollectionView } from '../features/word-library/components/WordCollectionView.jsx';
+import { WordChineseVisibilityButton, WordCollectionView } from '../features/word-library/components/WordCollectionView.jsx';
 import {
   WordDetailCard,
   WordDetails,
@@ -562,6 +562,7 @@ export function NotesPage({ store, updateStore, items, questions, date, allItems
           <button className="add-date-button" onClick={dialogs.openAdd}><Plus size={18} /> 新增</button>
           <button disabled={!collection.filteredItems.length} onClick={() => onStudy(collection.filteredItems, `${date} 學習`)}><BookOpen size={18} /> 學習</button>
           <button className="primary" disabled={!collection.filteredQuestions.length} onClick={() => onPractice(collection.filteredQuestions, `${date} 測驗`)}><Dumbbell size={18} /> 測驗</button>
+          <WordChineseVisibilityButton visible={collection.showAllChinese} onToggle={collection.toggleAllChinese} />
           <ActionMenu>
             <button disabled={!items.length} onClick={() => setExportOpen(true)}><Download size={18} /> 匯出 JSON</button>
             <button disabled={!items.length} onClick={() => setJsonEditOpen(true)}><Pencil size={18} /> 修改 JSON</button>

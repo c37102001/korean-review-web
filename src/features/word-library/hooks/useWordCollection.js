@@ -28,6 +28,8 @@ export function useWordCollection({
   const [sort, setSort] = useState(defaultSort);
   const [pageNumber, setPageNumber] = useState(1);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [showAllChinese, setShowAllChinese] = useState(false);
+  const [chineseVisibilityOverrides, setChineseVisibilityOverrides] = useState({});
 
   const derived = useMemo(() => deriveWordCollection({
     items,
@@ -48,6 +50,8 @@ export function useWordCollection({
   useEffect(() => {
     setPageNumber(1);
     setSelectedIds([]);
+    setShowAllChinese(false);
+    setChineseVisibilityOverrides({});
     if (resetFolderFiltersOnSourceChange) setSelectedFolderIds([]);
   }, [sourceKey, resetFolderFiltersOnSourceChange]);
 
@@ -59,6 +63,9 @@ export function useWordCollection({
   useEffect(() => {
     const availableWordIds = new Set(items.map((item) => item.id));
     setSelectedIds((current) => retainIds(current, availableWordIds));
+    setChineseVisibilityOverrides((current) => Object.fromEntries(
+      Object.entries(current).filter(([itemId]) => availableWordIds.has(itemId)),
+    ));
   }, [items]);
 
   useEffect(() => {
@@ -78,6 +85,21 @@ export function useWordCollection({
   }, []);
   const toggleFolder = useCallback((folderId) => {
     setSelectedFolderIds((current) => toggleValue(current, folderId));
+  }, []);
+  const isChineseVisible = useCallback((itemId) => (
+    Object.hasOwn(chineseVisibilityOverrides, itemId)
+      ? chineseVisibilityOverrides[itemId]
+      : showAllChinese
+  ), [chineseVisibilityOverrides, showAllChinese]);
+  const toggleChinese = useCallback((itemId) => {
+    setChineseVisibilityOverrides((current) => {
+      const currentlyVisible = Object.hasOwn(current, itemId) ? current[itemId] : showAllChinese;
+      return { ...current, [itemId]: !currentlyVisible };
+    });
+  }, [showAllChinese]);
+  const toggleAllChinese = useCallback(() => {
+    setShowAllChinese((current) => !current);
+    setChineseVisibilityOverrides({});
   }, []);
 
   return {
@@ -99,6 +121,10 @@ export function useWordCollection({
     selectedIds,
     setSelectedIds,
     toggleSelected,
+    showAllChinese,
+    toggleAllChinese,
+    isChineseVisible,
+    toggleChinese,
     visibleIds: derived.pagedItems.map((item) => item.id),
   };
 }
