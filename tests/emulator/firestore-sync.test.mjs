@@ -10,6 +10,7 @@ import {
   arrayUnion,
   collection,
   doc,
+  getDoc,
   getDocs,
   query,
   setDoc,
@@ -23,7 +24,7 @@ import {
   reviewAttemptSegmentId,
 } from '../../src/repositories/reviewDaysRepository.js';
 
-const PROJECT_ID = 'korean-review-web-test';
+const PROJECT_ID = 'demo-korean-review-web';
 let environment;
 
 before(async () => {
@@ -135,8 +136,7 @@ test('offline-style field merges from two clients preserve independent changes',
   await setDoc(referenceA, { starred: { wordA: true } }, { merge: true });
   await setDoc(referenceB, { completedDates: { '2026-09-16': true } }, { merge: true });
 
-  const snapshot = await getDocs(collection(first, 'users/owner/settings'));
-  const review = snapshot.docs.find((entry) => entry.id === 'review').data();
+  const review = (await getDoc(referenceA)).data();
   assert.deepEqual(review.starred, { wordA: true });
   assert.deepEqual(review.completedDates, { '2026-09-16': true });
 });

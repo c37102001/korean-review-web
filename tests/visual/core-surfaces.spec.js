@@ -30,6 +30,9 @@ for (const viewport of VIEWPORTS) {
           }
         });
         await page.goto(`visual-fixtures.html?case=${fixture}`);
+        await page.addStyleTag({
+          content: '*, *::before, *::after { animation: none !important; transition: none !important; }',
+        });
         await expect(page.locator('[data-fixture]')).toHaveAttribute('data-fixture', fixture);
         await page.waitForTimeout(250);
 
@@ -47,6 +50,13 @@ for (const viewport of VIEWPORTS) {
         if (fixture === 'study') {
           await page.locator('.flashcard').evaluate((element) => element.click());
           await expect(page.locator('.flashcard')).toHaveClass(/flipped/);
+          await expect(page.locator('.flash-face.back')).toContainText('어쩌피');
+          await page.addStyleTag({
+            content: [
+              '.flashcard.flipped .front { display: none !important; }',
+              '.flashcard.flipped .back { transform: none !important; backface-visibility: visible !important; }',
+            ].join(' '),
+          });
         } else if (fixture === 'practice') {
           await page.getByRole('button', { name: '公佈答案' }).click();
           await expect(page.locator('.practice-answer-panel')).toHaveClass(/visible/);
@@ -62,6 +72,7 @@ for (const viewport of VIEWPORTS) {
           expect(Math.abs((before?.height || 0) - (after?.height || 0))).toBeLessThanOrEqual(1);
         }
 
+        await page.waitForTimeout(100);
         await expect(page).toHaveScreenshot(`${fixture}-${viewport.name}.png`, { fullPage: false });
       });
     }

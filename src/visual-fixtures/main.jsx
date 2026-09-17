@@ -46,7 +46,15 @@ function FixtureApp() {
   else if (fixture === 'yt-reader') content = <YoutubeSubtitleReader note={subtitle} allItems={words} folders={folders} onAddRecords={asyncNoop} onBack={noop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} />;
   else if (fixture === 'notes') content = <NotesNotebookPage notes={notes} loading={false} error="" onSave={asyncNoop} onDelete={asyncNoop} onPractice={noop} />;
   else content = <ReadingTestPage test={readingTest} allItems={words} folders={folders} onAddRecords={asyncNoop} onUpdateRecord={asyncNoop} onDeleteRecord={asyncNoop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} onBack={noop} />;
-  return <main className="visual-fixture" data-fixture={fixture}>{content}</main>;
+  return (
+    <main
+      className="visual-fixture"
+      data-fixture={fixture}
+      style={{ '--mobile-nav-height': '66px', '--mobile-card-edge-gap': '8px' }}
+    >
+      {content}
+    </main>
+  );
 }
 
 createRoot(document.getElementById('root')).render(<FixtureApp />);

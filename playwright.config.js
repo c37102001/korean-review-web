@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
+const snapshotEnvironment = process.env.VISUAL_SNAPSHOT_ENV || process.platform;
+
 export default defineConfig({
   testDir: './tests/visual',
   outputDir: 'test-results/visual',
@@ -7,6 +9,7 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['line'], ['html', { outputFolder: 'playwright-report', open: 'never' }]] : 'line',
+  snapshotPathTemplate: `{testDir}/{testFilePath}-snapshots/{arg}-${snapshotEnvironment}{ext}`,
   expect: { toHaveScreenshot: { animations: 'disabled', caret: 'hide', maxDiffPixelRatio: 0.01 } },
   use: {
     baseURL: 'http://127.0.0.1:4175/korean-review-web/',
