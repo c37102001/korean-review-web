@@ -140,3 +140,20 @@ test('offline-style field merges from two clients preserve independent changes',
   assert.deepEqual(review.starred, { wordA: true });
   assert.deepEqual(review.completedDates, { '2026-09-16': true });
 });
+
+test('completed review dates are append-only even when other settings are merged', async () => {
+  const firestore = environment.authenticatedContext('owner').firestore();
+  const reference = doc(firestore, 'users/owner/settings/review');
+
+  await assertSucceeds(setDoc(reference, {
+    completedReviewDates: ['2026-09-15'],
+    starred: {},
+  }));
+  await assertSucceeds(setDoc(reference, {
+    completedReviewDates: arrayUnion('2026-09-16'),
+    starred: { wordA: true },
+  }, { merge: true }));
+  await assertFails(setDoc(reference, {
+    completedReviewDates: ['2026-09-16'],
+  }, { merge: true }));
+});

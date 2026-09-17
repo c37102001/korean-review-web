@@ -34,8 +34,9 @@ service cloud.firestore {
     match /users/{uid}/settings/review {
       allow read, create: if isOwner(uid);
       allow update: if isOwner(uid)
-        && request.resource.data.completedReviewDates is list
-        && request.resource.data.completedReviewDates.hasAll(resource.data.completedReviewDates);
+        && request.resource.data.get('completedReviewDates', []) is list
+        && request.resource.data.get('completedReviewDates', [])
+          .hasAll(resource.data.get('completedReviewDates', []));
       allow delete: if false;
     }
     match /users/{uid}/settings/grammarReview {
