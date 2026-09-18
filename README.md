@@ -194,6 +194,15 @@ Terminal 的「YT字幕」會使用 `yt-dlp` 與 `ffmpeg` 將影片原音下載�
 會從目前句起點重播，`7` 或空白鍵可暫停／繼續。JSON 字幕沒有時間戳，因此只能播放
 原音，無法自動同步或逐句跳轉。離開字幕頁面時播放器會自動停止。
 
+若 YouTube 顯示「Sign in to confirm you're not a bot」，可在專案的 `.env` 設定
+`TERMINAL_YOUTUBE_COOKIES_FROM_BROWSER=chrome`（也支援 `firefox`、`chromium`、
+`edge` 等 yt-dlp 支援的瀏覽器），重新啟動 Terminal。該瀏覽器須已登入
+YouTube；若使用非預設瀏覽器設定檔，可依 yt-dlp 的
+`BROWSER[+KEYRING][:PROFILE]` 格式指定。另一種方式是設定
+`TERMINAL_YOUTUBE_COOKIES_FILE=/絕對路徑/cookies.txt`，提供 Netscape 格式
+的 cookie 檔。兩者只能擇一。程式只會在明確設定後讀取登入 cookie，不會把
+cookie 存入專案或 Terminal 音檔快取；請勿提交 cookie 檔或將其內容貼到錯誤回報中。
+
 Terminal 主選單的「閱讀測驗」會使用與網頁相同的 `readingTests` 資料。列表預設隱藏
 已學習題目，可按 `H` 顯示或再次隱藏；進入題目後使用 `↑/↓` 捲動整篇內容、`←/→`
 選擇選項並按 `Enter` 作答，也可直接按選項數字。送出前只顯示韓文，送出後才顯示文章、

@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -30,6 +31,12 @@ class FakeRunner:
     def popen(self, command, **_kwargs):
         self.commands.append(command)
         return self.process
+
+
+class LoginRequiredRunner(FakeRunner):
+    def run(self, command, **_kwargs):
+        self.commands.append(command)
+        return SimpleNamespace(returncode=1, stderr="ERROR: [youtube] Sign in to confirm you’re not a bot. Use --cookies-from-browser")
 
 
 class FakeProcess:
@@ -127,10 +134,61 @@ class TerminalDomainAudioTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             runner = FakeRunner()
             subtitle = YoutubeSubtitle('id', 'title', 'https://youtu.be/test', 'srt', [], '', '')
-            path, message = download_youtube_audio(subtitle, Path(directory), runner)
+            with patch.dict(os.environ, {
+                'TERMINAL_YOUTUBE_COOKIES_FROM_BROWSER': '', 'TERMINAL_YOUTUBE_COOKIES_FILE': '',
+            }):
+                path, message = download_youtube_audio(subtitle, Path(directory), runner)
             self.assertTrue(path.exists())
             self.assertEqual(len(runner.commands), 2)
             self.assertIn('備援策略 2', message)
+
+    def test_youtube_login_error_stops_retries_and_explains_cookie_setup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = LoginRequiredRunner()
+            subtitle = YoutubeSubtitle('id', 'title', 'https://youtu.be/test', 'srt', [], '', '')
+            with patch.dict(os.environ, {
+                'TERMINAL_YOUTUBE_COOKIES_FROM_BROWSER': '', 'TERMINAL_YOUTUBE_COOKIES_FILE': '',
+            }):
+                path, message = download_youtube_audio(subtitle, Path(directory), runner)
+            self.assertIsNone(path)
+            self.assertEqual(len(runner.commands), 1)
+            self.assertIn('TERMINAL_YOUTUBE_COOKIES_FROM_BROWSER=chrome', message)
+
+    def test_youtube_browser_auth_is_passed_to_downloader(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = FakeRunner()
+            subtitle = YoutubeSubtitle('id', 'title', 'https://youtu.be/test', 'srt', [], '', '')
+            with patch.dict(os.environ, {
+                'TERMINAL_YOUTUBE_COOKIES_FROM_BROWSER': 'chrome', 'TERMINAL_YOUTUBE_COOKIES_FILE': '',
+            }):
+                path, _ = download_youtube_audio(subtitle, Path(directory), runner)
+            self.assertTrue(path.exists())
+            self.assertTrue(all(command[command.index('--cookies-from-browser') + 1] == 'chrome' for command in runner.commands))
+
+    def test_youtube_cookie_file_is_used_without_exporting_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cookie_file = Path(directory) / 'cookies.txt'
+            cookie_file.write_text('# Netscape HTTP Cookie File\n', encoding='utf-8')
+            runner = FakeRunner()
+            subtitle = YoutubeSubtitle('id', 'title', 'https://youtu.be/test', 'srt', [], '', '')
+            with patch.dict(os.environ, {
+                'TERMINAL_YOUTUBE_COOKIES_FROM_BROWSER': '', 'TERMINAL_YOUTUBE_COOKIES_FILE': str(cookie_file),
+            }):
+                path, _ = download_youtube_audio(subtitle, Path(directory), runner)
+            self.assertTrue(path.exists())
+            self.assertTrue(all(command[command.index('--cookies') + 1] == str(cookie_file) for command in runner.commands))
+
+    def test_youtube_conflicting_cookie_sources_fail_before_download(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = FakeRunner()
+            subtitle = YoutubeSubtitle('id', 'title', 'https://youtu.be/test', 'srt', [], '', '')
+            with patch.dict(os.environ, {
+                'TERMINAL_YOUTUBE_COOKIES_FROM_BROWSER': 'chrome', 'TERMINAL_YOUTUBE_COOKIES_FILE': 'cookies.txt',
+            }):
+                path, message = download_youtube_audio(subtitle, Path(directory), runner)
+            self.assertIsNone(path)
+            self.assertIn('其中一種', message)
+            self.assertEqual(runner.commands, [])
 
     def test_audio_player_seek_pause_resume_and_cleanup_use_adapter(self):
         runner = FakeRunner()

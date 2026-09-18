@@ -37,6 +37,25 @@ def youtube_audio_download_profiles() -> List[List[str]]:
     ]
 
 
+def youtube_auth_options() -> Tuple[List[str], Optional[str]]:
+    browser = os.getenv("TERMINAL_YOUTUBE_COOKIES_FROM_BROWSER", "").strip()
+    cookie_file = os.getenv("TERMINAL_YOUTUBE_COOKIES_FILE", "").strip()
+    if browser and cookie_file:
+        return [], "請只設定 TERMINAL_YOUTUBE_COOKIES_FROM_BROWSER 或 TERMINAL_YOUTUBE_COOKIES_FILE 其中一種。"
+    if browser:
+        return ["--cookies-from-browser", browser], None
+    if cookie_file:
+        path = Path(cookie_file).expanduser()
+        if not path.is_file():
+            return [], "找不到 TERMINAL_YOUTUBE_COOKIES_FILE 指定的 cookie 檔案。"
+        return ["--cookies", str(path)], None
+    return [], None
+
+
+def youtube_login_required(error: str) -> bool:
+    return "sign in to confirm you" in error.lower() or "login_required" in error.lower()
+
+
 def download_youtube_audio(
     subtitle: YoutubeSubtitle,
     cache_dir: Path,
@@ -53,6 +72,9 @@ def download_youtube_audio(
         return None, "缺少 yt-dlp，請執行 python3 -m pip install -r requirements-terminal.txt。"
     if not runner.which("ffmpeg"):
         return None, "缺少 ffmpeg，無法將 YouTube 音訊轉成 MP3。"
+    auth_options, auth_error = youtube_auth_options()
+    if auth_error:
+        return None, auth_error
 
     audio_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_dir = audio_path.parent / f".{audio_path.stem}-{uuid.uuid4().hex}"
@@ -65,7 +87,7 @@ def download_youtube_audio(
             result = runner.run([
                 yt_dlp, "--no-playlist", "--no-progress", "--retries", "3", "--fragment-retries", "3",
                 "--extract-audio", "--audio-format", "mp3", "--audio-quality", "5",
-                "--output", str(attempt_dir / "audio.%(ext)s"), *profile, subtitle.youtube_url,
+                "--output", str(attempt_dir / "audio.%(ext)s"), *auth_options, *profile, subtitle.youtube_url,
             ], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=300)
             generated = attempt_dir / "audio.mp3"
             if result.returncode == 0 and generated.exists() and generated.stat().st_size > 0:
@@ -74,6 +96,15 @@ def download_youtube_audio(
                 return audio_path, f"YouTube 原音已下載並快取{strategy}。"
             lines = [line.strip() for line in (result.stderr or "").splitlines() if line.strip()]
             errors.append(lines[-1] if lines else f"策略 {attempt_index} 未產生音訊檔案")
+            if youtube_login_required(result.stderr or ""):
+                if auth_options:
+                    return None, "YouTube 仍要求登入；請確認指定瀏覽器已登入 YouTube，或更新 cookie 檔案後重試。"
+                return None, (
+                    "YouTube 要求登入驗證。請在 .env 設定 "
+                    "TERMINAL_YOUTUBE_COOKIES_FROM_BROWSER=chrome（或 firefox），"
+                    "也可設定 TERMINAL_YOUTUBE_COOKIES_FILE 指向 Netscape 格式 cookie 檔；"
+                    "重新啟動 Terminal 後再試。"
+                )
         detail = errors[-1] if errors else "yt-dlp 未產生音訊檔案"
         return None, f"YouTube 音訊下載失敗：{detail}。請先更新 yt-dlp。"
     except subprocess.TimeoutExpired:
