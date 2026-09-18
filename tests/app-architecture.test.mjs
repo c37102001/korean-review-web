@@ -67,7 +67,7 @@ test('feature collection hooks depend on repositories instead of Firebase SDK', 
   });
 });
 
-test('content library routes are lazy chunks and never import the app entry', async () => {
+test('content library routes load with the app and never import its entry', async () => {
   const runtimeSource = await readFile(new URL('../src/app/AppRuntime.jsx', import.meta.url), 'utf8');
   const mainSource = await readFile(new URL('../src/main.jsx', import.meta.url), 'utf8');
   const routePaths = [
@@ -79,7 +79,8 @@ test('content library routes are lazy chunks and never import the app entry', as
   ];
   routePaths.forEach((path) => {
     const modulePath = path.replace('../src/', '../');
-    assert.match(runtimeSource, new RegExp(`lazy\\(\\(\\) => import\\('${modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'\\)`));
+    assert.ok(runtimeSource.includes(`from '${modulePath}'`));
+    assert.ok(!runtimeSource.includes(`import('${modulePath}')`));
   });
   assert.doesNotMatch(mainSource, /lazy\(|features\//);
   const routeSources = await Promise.all(routePaths.map((path) => readFile(new URL(path, import.meta.url), 'utf8')));
@@ -104,8 +105,8 @@ test('study and practice pages are owned by the sessions feature', async () => {
   const runtimeSource = await readFile(new URL('../src/app/AppRuntime.jsx', import.meta.url), 'utf8');
   const sessionSource = await readFile(new URL('../src/features/sessions/SessionPages.jsx', import.meta.url), 'utf8');
   assert.doesNotMatch(runtimeSource, /function (?:StudyPage|PracticePage)\b/);
-  assert.match(runtimeSource, /import\('\.\.\/features\/sessions\/study\/StudyPage\.jsx'\)/);
-  assert.match(runtimeSource, /import\('\.\.\/features\/sessions\/practice\/PracticePage\.jsx'\)/);
+  assert.match(runtimeSource, /from '\.\.\/features\/sessions\/study\/StudyPage\.jsx'/);
+  assert.match(runtimeSource, /from '\.\.\/features\/sessions\/practice\/PracticePage\.jsx'/);
   assert.doesNotMatch(sessionSource, /function |useState|useEffect/);
   assert.match(sessionSource, /export \{ StudyPage \}/);
   assert.match(sessionSource, /export \{ PracticePage \}/);

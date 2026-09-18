@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { AppErrorBoundary } from '../app/AppErrorBoundary.jsx';
 
 import { WordCard } from '../features/word-library/components/WordPresentation.jsx';
 import { AddItemsForm } from '../features/word-import/components/WordImportForm.jsx';
@@ -16,6 +17,10 @@ import '../styles.css';
 
 const noop = () => {};
 const asyncNoop = async () => {};
+
+function BrokenFixture() {
+  throw new Error('Test render failure');
+}
 
 function CollectionFixture({ folder = false }) {
   const collection = useWordCollection({ items: words, questions, folders, sourceKey: folder ? 'folder' : 'notebook' });
@@ -54,6 +59,7 @@ function FixtureApp() {
   else if (fixture === 'yt-reader') content = <YoutubeSubtitleReader note={subtitle} allItems={words} folders={folders} onAddRecords={asyncNoop} onBack={noop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} />;
   else if (fixture === 'yt-reader-video') content = <YoutubeSubtitleReader note={{ ...subtitle, videoId: 'subtitle-video' }} allItems={words} folders={folders} onAddRecords={asyncNoop} onBack={noop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} />;
   else if (fixture === 'notes') content = <NotesNotebookPage notes={notes} loading={false} error="" onSave={asyncNoop} onDelete={asyncNoop} onPractice={noop} />;
+  else if (fixture === 'render-error') content = <AppErrorBoundary><BrokenFixture /></AppErrorBoundary>;
   else content = <ReadingTestPage test={readingTest} allItems={words} folders={folders} onAddRecords={asyncNoop} onUpdateRecord={asyncNoop} onDeleteRecord={asyncNoop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} onBack={noop} />;
   return (
     <main

@@ -232,14 +232,13 @@ import {
 } from '../words/records.js';
 import { recordOrder, sortRecords, wordChineseSummary, wordExamples } from '../words/records.js';
 import '../styles.css';
-
-const NotesNotebookPage = lazy(() => import('../features/notes/pages/NotesNotebookPage.jsx'));
-const PracticePage = lazy(() => import('../features/sessions/practice/PracticePage.jsx').then((module) => ({ default: module.PracticePage })));
-const ReadingTestPage = lazy(() => import('../features/reading/pages/ReadingTestPage.jsx').then((module) => ({ default: module.ReadingTestPage })));
-const ReadingTestsPage = lazy(() => import('../features/reading/pages/ReadingTestsPage.jsx'));
-const YoutubeSubtitleReader = lazy(() => import('../features/subtitles/pages/YoutubeSubtitleReader.jsx').then((module) => ({ default: module.YoutubeSubtitleReader })));
-const YoutubeSubtitlesPage = lazy(() => import('../features/subtitles/pages/YoutubeSubtitlesPage.jsx'));
-const StudyPage = lazy(() => import('../features/sessions/study/StudyPage.jsx').then((module) => ({ default: module.StudyPage })));
+import NotesNotebookPage from '../features/notes/pages/NotesNotebookPage.jsx';
+import { PracticePage } from '../features/sessions/practice/PracticePage.jsx';
+import { ReadingTestPage } from '../features/reading/pages/ReadingTestPage.jsx';
+import ReadingTestsPage from '../features/reading/pages/ReadingTestsPage.jsx';
+import { YoutubeSubtitleReader } from '../features/subtitles/pages/YoutubeSubtitleReader.jsx';
+import YoutubeSubtitlesPage from '../features/subtitles/pages/YoutubeSubtitlesPage.jsx';
+import { StudyPage } from '../features/sessions/study/StudyPage.jsx';
 
 const CONTENT_SCHEMA_VERSION = 2;
 const FIRESTORE_SCHEMA_VERSION = 3;

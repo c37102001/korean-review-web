@@ -1011,3 +1011,34 @@
   margin: 6px 0 15px;
   color: #67757d;
 }
+
+.app-error-fallback {
+  width: min(560px, calc(100% - 32px));
+  margin: min(16vh, 120px) auto;
+  color: #26383e;
+}
+
+.app-error-fallback h1 {
+  font-size: 1.5rem;
+}
+
+.app-error-fallback p {
+  color: #64747a;
+}
+
+.app-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 20px 0;
+}
+
+.app-error-fallback details {
+  margin-top: 24px;
+  font-size: 0.875rem;
+}
+
+.app-error-fallback pre {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}

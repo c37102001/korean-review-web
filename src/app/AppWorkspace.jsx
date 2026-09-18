@@ -258,6 +258,7 @@ import {
 import { LoadingScreen, OfflineStatusBar } from './AppDialogs.jsx';
 import { CalendarPage, HomePage, NotesPage } from './HomeCalendarPages.jsx';
 import { FolderDetailPage, FoldersPage, NotebookPage, WrongReviewPage } from './WordLibraryPages.jsx';
+import { AppErrorBoundary } from './AppErrorBoundary.jsx';
 export function AppWorkspace({
   user,
   practiceSet,
@@ -437,9 +438,11 @@ export function AppWorkspace({
       ]}
       backButtonClassName={backButtonClassName}
     >
-      <Suspense fallback={<LoadingScreen text="載入頁面中" />}>
-        {views[page]}
-      </Suspense>
+      <AppErrorBoundary key={page} onBack={pageStack.length ? goUp : null}>
+        <Suspense fallback={<LoadingScreen text="載入頁面中" />}>
+          {views[page]}
+        </Suspense>
+      </AppErrorBoundary>
     </AppShell>
   );
 }
