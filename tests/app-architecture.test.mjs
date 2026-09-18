@@ -40,6 +40,12 @@ test('daily wrong review sits between home and its study or practice session', (
   assert.deepEqual(navigationTransition(wrongReview, { type: 'up' }), home);
 });
 
+test('home starts all due words from one daily test instead of rendering date tasks', async () => {
+  const source = await readFile(new URL('../src/app/HomeCalendarPages.jsx', import.meta.url), 'utf8');
+  assert.match(source, /onPractice\(due, '今日測驗'/);
+  assert.doesNotMatch(source, /groupTasks|task\.studyDate/);
+});
+
 test('feature collection hooks depend on repositories instead of Firebase SDK', async () => {
   const hookPaths = [
     '../src/features/folders/hooks/useWordFolders.js',

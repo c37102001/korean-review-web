@@ -200,7 +200,6 @@ import {
   excludeLearnedQuestions,
   getProgress,
   getStats,
-  groupTasks,
   isDailyWordReviewComplete,
   lowestFamiliarityTermQuestions,
   markReviewDateComplete,
@@ -268,7 +267,6 @@ export function HomePage({ store, items, questions, dueQuestionsForToday, wrongQ
     questions: task.ids.filter((id) => !task.answeredIds.includes(id)).map((id) => questionById.get(id)).filter(Boolean),
   }));
   const totalPending = due.length;
-  const tasks = groupTasks(store, due, today);
   const answeredToday = store.attempts.filter((attempt) => attemptDate(attempt) === today);
   const correctToday = answeredToday.filter((attempt) => attempt.correct).length;
   const weak = lowestFamiliarityTermQuestions(store, questions, 30);
@@ -406,21 +404,7 @@ export function HomePage({ store, items, questions, dueQuestionsForToday, wrongQ
                 }}><Trash2 size={16} /></button>
               </div>
             </div>)}
-            {tasks.map((task) => (
-              <div className="task-card" key={task.id}>
-                <div>
-                  <span className={task.overdue ? 'badge danger' : 'badge'}>{task.overdue ? '逾期' : '今日'}</span>
-                  <h3>{dateLabel(task.studyDate)} 的內容</h3>
-                  <p>到期日 {task.dueDate} · {task.questions.length} 題 · 未完成</p>
-                </div>
-                <button className="primary small" onClick={() => onPractice(
-                  task.questions,
-                  `${task.studyDate} 測驗`,
-                  { dueOnly: true, dailyReview: true },
-                )}>開始</button>
-              </div>
-            ))}
-            {!tasks.length && !practiceTasks.length && !wrongReview.length && <div className="empty">目前沒有待完成任務</div>}
+            {!practiceTasks.length && !wrongReview.length && <div className="empty">目前沒有自選練習或錯題</div>}
           </div>
         </div>
         <div className="panel weak-practice-panel">
