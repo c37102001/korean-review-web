@@ -3,7 +3,7 @@ import { createId } from '../shared/id.js';
 
 export const YT_SUBTITLE_MODE_JSON = 'json';
 export const YT_SUBTITLE_MODE_SRT = 'srt';
-export const YOUTUBE_EMBED_ORIGIN = 'https://www.youtube-nocookie.com';
+export const YOUTUBE_EMBED_ORIGIN = 'https://www.youtube.com';
 export const UNTAGGED_SUBTITLE_LABEL = '無標籤';
 
 function subtitleEntryIds(entries, existingEntries = []) {

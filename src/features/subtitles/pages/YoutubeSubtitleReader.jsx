@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Eye, EyeOff, FolderOpen, Link2, Pause, Play, Plus, Trash2 } from 'lucide-react';
+import { ExternalLink, Eye, EyeOff, FolderOpen, Link2, Pause, Play, Plus, Trash2 } from 'lucide-react';
 
 import { EditIconButton } from '../../../components/actions/ContentActionButtons.jsx';
 import { isSystemFolder, YT_SOURCE_FOLDER_NAME } from '../../../folders/model.js';
@@ -157,6 +157,7 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAdd
   };
   const embedOrigin = typeof window === 'undefined' ? '' : `&origin=${encodeURIComponent(window.location.origin)}`;
   const embedUrl = note.videoId ? `${YOUTUBE_EMBED_ORIGIN}/embed/${note.videoId}?enablejsapi=1&rel=0${embedOrigin}` : '';
+  const watchUrl = note.videoId ? `${YOUTUBE_EMBED_ORIGIN}/watch?v=${encodeURIComponent(note.videoId)}` : '';
   const showDefinition = (event, word) => {
     event.preventDefault();
     event.stopPropagation();
@@ -175,6 +176,7 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAdd
         <div className="yt-reader-title-line">
           <h1>{note.title}</h1>
           <div className="actions">
+            {watchUrl && <a className="edit-icon-button" href={watchUrl} target="_blank" rel="noopener noreferrer" title="在 YouTube 開啟影片" aria-label="在 YouTube 開啟影片"><ExternalLink size={15} /></a>}
             <EditIconButton label="編輯字幕筆記" onClick={() => setEditing(note)} />
             <button className="edit-icon-button delete-icon-button" onClick={deleteNote} title="刪除字幕筆記" aria-label="刪除字幕筆記"><Trash2 size={15} /></button>
           </div>
@@ -194,7 +196,7 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAdd
       </div>
       <div className="yt-reader-content">
         <div className="yt-reader-video">
-          {embedUrl ? <div className="yt-video-frame"><iframe ref={iframeRef} src={embedUrl} title={note.title} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen /></div> : <div className="yt-video-missing"><Link2 size={22} /><span>這篇字幕筆記沒有 YouTube 影片連結。</span></div>}
+          {embedUrl ? <div className="yt-video-frame"><iframe ref={iframeRef} src={embedUrl} title={note.title} referrerPolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen /></div> : <div className="yt-video-missing"><Link2 size={22} /><span>這篇字幕筆記沒有 YouTube 影片連結。</span></div>}
         </div>
         <div className="yt-subtitle-list" ref={subtitleListRef} aria-label="字幕列表">
           {note.entries.map((entry, index) => {
@@ -244,4 +246,3 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAdd
     </section>
   );
 }
-

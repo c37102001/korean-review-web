@@ -52,6 +52,7 @@ function FixtureApp() {
     content = <PracticePage store={store} updateStore={updateStore} set={session} allItems={words} folders={folders} onUpdateRecord={asyncNoop} {...commonClassification} />;
   }
   else if (fixture === 'yt-reader') content = <YoutubeSubtitleReader note={subtitle} allItems={words} folders={folders} onAddRecords={asyncNoop} onBack={noop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} />;
+  else if (fixture === 'yt-reader-video') content = <YoutubeSubtitleReader note={{ ...subtitle, videoId: 'subtitle-video' }} allItems={words} folders={folders} onAddRecords={asyncNoop} onBack={noop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} />;
   else if (fixture === 'notes') content = <NotesNotebookPage notes={notes} loading={false} error="" onSave={asyncNoop} onDelete={asyncNoop} onPractice={noop} />;
   else content = <ReadingTestPage test={readingTest} allItems={words} folders={folders} onAddRecords={asyncNoop} onUpdateRecord={asyncNoop} onDeleteRecord={asyncNoop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} onBack={noop} />;
   return (

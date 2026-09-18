@@ -597,6 +597,13 @@
   gap: 6px;
 }
 
+.yt-reader-title-line a.edit-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
 .yt-reader-floating-actions {
   position: fixed;
   right: 28px;
@@ -1089,4 +1096,3 @@
   color: #6d777d;
   font-size: calc(15.4px * var(--user-font-scale, 1));
 }
-
