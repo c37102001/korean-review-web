@@ -88,6 +88,7 @@ import {
 } from '../features/sessions/study/model.js';
 import {
   BookOpen,
+  CalendarClock,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -257,6 +258,7 @@ export function HomePage({ store, items, questions, dueQuestionsForToday, wrongQ
   const [practiceError, setPracticeError] = useState('');
   const [editingItem, setEditingItem] = useState(null);
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
+  const [tomorrowDueCount, setTomorrowDueCount] = useState(null);
   const today = todayString();
   const due = dueQuestionsForToday;
   const wrongReview = due.length ? [] : wrongQuestionsForToday;
@@ -286,6 +288,13 @@ export function HomePage({ store, items, questions, dueQuestionsForToday, wrongQ
           <p>{due.length} 題單字待複習，完成即可取得火焰。</p>
           <div className="actions home-actions">
             <button className="primary" disabled={!totalPending} onClick={startNextDailyTask}><Dumbbell size={18} /> 今日測驗</button>
+            <button
+              type="button"
+              onClick={() => setTomorrowDueCount(dailyReviewQuestions(store, questions, addDays(today, 1)).length)}
+              title={tomorrowDueCount === null ? '計算明天每日測驗的題數' : '重新計算明天每日測驗的題數'}
+            >
+              <CalendarClock size={18} /> {tomorrowDueCount === null ? '查看明日題數' : `明日 ${tomorrowDueCount} 題`}
+            </button>
             <button onClick={() => setAddOpen(true)}><Plus size={18} /> 新增單字</button>
             <button onClick={() => setPracticeCreatorOpen(true)} disabled={optionalPractice.loading}><Plus size={18} /> 新增練習</button>
             <ActionMenu label="設定" icon={Settings} className="home-settings-menu">
