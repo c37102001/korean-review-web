@@ -33,7 +33,6 @@ def youtube_audio_download_profiles() -> List[List[str]]:
     return [
         [],
         ["--format", "bestaudio[ext=m4a]/bestaudio/best"],
-        ["--format", "bestaudio[ext=m4a]/bestaudio/best", "--extractor-args", "youtube:player_client=android_vr"],
     ]
 
 
@@ -72,6 +71,9 @@ def download_youtube_audio(
         return None, "缺少 yt-dlp，請執行 python3 -m pip install -r requirements-terminal.txt。"
     if not runner.which("ffmpeg"):
         return None, "缺少 ffmpeg，無法將 YouTube 音訊轉成 MP3。"
+    js_runtime = "deno" if runner.which("deno") else "node" if runner.which("node") else None
+    if not js_runtime:
+        return None, "缺少 Deno 或 Node.js，yt-dlp 無法解析 YouTube 音訊格式。請先安裝其中一種。"
     auth_options, auth_error = youtube_auth_options()
     if auth_error:
         return None, auth_error
@@ -85,7 +87,8 @@ def download_youtube_audio(
             attempt_dir = temporary_dir / f"attempt-{attempt_index}"
             attempt_dir.mkdir(parents=True, exist_ok=True)
             result = runner.run([
-                yt_dlp, "--no-playlist", "--no-progress", "--retries", "3", "--fragment-retries", "3",
+                yt_dlp, "--ignore-config", "--no-playlist", "--no-progress", "--retries", "3", "--fragment-retries", "3",
+                "--js-runtimes", js_runtime, "--remote-components", "ejs:github",
                 "--extract-audio", "--audio-format", "mp3", "--audio-quality", "5",
                 "--output", str(attempt_dir / "audio.%(ext)s"), *auth_options, *profile, subtitle.youtube_url,
             ], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=300)
@@ -106,7 +109,7 @@ def download_youtube_audio(
                     "重新啟動 Terminal 後再試。"
                 )
         detail = errors[-1] if errors else "yt-dlp 未產生音訊檔案"
-        return None, f"YouTube 音訊下載失敗：{detail}。請先更新 yt-dlp。"
+        return None, f"YouTube 音訊下載失敗：{detail}。請更新 yt-dlp；若仍顯示格式不可用，請確認 YouTube cookie 仍有效。"
     except subprocess.TimeoutExpired:
         return None, "YouTube 音訊下載逾時，請稍後再試。"
     except OSError as exc:

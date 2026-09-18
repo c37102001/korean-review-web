@@ -194,6 +194,11 @@ Terminal 的「YT字幕」會使用 `yt-dlp` 與 `ffmpeg` 將影片原音下載�
 會從目前句起點重播，`7` 或空白鍵可暫停／繼續。JSON 字幕沒有時間戳，因此只能播放
 原音，無法自動同步或逐句跳轉。離開字幕頁面時播放器會自動停止。
 
+YouTube 格式解析需要 Deno 或 Node.js，以及 yt-dlp 的 EJS 元件。請安裝
+`requirements-terminal.txt`；下載器會啟用本機 JavaScript runtime，若缺少 EJS
+元件，yt-dlp 會從官方 GitHub release 取得並快取。格式解析失敗時先更新
+`yt-dlp[default]`。YouTube 仍可能限制個別帳號、IP 或影片，不能保證每部影片都可下載。
+
 若 YouTube 顯示「Sign in to confirm you're not a bot」，可在專案的 `.env` 設定
 `TERMINAL_YOUTUBE_COOKIES_FROM_BROWSER=chrome`（也支援 `firefox`、`chromium`、
 `edge` 等 yt-dlp 支援的瀏覽器），重新啟動 Terminal。該瀏覽器須已登入

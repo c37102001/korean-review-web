@@ -39,6 +39,11 @@ class LoginRequiredRunner(FakeRunner):
         return SimpleNamespace(returncode=1, stderr="ERROR: [youtube] Sign in to confirm you’re not a bot. Use --cookies-from-browser")
 
 
+class MissingJavascriptRunner(FakeRunner):
+    def which(self, command):
+        return None if command in ('deno', 'node') else super().which(command)
+
+
 class FakeProcess:
     def __init__(self):
         self.running = True
@@ -141,6 +146,19 @@ class TerminalDomainAudioTests(unittest.TestCase):
             self.assertTrue(path.exists())
             self.assertEqual(len(runner.commands), 2)
             self.assertIn('備援策略 2', message)
+            for command in runner.commands:
+                self.assertEqual(command[command.index('--js-runtimes') + 1], 'deno')
+                self.assertEqual(command[command.index('--remote-components') + 1], 'ejs:github')
+                self.assertIn('--ignore-config', command)
+
+    def test_youtube_downloader_requires_a_javascript_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = MissingJavascriptRunner()
+            subtitle = YoutubeSubtitle('id', 'title', 'https://youtu.be/test', 'srt', [], '', '')
+            path, message = download_youtube_audio(subtitle, Path(directory), runner)
+            self.assertIsNone(path)
+            self.assertIn('Deno 或 Node.js', message)
+            self.assertEqual(runner.commands, [])
 
     def test_youtube_login_error_stops_retries_and_explains_cookie_setup(self):
         with tempfile.TemporaryDirectory() as directory:

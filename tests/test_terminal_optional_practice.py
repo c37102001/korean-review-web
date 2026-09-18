@@ -187,14 +187,14 @@ class OptionalPracticeTests(unittest.TestCase):
         self.assertEqual(terminal.youtube_audio_cache_path(first), terminal.youtube_audio_cache_path(same))
         self.assertNotEqual(terminal.youtube_audio_cache_path(first), terminal.youtube_audio_cache_path(changed))
 
-    def test_youtube_audio_download_has_format_and_client_fallbacks(self):
+    def test_youtube_audio_download_has_format_fallback(self):
         profiles = terminal.youtube_audio_download_profiles()
         self.assertEqual(profiles[0], [])
         self.assertTrue(any(
             any("bestaudio[ext=m4a]" in argument for argument in profile)
             for profile in profiles
         ))
-        self.assertTrue(any("youtube:player_client=android_vr" in profile for profile in profiles))
+        self.assertEqual(len(profiles), 2)
 
     def test_collection_escape_returns_to_its_mode_menu_before_parent(self):
         card, question = self.card_and_question()
