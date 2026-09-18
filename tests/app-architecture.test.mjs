@@ -67,6 +67,26 @@ test('feature collection hooks depend on repositories instead of Firebase SDK', 
   });
 });
 
+test('reader quick-add and date-note actions have their runtime dependencies in scope', async () => {
+  for (const path of [
+    '../src/features/reading/pages/ReadingTestPage.jsx',
+    '../src/features/subtitles/pages/YoutubeSubtitleReader.jsx',
+  ]) {
+    const source = await readFile(new URL(path, import.meta.url), 'utf8');
+    assert.match(source, /import \{ todayString \} from ['"]\.\.\/\.\.\/\.\.\/shared\/date\.js['"]/);
+    assert.match(source, /createRecordsForDate\(todayString\(\)/);
+  }
+
+  const reading = await readFile(new URL('../src/features/reading/pages/ReadingTestPage.jsx', import.meta.url), 'utf8');
+  assert.match(reading, /import \{[^}]*\bX\b[^}]*\} from ['"]lucide-react['"]/);
+
+  const home = await readFile(new URL('../src/app/HomeCalendarPages.jsx', import.meta.url), 'utf8');
+  const library = await readFile(new URL('../src/app/WordLibraryPages.jsx', import.meta.url), 'utf8');
+  assert.match(home, /import \{ EditJsonModal, ExportJsonModal \} from ['"]\.\/WordLibraryPages\.jsx['"]/);
+  assert.match(library, /export function ExportJsonModal\(/);
+  assert.match(library, /export function EditJsonModal\(/);
+});
+
 test('content library routes load with the app and never import its entry', async () => {
   const runtimeSource = await readFile(new URL('../src/app/AppRuntime.jsx', import.meta.url), 'utf8');
   const mainSource = await readFile(new URL('../src/main.jsx', import.meta.url), 'utf8');

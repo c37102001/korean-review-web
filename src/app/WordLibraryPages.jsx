@@ -284,7 +284,7 @@ function downloadNotebookJson(jsonText) {
 }
 
 
-function ExportJsonModal({ items, title = '匯出 JSON', onClose }) {
+export function ExportJsonModal({ items, title = '匯出 JSON', onClose }) {
   const [copied, setCopied] = useState(false);
   const jsonText = useMemo(() => buildNotebookExport(items), [items]);
   const copyJson = async () => {
@@ -313,7 +313,7 @@ function ExportJsonModal({ items, title = '匯出 JSON', onClose }) {
   );
 }
 
-function EditJsonModal({ items, allItems, date, onSave, onClose }) {
+export function EditJsonModal({ items, allItems, date, onSave, onClose }) {
   const initialJson = useMemo(() => buildNotebookExport(items), [items]);
   const scopeText = date || '全部單字';
   const [jsonText, setJsonText] = useState(initialJson);

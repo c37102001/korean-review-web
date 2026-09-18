@@ -3,6 +3,7 @@ import { ExternalLink, Eye, EyeOff, FolderOpen, Link2, Pause, Play, Plus, Trash2
 
 import { EditIconButton } from '../../../components/actions/ContentActionButtons.jsx';
 import { isSystemFolder, YT_SOURCE_FOLDER_NAME } from '../../../folders/model.js';
+import { todayString } from '../../../shared/date.js';
 import { subtitleEntryAtTime, YOUTUBE_EMBED_ORIGIN, YT_SUBTITLE_MODE_SRT } from '../../../subtitles/model.js';
 import { loadYoutubeIframeApi, subtitleTimeLabel } from '../../../subtitles/player.js';
 import { createRecordsForDate } from '../../word-import/model.js';

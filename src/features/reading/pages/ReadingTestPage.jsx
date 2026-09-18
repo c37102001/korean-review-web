@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BookOpen, Check, FolderOpen, Pencil, Trash2 } from 'lucide-react';
+import { BookOpen, Check, FolderOpen, Pencil, Trash2, X } from 'lucide-react';
 
 import { isSystemFolder, READING_SOURCE_FOLDER_NAME } from '../../../folders/model.js';
+import { todayString } from '../../../shared/date.js';
 import { createId } from '../../../shared/id.js';
 import { createRecordsForDate } from '../../word-import/model.js';
 import { AddItemsModal } from '../../word-import/components/WordImportForm.jsx';
@@ -156,4 +157,3 @@ export function ReadingTestPage({ test, allItems = [], folders = [], onAddRecord
     </section>
   );
 }
-

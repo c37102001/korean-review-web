@@ -252,6 +252,7 @@ import { recordOrder, sortRecords, wordChineseSummary, wordExamples } from '../w
 import '../styles.css';
 import { FONT_SCALE_MAX, FONT_SCALE_MIN, dateLabel, monthTitle } from './AppRuntime.jsx';
 import { OptionalPracticeModal, VoiceSettingsModal } from './AppDialogs.jsx';
+import { EditJsonModal, ExportJsonModal } from './WordLibraryPages.jsx';
 export function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestionsForToday, optionalPractice, grammarNotes, onPractice, onOpenWrongReview, onAddRecords, onUpdateRecord, onWriteRecords, folders = [], offlineMode, fontScale, onFontScaleChange }) {
   const [addOpen, setAddOpen] = useState(false);
   const [practiceCreatorOpen, setPracticeCreatorOpen] = useState(false);
