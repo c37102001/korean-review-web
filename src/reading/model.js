@@ -1,10 +1,13 @@
 import { firestoreTimestampIso } from '../shared/firestoreTimestamp.js';
 import { createId } from '../shared/id.js';
 
+export const UNTAGGED_READING_TEST_LABEL = '無標籤';
+
 export const READING_TEST_JSON_SAMPLE = `{
   "schemaVersion": 1,
   "data": [
     {
+      "tag": "TOPIK",
       "passage": {
         "ko": "최근에는 필요한 물건을 직접 사기보다 빌려 쓰는 사람들이 많아지고 있다.",
         "zh": "最近，比起直接購買所需物品，租借使用的人愈來愈多。"
@@ -35,6 +38,7 @@ export function normalizeReadingTest(input, fallbackId = '') {
     : [];
   return {
     id: String(input?.id || fallbackId),
+    tag: String(input?.tag || '').trim(),
     passage: {
       ko: String(input?.passage?.ko || '').trim(),
       zh: String(input?.passage?.zh || '').trim(),
@@ -96,6 +100,7 @@ export function formatReadingTestsJson(tests = []) {
     schemaVersion: 1,
     data: tests.map((test) => ({
       ...(test.id ? { id: test.id } : {}),
+      ...(test.tag ? { tag: test.tag } : {}),
       passage: test.passage,
       question: test.question,
       options: test.options,
@@ -104,4 +109,27 @@ export function formatReadingTestsJson(tests = []) {
       ...(Number.isSafeInteger(test.order) ? { order: test.order } : {}),
     })),
   }, null, 2);
+}
+
+export function readingTestTagLabel(test) {
+  return String(test?.tag || '').trim() || UNTAGGED_READING_TEST_LABEL;
+}
+
+export function groupReadingTestsByTag(tests = []) {
+  const groups = new Map();
+  tests.forEach((test) => {
+    const label = readingTestTagLabel(test);
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(test);
+  });
+  return [...groups.entries()]
+    .map(([label, groupedTests]) => ({
+      label,
+      tests: [...groupedTests].sort((left, right) => Number(left.learned) - Number(right.learned)),
+    }))
+    .sort((left, right) => {
+      if (left.label === UNTAGGED_READING_TEST_LABEL) return 1;
+      if (right.label === UNTAGGED_READING_TEST_LABEL) return -1;
+      return left.label.localeCompare(right.label, 'zh-TW');
+    });
 }

@@ -8,12 +8,10 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase.js';
 import {
-  isLearnedFolder,
   isSystemFolder,
   normalizeFolder,
   READING_SOURCE_FOLDER_ID,
   READING_SOURCE_FOLDER_NAME,
-  SYSTEM_LEARNED_FOLDER_ID,
   YT_SOURCE_FOLDER_ID,
   YT_SOURCE_FOLDER_NAME,
 } from '../folders/model.js';
@@ -142,44 +140,54 @@ export async function writeLearningRecords(
   });
 }
 
-async function writeSourceLearningRecords(uid, records, folders, { folderId, folderName, tag }, { markLearned = false } = {}) {
-  const learnedFolderId = folders.find(isLearnedFolder)?.id || SYSTEM_LEARNED_FOLDER_ID;
-  const targetFolderIds = markLearned ? [learnedFolderId] : [];
+export function sourceFolderWritePlan(folders, source, selectedFolderIds = []) {
   const matchingFolder = folders.find((folder) => (
-    !isSystemFolder(folder) && folder.name.toLocaleLowerCase() === folderName.toLocaleLowerCase()
+    !isSystemFolder(folder) && folder.name.toLocaleLowerCase() === source.folderName.toLocaleLowerCase()
   ));
   if (matchingFolder) {
-    return writeLearningRecords(uid, records, undefined, targetFolderIds, [], [], [{
-      id: matchingFolder.id,
-      data: { tag },
-    }]);
+    return {
+      folderIds: [...new Set([...selectedFolderIds, matchingFolder.id])],
+      foldersToCreate: [],
+    };
   }
   const now = new Date().toISOString();
-  const folder = normalizeFolder({
-    id: folderId,
-    name: folderName,
-    tag,
-    wordIds: records.map((record) => record.id),
-    createdAt: now,
-    updatedAt: now,
-  });
-  return writeLearningRecords(uid, records, undefined, targetFolderIds, [], [folder]);
+  return {
+    folderIds: [...new Set(selectedFolderIds)].filter((folderId) => folderId !== source.folderId),
+    foldersToCreate: [normalizeFolder({
+      id: source.folderId,
+      name: source.folderName,
+      tag: source.folderName,
+      wordIds: [],
+      createdAt: now,
+      updatedAt: now,
+    }, source.folderId)],
+  };
 }
 
-export async function writeYoutubeSubtitleLearningRecords(uid, records, folders = [], options = {}) {
-  return writeSourceLearningRecords(uid, records, folders, {
+async function writeSourceLearningRecords(uid, records, folders, source, onProgress, selectedFolderIds = [], additionalFolderWordIds = []) {
+  const plan = sourceFolderWritePlan(folders, source, selectedFolderIds);
+  await writeLearningRecords(
+    uid,
+    records,
+    onProgress,
+    plan.folderIds,
+    additionalFolderWordIds,
+    plan.foldersToCreate,
+  );
+}
+
+export async function writeYoutubeSubtitleLearningRecords(uid, records, folders = [], onProgress, folderIds = [], additionalFolderWordIds = []) {
+  await writeSourceLearningRecords(uid, records, folders, {
     folderId: YT_SOURCE_FOLDER_ID,
     folderName: YT_SOURCE_FOLDER_NAME,
-    tag: YT_SOURCE_FOLDER_NAME,
-  }, options);
+  }, onProgress, folderIds, additionalFolderWordIds);
 }
 
-export async function writeReadingTestLearningRecords(uid, records, folders = [], options = {}) {
-  return writeSourceLearningRecords(uid, records, folders, {
+export async function writeReadingTestLearningRecords(uid, records, folders = [], onProgress, folderIds = [], additionalFolderWordIds = []) {
+  await writeSourceLearningRecords(uid, records, folders, {
     folderId: READING_SOURCE_FOLDER_ID,
     folderName: READING_SOURCE_FOLDER_NAME,
-    tag: READING_SOURCE_FOLDER_NAME,
-  }, options);
+  }, onProgress, folderIds, additionalFolderWordIds);
 }
 
 export async function writeLearningRecord(uid, record, onProgress, folderIds = []) {

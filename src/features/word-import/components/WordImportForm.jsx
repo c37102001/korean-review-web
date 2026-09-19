@@ -30,7 +30,7 @@ function describeImportError(error) {
   return { code: code || error?.name || 'error', message };
 }
 
-export function AddItemsModal({ title, date, lockedDate = false, onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], folders = [], initialFolderIds = [], requiredFolderIds = [], onClose }) {
+export function AddItemsModal({ title, date, lockedDate = false, initialKo = '', onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], folders = [], initialFolderIds = [], requiredFolderIds = [], onClose }) {
   const [busy, setBusy] = useState(false);
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
@@ -40,6 +40,7 @@ export function AddItemsModal({ title, date, lockedDate = false, onAddRecords, o
           title={title}
           date={date}
           lockedDate={lockedDate}
+          initialKo={initialKo}
           onAddRecords={onAddRecords}
           onUpdateRecord={onUpdateRecord}
           onWriteRecords={onWriteRecords}
@@ -58,7 +59,7 @@ export function AddItemsModal({ title, date, lockedDate = false, onAddRecords, o
   );
 }
 
-export function AddItemsForm({ title, date, lockedDate = false, onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], folders = [], initialFolderIds = [], requiredFolderIds = [], onSaved, onBusyChange, compactPanel = false }) {
+export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], folders = [], initialFolderIds = [], requiredFolderIds = [], onSaved, onBusyChange, compactPanel = false }) {
   const isEditing = Boolean(editItem);
   const editFolderIds = wordFolderIds(folders, editItem?.id);
   const initialSelectedFolderIds = isEditing
@@ -68,7 +69,7 @@ export function AddItemsForm({ title, date, lockedDate = false, onAddRecords, on
   const [formDate, setFormDate] = useState(date);
   const [jsonText, setJsonText] = useState(() => editItem ? formatSingleWordJson(editItem) : '');
   const [importDraft, setImportDraft] = useState(null);
-  const [manual, setManual] = useState(() => itemToManual(editItem));
+  const [manual, setManual] = useState(() => itemToManual(editItem, initialKo));
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [duplicates, setDuplicates] = useState([]);
@@ -99,7 +100,7 @@ export function AddItemsForm({ title, date, lockedDate = false, onAddRecords, on
 
   useEffect(() => {
     setFormDate(editItem?.date || date);
-    setManual(itemToManual(editItem));
+    setManual(itemToManual(editItem, initialKo));
     setJsonText(editItem ? formatSingleWordJson(editItem) : '');
     setMode('manual');
     setImportDraft(null);
@@ -112,7 +113,7 @@ export function AddItemsForm({ title, date, lockedDate = false, onAddRecords, on
     setSelectedFolderIds(initialSelectedFolderIds);
     setJsonCopied(false);
     submissionLockRef.current = false;
-  }, [date, editItem, initialFolderIds.join('|'), requiredFolderIds.join('|'), editFolderIds.join('|')]);
+  }, [date, editItem, initialKo, initialFolderIds.join('|'), requiredFolderIds.join('|'), editFolderIds.join('|')]);
 
   const commitImportEntries = async (entries, targetDate, keptExistingIds = []) => {
     const activeEntries = entries.filter(Boolean);
@@ -767,9 +768,9 @@ function manualToItem(manual, allItems = []) {
   return item;
 }
 
-function itemToManual(item) {
+function itemToManual(item, initialKo = '') {
   if (!item) {
-    return { ko: '', pos: '', meanings: [emptyManualMeaning()], notes: '', relatedSelected: [], relatedQuery: '' };
+    return { ko: initialKo, pos: '', meanings: [emptyManualMeaning()], notes: '', relatedSelected: [], relatedQuery: '' };
   }
   return {
     ko: item.ko || '',

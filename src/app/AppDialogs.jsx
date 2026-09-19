@@ -41,7 +41,6 @@ import { useWordCollection } from '../features/word-library/hooks/useWordCollect
 import { useWordCollectionDialogs } from '../features/word-library/hooks/useWordCollectionDialogs.js';
 import { SelectableKoreanText } from '../features/text-selection/components/SelectableKoreanText.jsx';
 import { SelectionActionPopover, WordDefinitionPopover } from '../features/text-selection/components/SelectionOverlays.jsx';
-import { QuickAddWordModal } from '../features/text-selection/components/QuickAddWordModal.jsx';
 import { useDismissibleWordDefinition, useTextSelectionActions } from '../features/text-selection/hooks/useTextSelectionActions.js';
 import { koreanTextMatches } from '../features/text-selection/model.js';
 import {
@@ -218,8 +217,6 @@ import {
   deleteLearningRecords,
   writeLearningRecord,
   writeLearningRecords,
-  writeReadingTestLearningRecords,
-  writeYoutubeSubtitleLearningRecords,
 } from '../services/wordLibraryService.js';
 import { createId } from '../shared/id.js';
 import { copyText } from '../shared/clipboard.js';

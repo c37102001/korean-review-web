@@ -6,16 +6,16 @@ import { isSystemFolder, YT_SOURCE_FOLDER_NAME } from '../../../folders/model.js
 import { todayString } from '../../../shared/date.js';
 import { subtitleEntryAtTime, YOUTUBE_EMBED_ORIGIN, YT_SUBTITLE_MODE_SRT } from '../../../subtitles/model.js';
 import { loadYoutubeIframeApi, subtitleTimeLabel } from '../../../subtitles/player.js';
-import { createRecordsForDate } from '../../word-import/model.js';
-import { QuickAddWordModal } from '../../text-selection/components/QuickAddWordModal.jsx';
+import { AddItemsModal } from '../../word-import/components/WordImportForm.jsx';
 import { SelectableKoreanText } from '../../text-selection/components/SelectableKoreanText.jsx';
 import { SelectionActionPopover, WordDefinitionPopover } from '../../text-selection/components/SelectionOverlays.jsx';
 import { useDismissibleWordDefinition, useTextSelectionActions } from '../../text-selection/hooks/useTextSelectionActions.js';
 import { YoutubeSubtitleEditorModal } from './YoutubeSubtitlesPage.jsx';
 
-export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords, onBack, onOpenFolder, onSave, onDelete }) {
+export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAddRecords, onUpdateRecord, onWriteRecords, onBack, onOpenFolder, onSave, onDelete }) {
   const [showChinese, setShowChinese] = useState(true);
   const [editing, setEditing] = useState(null);
+  const [editingWord, setEditingWord] = useState(null);
   const [quickAdd, setQuickAdd] = useState(null);
   const [playerLoaded, setPlayerLoaded] = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
@@ -239,10 +239,19 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onAdd
           })}
         </div>
       </div>
-      {quickAdd && <QuickAddWordModal selection={quickAdd} entries={note.entries} allItems={allItems} onSubmit={async ({ ko, zh, examples, markLearned }) => {
-        const records = createRecordsForDate(todayString(), [{ ko, meanings: [{ zh, examples }], related: [] }], allItems);
-        await onAddRecords(note, records, { markLearned });
-      }} onClose={() => setQuickAdd(null)} />}
+      {quickAdd && <AddItemsModal
+        title="新增單字"
+        date={todayString()}
+        initialKo={quickAdd.ko}
+        allItems={allItems}
+        folders={folders}
+        onAddRecords={onAddRecords}
+        onUpdateRecord={onUpdateRecord}
+        onWriteRecords={onWriteRecords}
+        onEditExisting={(item) => { setQuickAdd(null); setEditingWord(item); }}
+        onClose={() => setQuickAdd(null)}
+      />}
+      {editingWord && <AddItemsModal title="編輯單字" date={editingWord.date} lockedDate editItem={editingWord} allItems={allItems} folders={folders} onUpdateRecord={onUpdateRecord} onClose={() => setEditingWord(null)} />}
       {editing && <YoutubeSubtitleEditorModal note={editing} onSave={async (nextNote) => { await onSave(nextNote); setEditing(null); }} onClose={() => setEditing(null)} />}
     </section>
   );

@@ -82,5 +82,5 @@ export const youtubeSubtitlesRepository = createUserContentRepository('ytSubtitl
 });
 
 export const readingTestsRepository = createUserContentRepository('readingTests', {
-  tombstoneFields: ['passage', 'question', 'options', 'answer', 'learned', 'order', 'createdAt'],
+  tombstoneFields: ['passage', 'question', 'options', 'answer', 'tag', 'learned', 'order', 'createdAt'],
 });

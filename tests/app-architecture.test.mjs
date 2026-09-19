@@ -67,14 +67,17 @@ test('feature collection hooks depend on repositories instead of Firebase SDK', 
   });
 });
 
-test('reader quick-add and date-note actions have their runtime dependencies in scope', async () => {
+test('reader add actions reuse the standard word form with only Korean prefilled', async () => {
   for (const path of [
     '../src/features/reading/pages/ReadingTestPage.jsx',
     '../src/features/subtitles/pages/YoutubeSubtitleReader.jsx',
   ]) {
     const source = await readFile(new URL(path, import.meta.url), 'utf8');
     assert.match(source, /import \{ todayString \} from ['"]\.\.\/\.\.\/\.\.\/shared\/date\.js['"]/);
-    assert.match(source, /createRecordsForDate\(todayString\(\)/);
+    assert.match(source, /<AddItemsModal/);
+    assert.match(source, /initialKo=\{quickAdd\.ko\}/);
+    assert.match(source, /onWriteRecords=\{onWriteRecords\}/);
+    assert.doesNotMatch(source, /QuickAddWordModal|includeInitialExample|markLearned/);
   }
 
   const reading = await readFile(new URL('../src/features/reading/pages/ReadingTestPage.jsx', import.meta.url), 'utf8');
@@ -85,6 +88,13 @@ test('reader quick-add and date-note actions have their runtime dependencies in 
   assert.match(home, /import \{ EditJsonModal, ExportJsonModal \} from ['"]\.\/WordLibraryPages\.jsx['"]/);
   assert.match(library, /export function ExportJsonModal\(/);
   assert.match(library, /export function EditJsonModal\(/);
+});
+
+test('reading library groups every test by tag and keeps learned tests visible', async () => {
+  const source = await readFile(new URL('../src/features/reading/pages/ReadingTestsPage.jsx', import.meta.url), 'utf8');
+  assert.match(source, /groupReadingTestsByTag\(filtered\)/);
+  assert.match(source, /<CollapsibleGroup/);
+  assert.doesNotMatch(source, /hideLearned|LearnedVisibilityToggle/);
 });
 
 test('content library routes load with the app and never import its entry', async () => {

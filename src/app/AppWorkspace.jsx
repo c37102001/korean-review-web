@@ -41,7 +41,6 @@ import { useWordCollection } from '../features/word-library/hooks/useWordCollect
 import { useWordCollectionDialogs } from '../features/word-library/hooks/useWordCollectionDialogs.js';
 import { SelectableKoreanText } from '../features/text-selection/components/SelectableKoreanText.jsx';
 import { SelectionActionPopover, WordDefinitionPopover } from '../features/text-selection/components/SelectionOverlays.jsx';
-import { QuickAddWordModal } from '../features/text-selection/components/QuickAddWordModal.jsx';
 import { useDismissibleWordDefinition, useTextSelectionActions } from '../features/text-selection/hooks/useTextSelectionActions.js';
 import { koreanTextMatches } from '../features/text-selection/model.js';
 import {
@@ -362,11 +361,11 @@ export function AppWorkspace({
   const updateLearningRecords = async (updatedRecords, onProgress, folderIds = [], additionalFolderWordIds = []) => {
     await writeLearningRecords(user.uid, updatedRecords, onProgress, folderIds, additionalFolderWordIds);
   };
-  const addYoutubeSubtitleRecords = async (_subtitle, records, options) => {
-    await writeYoutubeSubtitleLearningRecords(user.uid, records, folders.folders, options);
+  const writeYoutubeSubtitleRecords = async (records, onProgress, folderIds = [], additionalFolderWordIds = []) => {
+    await writeYoutubeSubtitleLearningRecords(user.uid, records, folders.folders, onProgress, folderIds, additionalFolderWordIds);
   };
-  const addReadingTestRecords = async (_test, records, options) => {
-    await writeReadingTestLearningRecords(user.uid, records, folders.folders, options);
+  const writeReadingTestRecords = async (records, onProgress, folderIds = [], additionalFolderWordIds = []) => {
+    await writeReadingTestLearningRecords(user.uid, records, folders.folders, onProgress, folderIds, additionalFolderWordIds);
   };
   const deleteLearningRecordsFromStore = async (recordIds) => {
     const ids = [...new Set(recordIds.filter(Boolean))];
@@ -415,9 +414,9 @@ export function AppWorkspace({
     folder: <FolderDetailPage folder={folders.folders.find((folder) => folder.id === selectedFolderId)} folders={folders.folders} store={store} updateStore={updateStore} items={items} questions={questions} onSaveFolder={folders.save} onDeleteFolder={folders.remove} onAddWords={folders.addWords} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onRemoveWords={folders.removeWords} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} onBack={goUp} />,
     notes: <NotesNotebookPage notes={grammar.notes} loading={grammar.loading} error={grammar.error} onSave={grammar.save} onDelete={grammar.remove} onPractice={startPractice} />,
     ytSubtitles: <YoutubeSubtitlesPage notes={ytSubtitles.notes} error={ytSubtitles.error} onSave={ytSubtitles.save} onDelete={ytSubtitles.remove} onOpen={openYoutubeSubtitle} />,
-    ytSubtitle: <YoutubeSubtitleReader note={selectedYoutubeSubtitle} allItems={items} folders={folders.folders} onAddRecords={addYoutubeSubtitleRecords} onBack={goUp} onOpenFolder={openFolder} onSave={ytSubtitles.save} onDelete={ytSubtitles.remove} />,
+    ytSubtitle: <YoutubeSubtitleReader note={selectedYoutubeSubtitle} allItems={items} folders={folders.folders} onAddRecords={writeYoutubeSubtitleRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={writeYoutubeSubtitleRecords} onBack={goUp} onOpenFolder={openFolder} onSave={ytSubtitles.save} onDelete={ytSubtitles.remove} />,
     readingTests: <ReadingTestsPage tests={readingTests.tests} error={readingTests.error} onSave={readingTests.save} onSaveMany={readingTests.saveMany} onDelete={readingTests.remove} onOpen={openReadingTest} />,
-    readingTest: <ReadingTestPage test={readingTests.tests.find((test) => test.id === selectedReadingTestId)} allItems={items} folders={folders.folders} onAddRecords={addReadingTestRecords} onUpdateRecord={updateLearningRecord} onDeleteRecord={deleteLearningRecordFromStore} onOpenFolder={openFolder} onSave={readingTests.save} onDelete={readingTests.remove} onBack={goUp} />,
+    readingTest: <ReadingTestPage test={readingTests.tests.find((test) => test.id === selectedReadingTestId)} allTests={readingTests.tests} allItems={items} folders={folders.folders} onAddRecords={writeReadingTestRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={writeReadingTestRecords} onDeleteRecord={deleteLearningRecordFromStore} onOpenFolder={openFolder} onSave={readingTests.save} onDelete={readingTests.remove} onBack={goUp} />,
   };
 
   const backButtonClassName = `${page === 'ytSubtitle'

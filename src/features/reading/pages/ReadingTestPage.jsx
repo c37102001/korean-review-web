@@ -4,15 +4,13 @@ import { BookOpen, Check, FolderOpen, Pencil, Trash2, X } from 'lucide-react';
 import { isSystemFolder, READING_SOURCE_FOLDER_NAME } from '../../../folders/model.js';
 import { todayString } from '../../../shared/date.js';
 import { createId } from '../../../shared/id.js';
-import { createRecordsForDate } from '../../word-import/model.js';
 import { AddItemsModal } from '../../word-import/components/WordImportForm.jsx';
-import { QuickAddWordModal } from '../../text-selection/components/QuickAddWordModal.jsx';
 import { SelectableKoreanText } from '../../text-selection/components/SelectableKoreanText.jsx';
 import { SelectionActionPopover, WordDefinitionPopover } from '../../text-selection/components/SelectionOverlays.jsx';
 import { useDismissibleWordDefinition, useTextSelectionActions } from '../../text-selection/hooks/useTextSelectionActions.js';
 import { ReadingTestsEditorModal } from './ReadingTestsPage.jsx';
 
-export function ReadingTestPage({ test, allItems = [], folders = [], onAddRecords, onUpdateRecord, onDeleteRecord, onOpenFolder, onSave, onDelete, onBack }) {
+export function ReadingTestPage({ test, allTests = [], allItems = [], folders = [], onAddRecords, onUpdateRecord, onWriteRecords, onDeleteRecord, onOpenFolder, onSave, onDelete, onBack }) {
   const [selected, setSelected] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
@@ -148,12 +146,20 @@ export function ReadingTestPage({ test, allItems = [], folders = [], onAddRecord
       </div>
       {!submitted ? <button type="button" className="primary reading-submit" disabled={!selected} onClick={() => setSubmitted(true)}><Check size={18} /> 確認答案</button>
         : <div className={`reading-result ${selectedCorrectly ? 'correct' : 'incorrect'}`}><strong>{selectedCorrectly ? '答對了' : '答錯了'}</strong><span>正確答案是選項 {test.answer}</span><button type="button" onClick={() => { setSelected(''); setSubmitted(false); }}>再做一次</button></div>}
-      {editing && <ReadingTestsEditorModal test={test} existingTests={[test]} onSave={async (tests) => { await onSave(tests[0]); setEditing(false); }} onClose={() => setEditing(false)} />}
-      {quickAdd && <QuickAddWordModal selection={quickAdd} entries={entries} allItems={allItems} sourceLabel="閱讀題" includeInitialExample={false} initialMarkLearned={false} onSubmit={async ({ ko, zh, examples, markLearned }) => {
-        const records = createRecordsForDate(todayString(), [{ ko, meanings: [{ zh, examples }], related: [] }], allItems);
-        await onAddRecords(test, records, { markLearned });
-      }} onClose={() => setQuickAdd(null)} />}
-      {editingWord && <AddItemsModal title="編輯單字" date={editingWord.date} lockedDate editItem={editingWord} allItems={allItems} onUpdateRecord={onUpdateRecord} onClose={() => setEditingWord(null)} />}
+      {editing && <ReadingTestsEditorModal test={test} existingTests={allTests} tagSuggestions={[...new Set(allTests.map((entry) => entry.tag).filter(Boolean))]} onSave={async (tests) => { await onSave(tests[0]); setEditing(false); }} onClose={() => setEditing(false)} />}
+      {quickAdd && <AddItemsModal
+        title="新增單字"
+        date={todayString()}
+        initialKo={quickAdd.ko}
+        allItems={allItems}
+        folders={folders}
+        onAddRecords={onAddRecords}
+        onUpdateRecord={onUpdateRecord}
+        onWriteRecords={onWriteRecords}
+        onEditExisting={(item) => { setQuickAdd(null); setEditingWord(item); }}
+        onClose={() => setQuickAdd(null)}
+      />}
+      {editingWord && <AddItemsModal title="編輯單字" date={editingWord.date} lockedDate editItem={editingWord} allItems={allItems} folders={folders} onUpdateRecord={onUpdateRecord} onClose={() => setEditingWord(null)} />}
     </section>
   );
 }
