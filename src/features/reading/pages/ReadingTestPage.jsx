@@ -4,19 +4,21 @@ import { BookOpen, Check, FolderOpen, Pencil, Trash2, X } from 'lucide-react';
 import { isSystemFolder, READING_SOURCE_FOLDER_NAME } from '../../../folders/model.js';
 import { todayString } from '../../../shared/date.js';
 import { createId } from '../../../shared/id.js';
+import { ItemDetailModal } from '../../word-library/components/WordPresentation.jsx';
 import { AddItemsModal } from '../../word-import/components/WordImportForm.jsx';
 import { SelectableKoreanText } from '../../text-selection/components/SelectableKoreanText.jsx';
 import { SelectionActionPopover, WordDefinitionPopover } from '../../text-selection/components/SelectionOverlays.jsx';
 import { useDismissibleWordDefinition, useTextSelectionActions } from '../../text-selection/hooks/useTextSelectionActions.js';
 import { ReadingTestsEditorModal } from './ReadingTestsPage.jsx';
 
-export function ReadingTestPage({ test, allTests = [], allItems = [], folders = [], onAddRecords, onUpdateRecord, onWriteRecords, onDeleteRecord, onOpenFolder, onSave, onDelete, onBack }) {
+export function ReadingTestPage({ test, allTests = [], allItems = [], folders = [], onSpeak, onAddRecords, onUpdateRecord, onWriteRecords, onDeleteRecord, onOpenFolder, onSave, onDelete, onBack }) {
   const [selected, setSelected] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState(false);
   const [quickAdd, setQuickAdd] = useState(null);
   const [editingWord, setEditingWord] = useState(null);
+  const [viewingWord, setViewingWord] = useState(null);
   const [localHighlights, setLocalHighlights] = useState([]);
   useEffect(() => {
     setSelected('');
@@ -99,7 +101,7 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
     try { await onDeleteRecord(word.id); setDefinitionBubble(null); } catch (deleteError) { setError(deleteError.message || '刪除單字失敗'); }
   };
   const selectableKorean = (entry) => (
-    <SelectableKoreanText className="reading-korean-source" entry={entry} words={readingWords} highlights={localHighlights} onSelectWord={showDefinition} onSelectHighlight={showHighlightActions} />
+    <SelectableKoreanText className="reading-korean-source" entry={entry} words={readingWords} highlights={localHighlights} onSelectWord={showDefinition} onOpenWord={(word) => { clearSelectionAction({ removeRanges: true }); setDefinitionBubble(null); setViewingWord(word); }} onSelectHighlight={showHighlightActions} />
   );
   return (
     <section className="page reading-test-reader">
@@ -160,6 +162,7 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
         onClose={() => setQuickAdd(null)}
       />}
       {editingWord && <AddItemsModal title="編輯單字" date={editingWord.date} lockedDate editItem={editingWord} allItems={allItems} folders={folders} onUpdateRecord={onUpdateRecord} onClose={() => setEditingWord(null)} />}
+      {viewingWord && <ItemDetailModal item={viewingWord} allItems={allItems} onSpeak={onSpeak} onOpenItem={setViewingWord} onEdit={(word) => { setViewingWord(null); setEditingWord(word); }} onDelete={onDeleteRecord} onClose={() => setViewingWord(null)} />}
     </section>
   );
 }

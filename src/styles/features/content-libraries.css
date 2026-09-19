@@ -827,6 +827,7 @@
   color: inherit;
   background: #fff2b8;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .subtitle-known-word:hover {

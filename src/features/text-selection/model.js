@@ -28,3 +28,7 @@ export function koreanTextMatches(text, words = []) {
 export function naverKoreanDictionaryUrl(text) {
   return `https://korean.dict.naver.com/kozhdict/#/search?query=${encodeURIComponent(String(text || '').trim())}`;
 }
+
+export function isRepeatedWordActivation(previous, key, now, maximumDelay = 420) {
+  return previous?.key === key && now - previous.time <= maximumDelay;
+}

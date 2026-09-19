@@ -40,6 +40,9 @@ test('YT and reading share one selectable-text ownership boundary', async () => 
   readers.forEach((source) => {
     assert.match(source, /<SelectableKoreanText/);
     assert.match(source, /<SelectionActionPopover/);
+    assert.match(source, /onOpenWord=/);
+    assert.match(source, /onOpenWord=\{\(word\) => \{[^}]*clearSelectionAction\(\{ removeRanges: true \}\)/);
+    assert.match(source, /<ItemDetailModal/);
   });
 });
 

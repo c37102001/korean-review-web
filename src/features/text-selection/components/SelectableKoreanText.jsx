@@ -1,7 +1,8 @@
-import React from 'react';
-import { koreanTextMatches } from '../model.js';
+import React, { useRef } from 'react';
+import { isRepeatedWordActivation, koreanTextMatches } from '../model.js';
 
-export function SelectableKoreanText({ entry, words = [], highlights = [], onSelectWord, onSelectHighlight, className = '' }) {
+export function SelectableKoreanText({ entry, words = [], highlights = [], onSelectWord, onOpenWord, onSelectHighlight, className = '' }) {
+  const lastActivationRef = useRef(null);
   const knownMatches = koreanTextMatches(entry.ko, words);
   const highlightMatches = highlights.filter((highlight) => (
     highlight.entryId === entry.id
@@ -22,10 +23,28 @@ export function SelectableKoreanText({ entry, words = [], highlights = [], onSel
         const known = knownMatches.find((match) => match.start <= start && match.end >= end);
         const highlight = highlightMatches.find((match) => match.start <= start && match.end >= end);
         if (!known && !highlight) return <React.Fragment key={`text-${start}`}>{text}</React.Fragment>;
+        const selectMark = (event) => {
+          if (!known) {
+            onSelectHighlight?.(event, highlight, entry);
+            return;
+          }
+          const now = Date.now();
+          const activationKey = `${known.word.id || known.word.ko}:${start}:${end}`;
+          const previous = lastActivationRef.current;
+          if (onOpenWord && isRepeatedWordActivation(previous, activationKey, now)) {
+            event.preventDefault();
+            event.stopPropagation();
+            lastActivationRef.current = null;
+            onOpenWord(known.word);
+            return;
+          }
+          lastActivationRef.current = { key: activationKey, time: now };
+          onSelectWord?.(event, known.word);
+        };
         return (
           <mark
             className={`${known ? 'subtitle-known-word' : ''} ${highlight ? 'reading-text-highlight' : ''}`.trim()}
-            onClick={(event) => (known ? onSelectWord?.(event, known.word) : onSelectHighlight?.(event, highlight, entry))}
+            onClick={selectMark}
             key={`mark-${start}`}
           >{text}</mark>
         );
