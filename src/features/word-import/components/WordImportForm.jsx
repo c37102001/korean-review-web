@@ -5,7 +5,7 @@ import { FolderPickerDropdown } from '../../word-library/components/BulkWordActi
 import { wordFolderIds } from '../../word-library/collection/model.js';
 import { copyText } from '../../../shared/clipboard.js';
 import { createId } from '../../../shared/id.js';
-import { formatPairLines, normalizeKoreanKey, parsePairLines, recordOrder, wordChineseSummary } from '../../../words/records.js';
+import { formatPairLines, normalizeKoreanKey, normalizeWordVariants, parsePairLines, recordOrder, wordChineseSummary } from '../../../words/records.js';
 import {
   buildJsonImportDraft,
   clearMissingImportRelated,
@@ -30,7 +30,7 @@ function describeImportError(error) {
   return { code: code || error?.name || 'error', message };
 }
 
-export function AddItemsModal({ title, date, lockedDate = false, initialKo = '', onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], folders = [], initialFolderIds = [], requiredFolderIds = [], onClose }) {
+export function AddItemsModal({ title, date, lockedDate = false, initialKo = '', initialVariants = [], onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], folders = [], initialFolderIds = [], requiredFolderIds = [], onClose }) {
   const [busy, setBusy] = useState(false);
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
@@ -41,6 +41,7 @@ export function AddItemsModal({ title, date, lockedDate = false, initialKo = '',
           date={date}
           lockedDate={lockedDate}
           initialKo={initialKo}
+          initialVariants={initialVariants}
           onAddRecords={onAddRecords}
           onUpdateRecord={onUpdateRecord}
           onWriteRecords={onWriteRecords}
@@ -59,7 +60,7 @@ export function AddItemsModal({ title, date, lockedDate = false, initialKo = '',
   );
 }
 
-export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], folders = [], initialFolderIds = [], requiredFolderIds = [], onSaved, onBusyChange, compactPanel = false }) {
+export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', initialVariants = [], onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], folders = [], initialFolderIds = [], requiredFolderIds = [], onSaved, onBusyChange, compactPanel = false }) {
   const isEditing = Boolean(editItem);
   const editFolderIds = wordFolderIds(folders, editItem?.id);
   const initialSelectedFolderIds = isEditing
@@ -69,7 +70,7 @@ export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', 
   const [formDate, setFormDate] = useState(date);
   const [jsonText, setJsonText] = useState(() => editItem ? formatSingleWordJson(editItem) : '');
   const [importDraft, setImportDraft] = useState(null);
-  const [manual, setManual] = useState(() => itemToManual(editItem, initialKo));
+  const [manual, setManual] = useState(() => itemToManual(editItem, initialKo, initialVariants));
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [duplicates, setDuplicates] = useState([]);
@@ -100,7 +101,7 @@ export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', 
 
   useEffect(() => {
     setFormDate(editItem?.date || date);
-    setManual(itemToManual(editItem, initialKo));
+    setManual(itemToManual(editItem, initialKo, initialVariants));
     setJsonText(editItem ? formatSingleWordJson(editItem) : '');
     setMode('manual');
     setImportDraft(null);
@@ -113,7 +114,7 @@ export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', 
     setSelectedFolderIds(initialSelectedFolderIds);
     setJsonCopied(false);
     submissionLockRef.current = false;
-  }, [date, editItem, initialKo, initialFolderIds.join('|'), requiredFolderIds.join('|'), editFolderIds.join('|')]);
+  }, [date, editItem, initialKo, initialVariants.join('|'), initialFolderIds.join('|'), requiredFolderIds.join('|'), editFolderIds.join('|')]);
 
   const commitImportEntries = async (entries, targetDate, keptExistingIds = []) => {
     const activeEntries = entries.filter(Boolean);
@@ -444,6 +445,7 @@ export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', 
                 {['名詞', '動詞', '形容詞', '副詞', '片語', '動詞片語', '句子', '文法', '比較'].map((option) => <option key={option}>{option}</option>)}
               </select>
             </label>
+            <VariantsEditor manual={manual} setManual={setManual} />
             <div className="wide-field meanings-editor">
               <div className="meanings-editor-head">
                 <div>
@@ -734,6 +736,41 @@ function RelatedSelector({ manual, setManual, allItems, editItem }) {
   );
 }
 
+function VariantsEditor({ manual, setManual }) {
+  const addVariant = () => {
+    const variant = normalizeKoreanKey(manual.variantInput);
+    if (!variant) return;
+    const variants = [...new Set([...(manual.variants || []), variant])];
+    setManual({ ...manual, variants, variantInput: '' });
+  };
+  return (
+    <div className="wide-field variants-editor">
+      <label htmlFor="word-variant-input">活用形式（選填）</label>
+      <div className="variant-input-row">
+        <input
+          id="word-variant-input"
+          value={manual.variantInput || ''}
+          onChange={(event) => setManual({ ...manual, variantInput: event.target.value })}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' || event.isComposing) return;
+            event.preventDefault();
+            addVariant();
+          }}
+          placeholder="例如：숨길"
+        />
+        <button type="button" className="soft-button" onClick={addVariant}><Plus size={16} /> 加入</button>
+      </div>
+      {!!manual.variants?.length && <div className="variant-tags">
+        {manual.variants.map((variant) => (
+          <button type="button" key={variant} onClick={() => setManual({ ...manual, variants: manual.variants.filter((entry) => entry !== variant) })} title={`移除 ${variant}`}>
+            {variant}<X size={13} />
+          </button>
+        ))}
+      </div>}
+    </div>
+  );
+}
+
 function emptyManualMeaning() {
   return { id: '', zh: '', pattern: '', examples: '' };
 }
@@ -760,6 +797,8 @@ function manualToItem(manual, allItems = []) {
     ko: manual.ko.trim(),
     meanings: meaningInputs.map(manualMeaningToItemMeaning),
   };
+  const variants = normalizeWordVariants(manual.variants, item.ko);
+  if (variants.length) item.variants = variants;
   if (manual.pos) item.pos = manual.pos;
   const notesMarkdown = manual.notes.trim();
   if (notesMarkdown) item.notes = [notesMarkdown];
@@ -768,13 +807,15 @@ function manualToItem(manual, allItems = []) {
   return item;
 }
 
-function itemToManual(item, initialKo = '') {
+function itemToManual(item, initialKo = '', initialVariants = []) {
   if (!item) {
-    return { ko: initialKo, pos: '', meanings: [emptyManualMeaning()], notes: '', relatedSelected: [], relatedQuery: '' };
+    return { ko: initialKo, pos: '', variants: [...new Set(initialVariants.map(normalizeKoreanKey).filter(Boolean))], variantInput: '', meanings: [emptyManualMeaning()], notes: '', relatedSelected: [], relatedQuery: '' };
   }
   return {
     ko: item.ko || '',
     pos: item.pos || '',
+    variants: item.variants || [],
+    variantInput: '',
     meanings: (item.meanings?.length ? item.meanings : [emptyManualMeaning()]).map((meaning) => ({
       id: meaning.id || '',
       zh: meaning.zh || '',
@@ -803,7 +844,7 @@ function mergeEditedItem(original, manual, allItems = []) {
     ...content
   } = original;
   const next = { ...content, ...edited };
-  ['pos', 'meanings', 'notes', 'related'].forEach((key) => {
+  ['pos', 'variants', 'meanings', 'notes', 'related'].forEach((key) => {
     if (edited[key] === undefined) delete next[key];
   });
   return next;

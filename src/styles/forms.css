@@ -938,6 +938,39 @@
   gap: 10px;
 }
 
+.variants-editor {
+  display: grid;
+  gap: 9px;
+}
+
+.variant-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.variant-input-row .soft-button {
+  min-height: 44px;
+}
+
+.variant-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.variant-tags button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 9px;
+  border: 1px solid #cde8e1;
+  border-radius: 8px;
+  color: #1d5d59;
+  background: #eaf8f4;
+  box-shadow: none;
+}
+
 .selected-related,
 .related-results {
   display: flex;

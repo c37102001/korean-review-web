@@ -83,12 +83,16 @@ export function WordCardActions({
 export function WordMetadata({ word }) {
   const score = Number.isFinite(Number(word.score)) ? Number(word.score) : 0;
   const total = Number.isFinite(Number(word.total)) ? Number(word.total) : 0;
+  const metadata = [
+    word.pos && word.pos !== '未分類' ? word.pos : '',
+    word.date || '',
+    `${total} 次`,
+    score !== 0 ? `熟悉分數 ${score > 0 ? `+${score}` : score}` : '',
+  ].filter(Boolean);
+  if (!metadata.length) return null;
   return (
     <div className="word-meta">
-      <span>{word.pos || '未分類'}</span>
-      {word.date && <span>{word.date}</span>}
-      <span>{total} 次</span>
-      <span>熟悉分數 {score > 0 ? `+${score}` : score}</span>
+      {metadata.map((value) => <span key={value}>{value}</span>)}
     </div>
   );
 }
@@ -99,6 +103,16 @@ export function WordFolderTags({ wordId, folders = [] }) {
   return (
     <div className="word-folder-tags" aria-label="所屬資料夾">
       {memberships.map((folder) => <span key={folder.id}><Folder size={12} /> {folder.name}</span>)}
+    </div>
+  );
+}
+
+export function WordVariantTags({ variants = [] }) {
+  if (!variants.length) return null;
+  return (
+    <div className="word-variant-tags" aria-label="活用形式">
+      <span className="word-variant-label">活用形式</span>
+      {variants.map((variant) => <span key={variant} lang="ko">{variant}</span>)}
     </div>
   );
 }
@@ -277,12 +291,14 @@ export function WordDetails({ word, allWords = [], onOpenWord, onSpeak, showChin
     ? word.meanings || []
     : (word.meanings || []).filter((meaning) => (meaning.examples || []).some((example) => example.ko));
   const hasDetails = visibleMeanings.length
+    || (showChinese && word.variants?.length)
     || (showChinese && word.notes?.length)
     || (showChinese && resolvedRelatedWords.length);
   if (!hasDetails && emptyMessage) return <div className="empty">{emptyMessage}</div>;
 
   return (
     <div className="rich-details">
+      {showChinese && <WordVariantTags variants={word.variants} />}
       {!!visibleMeanings.length && (
         <section className="detail-section meanings-section">
           <div className="detail-section-title"><span>{showChinese ? '意思' : '例句'}</span><small>{visibleMeanings.length} 組</small></div>
@@ -398,6 +414,47 @@ export function ItemDetailModal({
           isStarred={isStarred}
           onToggleStar={onToggleStar}
         />
+      </div>
+    </div>
+  );
+}
+
+export function WordMatchesModal({
+  items = [],
+  allItems = [],
+  onSpeak,
+  onEdit,
+  onDelete,
+  onOpenItems,
+  onClose,
+}) {
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape' || event.isComposing) return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
+  if (!items.length) return null;
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`符合 ${items.length} 張單字卡`}>
+      <div className={`modal-panel detail-panel ${items.length > 1 ? 'word-matches-panel' : ''}`}>
+        <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
+        {items.length > 1 && <div className="word-matches-heading"><strong>符合 {items.length} 張單字卡</strong></div>}
+        <div className="word-matches-list">
+          {items.map((item) => <WordDetailCard
+            key={item.id || item.ko}
+            word={item}
+            allWords={allItems}
+            onSpeak={onSpeak}
+            onEdit={onEdit}
+            onDelete={onDelete ? async (itemId) => { await onDelete(itemId); onClose(); } : null}
+            onOpenWord={(word) => onOpenItems?.([word])}
+          />)}
+        </div>
       </div>
     </div>
   );

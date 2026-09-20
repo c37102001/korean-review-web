@@ -838,6 +838,16 @@ test('subtitle highlights only saved words and prefers the longest overlapping w
   ]);
 });
 
+test('subtitle highlights variants and returns every card sharing the same surface form', () => {
+  const matches = helpers.subtitleWordMatches('몸을 숨길 곳', [
+    { id: 'hide', ko: '숨기다', variants: ['숨길'], zh: '藏起來' },
+    { id: 'conceal', ko: '감추다', variants: ['숨길'], zh: '隱藏' },
+  ]);
+
+  assert.equal(matches.length, 1);
+  assert.deepEqual(matches[0].words.map((word) => word.id), ['hide', 'conceal']);
+});
+
 test('SRT playback resolves the subtitle entry at the current time', () => {
   const entries = [
     { id: 'first', startMs: 0, endMs: 1400 },
@@ -1012,6 +1022,7 @@ test('daily answer speech selects one language instead of combining both', () =>
 test('word-only search includes Korean and Chinese meanings but ignores card details', () => {
   const weather = {
     ko: '날씨',
+    variants: ['날씨가'],
     zh: '天氣',
     notes: ['시장附近的天氣'],
     meanings: [{
@@ -1030,6 +1041,7 @@ test('word-only search includes Korean and Chinese meanings but ignores card det
   assert.equal(helpers.itemMatchesSearch(weather, '장', 'all'), true);
   assert.equal(helpers.itemMatchesSearch(weather, '장', 'word'), false);
   assert.equal(helpers.itemMatchesSearch(weather, '天氣', 'word'), true);
+  assert.equal(helpers.itemMatchesSearch(weather, '날씨가', 'word'), true);
   assert.equal(helpers.itemMatchesSearch({ ...weather, zh: '' }, '天氣', 'word'), true);
   assert.equal(helpers.itemMatchesSearch(weather, '市場', 'word'), false);
   assert.equal(helpers.itemMatchesSearch(market, '장', 'word'), true);

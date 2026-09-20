@@ -4,7 +4,7 @@ import { BookOpen, Check, FolderOpen, Pencil, Trash2, X } from 'lucide-react';
 import { isSystemFolder, READING_SOURCE_FOLDER_NAME } from '../../../folders/model.js';
 import { todayString } from '../../../shared/date.js';
 import { createId } from '../../../shared/id.js';
-import { ItemDetailModal } from '../../word-library/components/WordPresentation.jsx';
+import { WordMatchesModal } from '../../word-library/components/WordPresentation.jsx';
 import { AddItemsModal } from '../../word-import/components/WordImportForm.jsx';
 import { SelectableKoreanText } from '../../text-selection/components/SelectableKoreanText.jsx';
 import { SelectionActionPopover, WordDefinitionPopover } from '../../text-selection/components/SelectionOverlays.jsx';
@@ -18,7 +18,7 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
   const [editing, setEditing] = useState(false);
   const [quickAdd, setQuickAdd] = useState(null);
   const [editingWord, setEditingWord] = useState(null);
-  const [viewingWord, setViewingWord] = useState(null);
+  const [viewingWords, setViewingWords] = useState([]);
   const [localHighlights, setLocalHighlights] = useState([]);
   useEffect(() => {
     setSelected('');
@@ -50,13 +50,12 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
     if (!window.confirm('確定要刪除這題閱讀題嗎？')) return;
     try { await onDelete(test.id); onBack(); } catch (deleteError) { setError(deleteError.message || '刪除閱讀題失敗'); }
   };
-  const showDefinition = (event, word) => {
+  const showDefinition = (event, words) => {
     event.preventDefault();
     event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
     setDefinitionBubble({
-      word,
-      zh: word.zh,
+      words,
       top: Math.max(10, rect.top - 8),
       left: Math.min(Math.max(105, rect.left + (rect.width / 2)), window.innerWidth - 105),
     });
@@ -101,7 +100,7 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
     try { await onDeleteRecord(word.id); setDefinitionBubble(null); } catch (deleteError) { setError(deleteError.message || '刪除單字失敗'); }
   };
   const selectableKorean = (entry) => (
-    <SelectableKoreanText className="reading-korean-source" entry={entry} words={readingWords} highlights={localHighlights} onSelectWord={showDefinition} onOpenWord={(word) => { clearSelectionAction({ removeRanges: true }); setDefinitionBubble(null); setViewingWord(word); }} onSelectHighlight={showHighlightActions} />
+    <SelectableKoreanText className="reading-korean-source" entry={entry} words={readingWords} highlights={localHighlights} onSelectWords={showDefinition} onOpenWords={(words) => { clearSelectionAction({ removeRanges: true }); setDefinitionBubble(null); setViewingWords(words); }} onSelectHighlight={showHighlightActions} />
   );
   return (
     <section className="page reading-test-reader">
@@ -124,8 +123,8 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
       <WordDefinitionPopover
         definition={definitionBubble}
         className="reading-word-definition"
-        onEdit={() => { setEditingWord(definitionBubble.word); setDefinitionBubble(null); }}
-        onDelete={() => deleteWord(definitionBubble.word)}
+        onEdit={(word) => { setEditingWord(word); setDefinitionBubble(null); }}
+        onDelete={deleteWord}
       />
       {readingFolder && <div className="reading-reader-floating-actions"><button type="button" className="yt-reader-floating-button" onClick={() => onOpenFolder?.(readingFolder.id)} title={`開啟資料夾「${readingFolder.name}」`} aria-label={`開啟資料夾「${readingFolder.name}」`}><FolderOpen size={22} /></button></div>}
       <article className="reading-passage">
@@ -153,6 +152,7 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
         title="新增單字"
         date={todayString()}
         initialKo={quickAdd.ko}
+        initialVariants={[quickAdd.ko]}
         allItems={allItems}
         folders={folders}
         onAddRecords={onAddRecords}
@@ -162,7 +162,7 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
         onClose={() => setQuickAdd(null)}
       />}
       {editingWord && <AddItemsModal title="編輯單字" date={editingWord.date} lockedDate editItem={editingWord} allItems={allItems} folders={folders} onUpdateRecord={onUpdateRecord} onClose={() => setEditingWord(null)} />}
-      {viewingWord && <ItemDetailModal item={viewingWord} allItems={allItems} onSpeak={onSpeak} onOpenItem={setViewingWord} onEdit={(word) => { setViewingWord(null); setEditingWord(word); }} onDelete={onDeleteRecord} onClose={() => setViewingWord(null)} />}
+      {!!viewingWords.length && <WordMatchesModal items={viewingWords} allItems={allItems} onSpeak={onSpeak} onOpenItems={setViewingWords} onEdit={(word) => { setViewingWords([]); setEditingWord(word); }} onDelete={onDeleteRecord} onClose={() => setViewingWords([])} />}
     </section>
   );
 }

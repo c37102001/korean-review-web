@@ -48,13 +48,24 @@
 .word-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  gap: 5px;
+  color: #7a878d;
+  font-size: calc(13.2px * var(--user-font-scale, 1));
+  line-height: 1.35;
 }
 
 .word-meta span {
-  padding: 5px 8px;
-  border-radius: 999px;
-  background: #f2f5f5;
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  background: transparent;
+}
+
+.word-meta span + span::before {
+  content: '·';
+  margin-right: 5px;
+  color: #b4bdc0;
 }
 
 .word-card {
@@ -98,6 +109,44 @@
 
 .word-folder-tags svg {
   flex: 0 0 auto;
+}
+
+.word-variant-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.word-variant-tags > span {
+  padding: 4px 8px;
+  border: 1px solid #d8ebe6;
+  border-radius: 8px;
+  color: #287b70;
+  background: #edf9f5;
+  font-size: calc(13.2px * var(--user-font-scale, 1));
+  font-weight: 850;
+}
+
+.word-variant-tags .word-variant-label {
+  padding-left: 0;
+  border: 0;
+  color: #718087;
+  background: transparent;
+}
+
+.word-matches-panel {
+  width: min(920px, 100%);
+}
+
+.word-matches-heading {
+  padding: 2px 48px 14px 4px;
+  color: #66737d;
+}
+
+.word-matches-list {
+  display: grid;
+  gap: 16px;
 }
 
 @media (max-width: 920px) {

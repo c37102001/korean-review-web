@@ -7,7 +7,7 @@ import { todayString } from '../../../shared/date.js';
 import { subtitleEntryAtTime, YOUTUBE_EMBED_ORIGIN, YT_SUBTITLE_MODE_SRT } from '../../../subtitles/model.js';
 import { loadYoutubeIframeApi, subtitleTimeLabel } from '../../../subtitles/player.js';
 import { AddItemsModal } from '../../word-import/components/WordImportForm.jsx';
-import { ItemDetailModal } from '../../word-library/components/WordPresentation.jsx';
+import { WordMatchesModal } from '../../word-library/components/WordPresentation.jsx';
 import { SelectableKoreanText } from '../../text-selection/components/SelectableKoreanText.jsx';
 import { SelectionActionPopover, WordDefinitionPopover } from '../../text-selection/components/SelectionOverlays.jsx';
 import { useDismissibleWordDefinition, useTextSelectionActions } from '../../text-selection/hooks/useTextSelectionActions.js';
@@ -17,7 +17,7 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
   const [showChinese, setShowChinese] = useState(true);
   const [editing, setEditing] = useState(null);
   const [editingWord, setEditingWord] = useState(null);
-  const [viewingWord, setViewingWord] = useState(null);
+  const [viewingWords, setViewingWords] = useState([]);
   const [quickAdd, setQuickAdd] = useState(null);
   const [playerLoaded, setPlayerLoaded] = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
@@ -161,13 +161,12 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
   const embedOrigin = typeof window === 'undefined' ? '' : `&origin=${encodeURIComponent(window.location.origin)}`;
   const embedUrl = note.videoId ? `${YOUTUBE_EMBED_ORIGIN}/embed/${note.videoId}?enablejsapi=1&rel=0${embedOrigin}` : '';
   const watchUrl = note.videoId ? `${YOUTUBE_EMBED_ORIGIN}/watch?v=${encodeURIComponent(note.videoId)}` : '';
-  const showDefinition = (event, word) => {
+  const showDefinition = (event, words) => {
     event.preventDefault();
     event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
     setDefinitionBubble({
-      word,
-      zh: word.zh,
+      words,
       top: Math.max(10, rect.top - 8),
       left: Math.min(Math.max(10, rect.left + (rect.width / 2)), window.innerWidth - 18),
     });
@@ -205,7 +204,7 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
         <div className="yt-subtitle-list" ref={subtitleListRef} aria-label="字幕列表">
           {note.entries.map((entry, index) => {
             const clickable = note.mode === YT_SUBTITLE_MODE_SRT && entry.startMs !== null && !!embedUrl;
-            const content = <><strong><span className="yt-subtitle-entry-index">{index + 1}</span>{entry.startMs !== null && <small className="yt-subtitle-entry-time">{subtitleTimeLabel(entry.startMs)}</small>}<SelectableKoreanText className="yt-subtitle-ko" entry={entry} words={subtitleWords} onSelectWord={showDefinition} onOpenWord={(word) => { pauseVideo(); clearSelectionAction({ removeRanges: true }); setDefinitionBubble(null); setViewingWord(word); }} /></strong><p className={!showChinese ? 'is-hidden' : ''} aria-hidden={!showChinese}>{entry.zh}</p></>;
+            const content = <><strong><span className="yt-subtitle-entry-index">{index + 1}</span>{entry.startMs !== null && <small className="yt-subtitle-entry-time">{subtitleTimeLabel(entry.startMs)}</small>}<SelectableKoreanText className="yt-subtitle-ko" entry={entry} words={subtitleWords} onSelectWords={showDefinition} onOpenWords={(words) => { pauseVideo(); clearSelectionAction({ removeRanges: true }); setDefinitionBubble(null); setViewingWords(words); }} /></strong><p className={!showChinese ? 'is-hidden' : ''} aria-hidden={!showChinese}>{entry.zh}</p></>;
             const isPlaying = activeSubtitleEntryId === entry.id;
             const className = `yt-subtitle-entry ${clickable ? 'clickable' : ''} ${isPlaying ? 'is-playing' : ''}`;
             const setEntryRef = (element) => {
@@ -246,6 +245,7 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
         title="新增單字"
         date={todayString()}
         initialKo={quickAdd.ko}
+        initialVariants={[quickAdd.ko]}
         allItems={allItems}
         folders={folders}
         onAddRecords={onAddRecords}
@@ -255,7 +255,7 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
         onClose={() => setQuickAdd(null)}
       />}
       {editingWord && <AddItemsModal title="編輯單字" date={editingWord.date} lockedDate editItem={editingWord} allItems={allItems} folders={folders} onUpdateRecord={onUpdateRecord} onClose={() => setEditingWord(null)} />}
-      {viewingWord && <ItemDetailModal item={viewingWord} allItems={allItems} onSpeak={onSpeak} onOpenItem={setViewingWord} onEdit={(word) => { setViewingWord(null); setEditingWord(word); }} onDelete={onDeleteRecord} onClose={() => setViewingWord(null)} />}
+      {!!viewingWords.length && <WordMatchesModal items={viewingWords} allItems={allItems} onSpeak={onSpeak} onOpenItems={setViewingWords} onEdit={(word) => { setViewingWords([]); setEditingWord(word); }} onDelete={onDeleteRecord} onClose={() => setViewingWords([])} />}
       {editing && <YoutubeSubtitleEditorModal note={editing} onSave={async (nextNote) => { await onSave(nextNote); setEditing(null); }} onClose={() => setEditing(null)} />}
     </section>
   );

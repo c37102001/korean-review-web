@@ -16,12 +16,14 @@ export function SelectionActionPopover({ selection, onAdd, onLookup, onAddHighli
 
 export function WordDefinitionPopover({ definition, className = '', onEdit, onDelete }) {
   if (!definition) return null;
+  const words = definition.words?.length ? definition.words : definition.word ? [definition.word] : [];
+  const editable = words.length === 1;
   return (
-    <div className={`subtitle-word-definition ${className}`.trim()} style={{ top: definition.top, left: definition.left }} role={onEdit || onDelete ? 'dialog' : 'status'} aria-label={definition.word ? `${definition.word.ko}的單字資訊` : undefined}>
-      {definition.word ? <span><strong>{definition.word.ko}</strong>{definition.zh}</span> : definition.zh}
-      {(onEdit || onDelete) && <div>
-        {onEdit && <button type="button" onClick={onEdit} title="編輯單字" aria-label="編輯單字"><Pencil size={15} /></button>}
-        {onDelete && <button type="button" className="delete-icon-button" onClick={onDelete} title="刪除單字" aria-label="刪除單字"><Trash2 size={15} /></button>}
+    <div className={`subtitle-word-definition ${className}`.trim()} style={{ top: definition.top, left: definition.left }} role={(editable && (onEdit || onDelete)) ? 'dialog' : 'status'} aria-label={words.length ? `符合 ${words.length} 張單字卡` : undefined}>
+      {words.length ? <span className="definition-word-list">{words.map((word) => <span key={word.id || word.ko}><strong>{word.ko}</strong>{word.zh}</span>)}</span> : definition.zh}
+      {editable && (onEdit || onDelete) && <div>
+        {onEdit && <button type="button" onClick={() => onEdit(words[0])} title="編輯單字" aria-label="編輯單字"><Pencil size={15} /></button>}
+        {onDelete && <button type="button" className="delete-icon-button" onClick={() => onDelete(words[0])} title="刪除單字" aria-label="刪除單字"><Trash2 size={15} /></button>}
       </div>}
     </div>
   );

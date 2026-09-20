@@ -878,6 +878,21 @@
   gap: 2px;
 }
 
+.subtitle-word-definition .definition-word-list {
+  display: grid;
+  gap: 7px;
+}
+
+.subtitle-word-definition .definition-word-list > span {
+  display: grid;
+  gap: 1px;
+}
+
+.subtitle-word-definition .definition-word-list > span + span {
+  padding-top: 7px;
+  border-top: 1px solid #f0df9d;
+}
+
 .reading-word-definition > div {
   display: flex;
   gap: 5px;

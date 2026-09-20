@@ -32,6 +32,12 @@ export function normalizeKoreanKey(value) {
   return String(value || '').trim().normalize('NFC');
 }
 
+export function normalizeWordVariants(variants, canonicalKo = '') {
+  if (!Array.isArray(variants)) return [];
+  const canonical = normalizeKoreanKey(canonicalKo);
+  return [...new Set(variants.map(normalizeKoreanKey).filter((variant) => variant && variant !== canonical))];
+}
+
 export function parsePairLines(text) {
   const lines = String(text || '').split('\n').map((line) => line.trim()).filter(Boolean);
   if (!lines.length) return [];
@@ -103,10 +109,12 @@ export function normalizeItemToV2(item, recordId, lookup = buildRecordLookup([])
       examples,
     };
   });
+  const variants = normalizeWordVariants(item.variants, item.ko);
 
   return {
     ko: item.ko,
     ...(item.pos ? { pos: item.pos } : {}),
+    ...(variants.length ? { variants } : {}),
     meanings,
     ...(item.notes?.length ? { notes: item.notes } : {}),
     related: resolveRelatedIds(item.related, lookup),

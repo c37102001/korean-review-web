@@ -3,6 +3,7 @@ import {
   buildRecordLookup,
   normalizeItemToV2,
   normalizeKoreanKey,
+  normalizeWordVariants,
   recordOrder,
 } from '../../words/records.js';
 const CONTENT_SCHEMA_VERSION = 2;
@@ -75,12 +76,16 @@ export function assertUniqueIds(values, label) {
 export function validateImportItem(item, itemIndex) {
   const label = `第 ${itemIndex + 1} 筆資料`;
   assertPlainObject(item, label);
-  assertNoUnsupportedKeys(item, ['id', 'date', 'order', 'ko', 'pos', 'meanings', 'notes', 'related'], label);
+  assertNoUnsupportedKeys(item, ['id', 'date', 'order', 'ko', 'pos', 'variants', 'meanings', 'notes', 'related'], label);
   assertString(item.id, `${label} 的 id`);
   assertString(item.date, `${label} 的 date`);
   assertSafeInteger(item.order, `${label} 的 order`);
   assertString(item.ko, `${label} 的 ko`, { required: true });
   assertString(item.pos, `${label} 的 pos`);
+  if (item.variants !== undefined) {
+    if (!Array.isArray(item.variants)) throw new Error(`${label} 的 variants 需要是文字陣列`);
+    item.variants.forEach((variant, variantIndex) => assertString(variant, `${label} 的第 ${variantIndex + 1} 個 variant`, { required: true }));
+  }
 
   if (!Array.isArray(item.meanings) || !item.meanings.length) throw new Error(`${label} 需要 meanings，而且至少要有 1 個 meaning`);
   assertUniqueIds(item.meanings, `${label} 的 meanings`);
@@ -237,6 +242,7 @@ export function comparableItemSnapshot(item) {
     order: item.order,
     ko: item.ko || '',
     pos: item.pos || '',
+    variants: item.variants || [],
     meanings: item.meanings || [],
     notes: item.notes || [],
     related: item.related || [],
@@ -256,6 +262,7 @@ export function summarizeEditedJsonChanges(originalItems, records) {
     if (!jsonEqual(original?.order, next.order)) fields.push('排序');
     if (!jsonEqual(original?.ko, next.ko)) fields.push('韓文');
     if (!jsonEqual(original?.pos || '', next.pos || '')) fields.push('詞性');
+    if (!jsonEqual(original?.variants || [], next.variants || [])) fields.push('活用形式');
     if (!jsonEqual(original?.meanings || [], next.meanings || [])) fields.push('意思/例句');
     if (!jsonEqual(original?.notes || [], next.notes || [])) fields.push('筆記');
     if (!jsonEqual(original?.related || [], next.related || [])) fields.push('相關詞');
@@ -366,9 +373,11 @@ export function stripGeneratedIdsFromMeaning(meaning) {
 export function mergeImportItems(left, right) {
   const notes = [...new Set([...(left.notes || []), ...(right.notes || [])].filter(Boolean))];
   const related = [...new Set([...(left.related || []), ...(right.related || [])].filter(Boolean))];
+  const variants = normalizeWordVariants([...(left.variants || []), ...(right.variants || [])], right.ko || left.ko);
   return {
     ko: right.ko || left.ko,
     ...(right.pos || left.pos ? { pos: right.pos || left.pos } : {}),
+    ...(variants.length ? { variants } : {}),
     meanings: [
       ...(left.meanings || []).map(stripGeneratedIdsFromMeaning),
       ...(right.meanings || []).map(stripGeneratedIdsFromMeaning),
@@ -393,6 +402,7 @@ export function formatSingleWordJson(item) {
   const content = {
     ko: item.ko,
     ...(item.pos ? { pos: item.pos } : {}),
+    ...(item.variants?.length ? { variants: item.variants } : {}),
     meanings: (item.meanings || []).map((meaning) => ({
       zh: meaning.zh,
       ...(meaning.pattern ? { pattern: meaning.pattern } : {}),

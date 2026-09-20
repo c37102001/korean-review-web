@@ -137,6 +137,7 @@ function normalizedSearchValue(value) {
 function itemSearchText(item) {
   return [
     item.ko,
+    ...(item.variants || []),
     item.zh,
     item.pos,
     item.date,
@@ -156,6 +157,7 @@ export function itemMatchesSearch(item, query, scope = 'all') {
   if (scope === 'word') {
     const wordAndMeanings = [
       item.ko,
+      ...(item.variants || []),
       ...(item.meanings || []).map((meaning) => meaning.zh),
     ].filter(Boolean).join(' ');
     return normalizedSearchValue(wordAndMeanings).includes(normalizedQuery);

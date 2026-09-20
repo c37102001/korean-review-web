@@ -42,6 +42,7 @@ const word = {
   }],
   notes: ['**口語**中常用。'],
   related: [],
+  variants: ['어차피'],
 };
 
 test('the canonical word card owns the list layout, actions, metadata and folder tags', () => {
@@ -66,7 +67,17 @@ test('the canonical word card owns the list layout, actions, metadata and folder
   assert.match(markup, /不熟悉/);
   assert.match(markup, /aria-label="顯示中文"/);
   assert.doesNotMatch(markup, /反正、終究/);
+  assert.doesNotMatch(markup, /活用形式|어차피/);
   assert.doesNotMatch(markup, /note-card|compact-card/);
+});
+
+test('preview metadata hides empty defaults and keeps review count as compact plain text', () => {
+  const markup = renderToStaticMarkup(React.createElement(presentation.WordCard, {
+    word: { ...word, pos: '', total: 0, score: 0 },
+  }));
+
+  assert.match(markup, /class="word-meta"><span>2026-09-16<\/span><span>0 次<\/span><\/div>/);
+  assert.doesNotMatch(markup, /未分類|熟悉分數 0/);
 });
 
 test('word card Chinese meaning is opt-in', () => {
@@ -90,6 +101,12 @@ test('word details are shared by detail, study and practice surfaces', () => {
   assert.match(markup, /어차피 해야 해요\./);
   assert.match(markup, /反正都得做。/);
   assert.match(markup, /<strong>口語<\/strong>/);
+});
+
+test('word cards display optional variants as compact tags', () => {
+  const markup = renderToStaticMarkup(React.createElement(presentation.WordDetailCard, { word }));
+  assert.match(markup, /aria-label="活用形式"/);
+  assert.match(markup, /어차피/);
 });
 
 test('hidden-Chinese study details keep Korean examples without leaking translations', () => {

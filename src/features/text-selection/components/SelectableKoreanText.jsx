@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { isRepeatedWordActivation, koreanTextMatches } from '../model.js';
 
-export function SelectableKoreanText({ entry, words = [], highlights = [], onSelectWord, onOpenWord, onSelectHighlight, className = '' }) {
+export function SelectableKoreanText({ entry, words = [], highlights = [], onSelectWord, onSelectWords, onOpenWord, onOpenWords, onSelectHighlight, className = '' }) {
   const lastActivationRef = useRef(null);
   const knownMatches = koreanTextMatches(entry.ko, words);
   const highlightMatches = highlights.filter((highlight) => (
@@ -29,17 +29,20 @@ export function SelectableKoreanText({ entry, words = [], highlights = [], onSel
             return;
           }
           const now = Date.now();
-          const activationKey = `${known.word.id || known.word.ko}:${start}:${end}`;
+          const matchedWords = known.words || [known.word];
+          const activationKey = `${matchedWords.map((word) => word.id || word.ko).sort().join('|')}:${start}:${end}`;
           const previous = lastActivationRef.current;
-          if (onOpenWord && isRepeatedWordActivation(previous, activationKey, now)) {
+          if ((onOpenWords || onOpenWord) && isRepeatedWordActivation(previous, activationKey, now)) {
             event.preventDefault();
             event.stopPropagation();
             lastActivationRef.current = null;
-            onOpenWord(known.word);
+            if (onOpenWords) onOpenWords(matchedWords);
+            else onOpenWord(known.word);
             return;
           }
           lastActivationRef.current = { key: activationKey, time: now };
-          onSelectWord?.(event, known.word);
+          if (onSelectWords) onSelectWords(event, matchedWords);
+          else onSelectWord?.(event, known.word);
         };
         return (
           <mark

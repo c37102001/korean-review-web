@@ -53,3 +53,14 @@ test('single-word JSON editing preserves stable nested ids', () => {
   assert.equal(edited.meanings[0].examples[0].id, 'example');
   assert.deepEqual(edited.notes, ['補充']);
 });
+
+test('optional word variants round-trip through JSON and normalize duplicates', () => {
+  const original = {
+    id: 'word', date: '2026-09-14', ko: '숨기다', variants: ['숨길', ' 숨겨요 ', '숨길', '숨기다'],
+    meanings: [{ id: 'meaning', zh: '藏起來', examples: [] }], notes: [], related: [],
+  };
+  const document = JSON.parse(formatSingleWordJson(original));
+  assert.deepEqual(document.data[0].variants, original.variants);
+  const edited = parseSingleWordEditJson(JSON.stringify(document), original, [original]);
+  assert.deepEqual(edited.variants, ['숨길', '숨겨요']);
+});
