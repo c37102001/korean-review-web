@@ -410,6 +410,8 @@ JS 與 Python 無法直接共用 runtime code，因此必須共用「資料合�
 
 ## 11. 測試架構
 
+後續核心使用者操作與現有快照的盤點，見 [核心操作測試清單](core-workflow-test-checklist.md)。
+
 目前 `tests/import-flow.test.mjs` 有 1,308 行，並透過 Vite SSR 載入整個 `src/main.jsx` 才取得純函式。`main.jsx` 底部也因此 export 大量不屬於 app entry 的 helper（`src/main.jsx:9120`）。這是模組邊界不清楚的直接訊號。
 
 建議測試層次：
