@@ -1137,3 +1137,14 @@
   color: #9f2936;
   background: #ffe1e5;
 }
+
+.offline-status-bar.delayed:not(.error) {
+  border-color: #f4c67c;
+  color: #8a4d10;
+  background: #fff4df;
+}
+
+.offline-status-bar button {
+  margin-left: auto;
+  flex: 0 0 auto;
+}

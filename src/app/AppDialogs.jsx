@@ -153,6 +153,7 @@ import {
   MANUAL_OFFLINE_STORAGE_KEY,
   offlinePendingWrites,
   offlineReadyState,
+  offlineStatusLabel,
   OFFLINE_STATUS_EVENT,
   queueOfflineWrite,
   setManualOfflineEnabled,
@@ -248,16 +249,17 @@ import { recordOrder, sortRecords, wordChineseSummary, wordExamples } from '../w
 import '../styles.css';
 import { SPEECH_SAMPLE_TEXT, createUser, signInUser } from './AppRuntime.jsx';
 export function OfflineStatusBar({ offlineMode }) {
-  const { online, manual, pendingWrites, preparing, progress, error } = offlineMode;
+  const { online, manual, pendingWrites, preparing, progress, error, syncDelayed } = offlineMode;
   const offline = !online || manual;
   if (!offline && !pendingWrites && !preparing && !error) return null;
-  const label = offline
-    ? `${manual ? '主動離線模式' : '離線模式'}${offlineMode.ready ? '' : ' · 此裝置尚未完成離線資料準備'}${pendingWrites ? ` · ${pendingWrites} 筆操作等待同步` : ''}`
-    : error || progress || `正在同步 ${pendingWrites} 筆離線操作`;
+  const label = offlineStatusLabel(offlineMode);
   return (
-    <div className={`offline-status-bar ${offline ? 'offline' : ''} ${error ? 'error' : ''}`} role="status">
+    <div className={`offline-status-bar ${offline ? 'offline' : ''} ${error ? 'error' : ''} ${syncDelayed ? 'delayed' : ''}`} role="status">
       {offline ? <CloudOff size={18} /> : <CloudDownload size={18} />}
       <span>{label}</span>
+      {!offline && pendingWrites > 0 && (syncDelayed || error) && (
+        <button type="button" onClick={offlineMode.checkSync}>檢查同步</button>
+      )}
     </div>
   );
 }

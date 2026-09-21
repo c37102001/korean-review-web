@@ -268,6 +268,7 @@ function useOfflineMode(user) {
     ready: offlineReadyState(user?.uid),
     preparing: false,
     switching: false,
+    syncDelayed: false,
     progress: '',
     error: '',
   }));
@@ -284,23 +285,38 @@ function useOfflineMode(user) {
   const syncPendingWrites = useCallback(async () => {
     if (!user || navigator.onLine === false || manualOfflineEnabled()) return;
     const pending = offlinePendingWrites();
+    if (!pending) return;
     setState((current) => ({
       ...current,
-      progress: pending ? `正在同步 ${pending} 筆離線操作...` : current.progress,
+      syncDelayed: false,
+      error: '',
+      progress: `正在同步 ${pending} 筆離線操作...`,
     }));
     try {
+      await setFirestoreNetworkEnabled(true);
       await waitForFirestoreSync();
       clearOfflinePendingWrites();
       setState((current) => ({
         ...current,
         pendingWrites: 0,
-        progress: pending ? '離線操作已同步' : current.progress,
+        syncDelayed: false,
+        progress: '離線操作已同步',
         error: '',
       }));
     } catch (error) {
       setState((current) => ({ ...current, error: error.message || '離線操作同步失敗' }));
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!state.online || state.manual || !state.pendingWrites || state.error) return undefined;
+    const timeoutId = setTimeout(() => {
+      setState((current) => current.pendingWrites && current.online && !current.manual
+        ? { ...current, syncDelayed: true }
+        : current);
+    }, 15_000);
+    return () => clearTimeout(timeoutId);
+  }, [state.online, state.manual, state.pendingWrites, state.error]);
 
   useEffect(() => {
     const updateConnection = async () => {
@@ -315,13 +331,20 @@ function useOfflineMode(user) {
       if (!online || manual || !user) return;
       await syncPendingWrites();
     };
-    const updateStatus = (event) => setState((current) => ({
-      ...current,
-      manual: event.detail?.manualOffline ?? current.manual,
-      pendingWrites: event.detail?.pendingWrites ?? offlinePendingWrites(),
-      ready: event.detail?.offlineReady || current.ready,
-      error: event.detail?.syncError ?? current.error,
-    }));
+    const updateStatus = (event) => setState((current) => {
+      const pendingWrites = event.detail?.pendingWrites ?? offlinePendingWrites();
+      return {
+        ...current,
+        manual: event.detail?.manualOffline ?? current.manual,
+        pendingWrites,
+        ready: event.detail?.offlineReady || current.ready,
+        error: event.detail?.syncError ?? (event.detail?.queuedLabel ? '' : current.error),
+        syncDelayed: pendingWrites && !event.detail?.queuedLabel ? current.syncDelayed : false,
+        progress: event.detail?.queuedLabel && pendingWrites
+          ? `正在同步 ${pendingWrites} 筆離線操作...`
+          : current.progress,
+      };
+    });
     const updateStoredMode = async (event) => {
       if (event.key !== MANUAL_OFFLINE_STORAGE_KEY) return;
       const manual = manualOfflineEnabled();
@@ -425,7 +448,7 @@ function useOfflineMode(user) {
     }
   }, [prepare, syncPendingWrites, user]);
 
-  return { ...state, active: !state.online || state.manual, prepare, toggleManual };
+  return { ...state, active: !state.online || state.manual, prepare, toggleManual, checkSync: syncPendingWrites };
 }
 
 const subtitleWordMatches = koreanTextMatches;

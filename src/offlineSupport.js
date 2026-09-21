@@ -43,6 +43,19 @@ export function offlinePendingWrites() {
   return Math.max(0, Number(readJson(PENDING_WRITES_KEY, { count: 0 }).count) || 0);
 }
 
+export function offlineStatusLabel({ online, manual, pendingWrites, ready, progress, error, syncDelayed }) {
+  if (!online || manual) {
+    return `${manual ? '主動離線模式' : '離線模式'}${ready ? '' : ' · 此裝置尚未完成離線資料準備'}${pendingWrites ? ` · ${pendingWrites} 筆操作等待同步` : ''}`;
+  }
+  if (error) return error;
+  if (pendingWrites) {
+    return syncDelayed
+      ? `${pendingWrites} 筆操作尚未收到 Firebase 確認，請檢查連線；不要清除網站資料`
+      : `正在同步 ${pendingWrites} 筆離線操作...`;
+  }
+  return progress;
+}
+
 function setPendingWrites(count, detail = {}) {
   const next = Math.max(0, Number(count) || 0);
   storage()?.setItem(PENDING_WRITES_KEY, JSON.stringify({ count: next, updatedAt: new Date().toISOString() }));

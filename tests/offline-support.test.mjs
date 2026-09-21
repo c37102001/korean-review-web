@@ -6,6 +6,7 @@ import {
   markOfflineReady,
   manualOfflineEnabled,
   offlinePendingWrites,
+  offlineStatusLabel,
   offlineReadyState,
   queueOfflineWrite,
   setManualOfflineEnabled,
@@ -64,6 +65,21 @@ test('an already-started Firestore write can be released to finish in the backgr
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(offlinePendingWrites(), 0);
   cleanup();
+});
+
+test('a pending write overrides stale progress and eventually warns without claiming success', () => {
+  const state = {
+    online: true,
+    manual: false,
+    pendingWrites: 1,
+    progress: '離線資料已就緒',
+    error: '',
+    syncDelayed: false,
+  };
+  assert.equal(offlineStatusLabel(state), '正在同步 1 筆離線操作...');
+  assert.match(offlineStatusLabel({ ...state, syncDelayed: true }), /尚未收到 Firebase 確認/);
+  assert.match(offlineStatusLabel({ ...state, online: false }), /等待同步/);
+  assert.equal(offlineStatusLabel({ ...state, pendingWrites: 0 }), '離線資料已就緒');
 });
 
 test('offline readiness belongs to the signed-in user', () => {
