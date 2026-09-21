@@ -283,7 +283,9 @@ export function AppWorkspace({
   const [selectedReadingTestId, setSelectedReadingTestId] = useState(null);
   const [fontScale, setFontScale] = useState(() => {
     try {
-      const stored = Number(window.localStorage.getItem(FONT_SCALE_STORAGE_KEY));
+      const saved = window.localStorage.getItem(FONT_SCALE_STORAGE_KEY);
+      if (saved === null) return 100;
+      const stored = Number(saved);
       return Number.isFinite(stored) ? Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, stored)) : 100;
     } catch {
       return 100;

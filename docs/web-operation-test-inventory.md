@@ -17,9 +17,9 @@
 | G01 | 登入：有效帳密進首頁；錯誤帳密顯示錯誤且可重試，不能卡在載入中。 | 通：`tests/app/auth-workflows.spec.js`，`G01: valid login enters the real workspace; invalid password can be retried` |
 | G02 | 註冊／切回登入：切換表單模式、建立帳號後進首頁，失敗可重試。 | 通：`tests/app/auth-workflows.spec.js`，`G02: registration mode switches back to login; failed registration can be retried` |
 | G03 | 登出：清除登入狀態並返回登入頁，另一帳號不看到前一帳號資料。 | 通：`tests/app/auth-workflows.spec.js`，`G03: logout and reload keep two accounts and their cached folders isolated` |
-| G04 | 頂部／側邊主功能標籤：首頁、日曆、單字本、資料夾、筆記、YT 字幕、閱讀測驗均可進入且載入對應資料。 | 局：導航純函式、單頁 fixture |
-| G05 | 全域右下返回及頁內返回：每次只退一層，保留合理的來源頁狀態。 | 局：導航純函式 |
-| G06 | 更多／設定選單：開關、點外部及 Esc 關閉；選擇功能後不誤觸其他命令。 | 缺 |
+| G04 | 頂部／側邊主功能標籤：首頁、日曆、單字本、資料夾、筆記、YT 字幕、閱讀測驗均可進入且載入對應資料。 | 通：`tests/app/navigation-home.spec.js`，`G04: every main tab opens its real page and loads its own data`、`G04: mobile navigation can open and leave a feature page` |
+| G05 | 全域右下返回及頁內返回：每次只退一層，保留合理的來源頁狀態。 | 通：`tests/app/navigation-home.spec.js`，`G05: global back returns one level through subtitle and folder details`；`tests/app/calendar-workflows.spec.js`，`C02: date selection, View Date and double-click navigate and return to the same date` |
+| G06 | 更多／設定選單：開關、點外部及 Esc 關閉；選擇功能後不誤觸其他命令。 | 通：`tests/app/navigation-home.spec.js`，`G06: settings menu closes on Escape/outside and commands stay distinct` |
 | G07 | 錯誤邊界：實際頁面渲染失敗後可展開錯誤資訊、返回或重載，不停留空白頁。 | 局：合成錯誤 fixture |
 | G08 | 同步／載入錯誤與「檢查同步」：錯誤可見、重試有結果，不假報成功。 | 局：狀態文字單元測試 |
 
@@ -28,17 +28,17 @@
 | ID | 操作與可觀察的預期結果 | 現況 |
 | --- | --- | --- |
 | H01 | 今日測驗：只用今天到期單字開始，無題時禁用；完成後火焰／進度更新。 | 局：選題規則與原始碼比對 |
-| H02 | 查看明日題數：只在點擊時計算，可再點重新計算。 | 局：原始碼比對 |
+| H02 | 查看明日題數：只在點擊時計算，可再點重新計算。 | 通：`tests/app/home-controls.spec.js`，`H02: tomorrow count is calculated on demand and recalculated after data changes` |
 | H03 | 首頁新增單字：進標準編輯器，儲存後單字本可找到。 | 缺 |
 | H04 | 新增練習：切換單字、例句聽力、例句閱讀、文法類型；設定題數、方向、文法、搜尋／熟悉度／資料夾條件後建立相應題池。 | 局：題池 domain 測試 |
 | H05 | 自選練習「開始」：未做完可續做；答對暫移出 pool、答錯仍可再抽到；完成後從待練區消失。 | 局：題池 domain 測試 |
 | H06 | 移除自選練習：確認後移除，取消則保留。 | 缺 |
 | H07 | 今日錯題「查看」及最不熟悉 30 題「測驗」：開啟正確題組；錯題頁可再選學習／測驗。 | 局：選題與 session factory 測試 |
-| H08 | 字體縮小／放大：在界限內變更並持續生效；界限按鈕禁用。 | 缺 |
-| H09 | 語音設定：選韓／中文語音、試聽、取消與儲存，重新開啟保留選擇；不支援時正確禁用。 | 局：語音偏好純函式 |
+| H08 | 字體縮小／放大：在界限內變更並持續生效；界限按鈕禁用。 | 通：`tests/app/home-controls.spec.js`，`H08: font size respects both bounds and survives a reload` |
+| H09 | 語音設定：選韓／中文語音、試聽、取消與儲存，重新開啟保留選擇；不支援時正確禁用。 | 通：`tests/app/home-controls.spec.js`，`H09: voice previews use the selected language; cancel discards and save persists`、`H09: unsupported speech disables saving instead of pretending to play` |
 | H10 | 關閉／取消新增練習視窗：不新增待練任務；保存失敗時保留所選條件並顯示錯誤。 | 缺 |
-| C01 | 日曆上一月／下一月／今天：顯示相應月份並更新選取日期。 | 缺 |
-| C02 | 點日期、雙擊日期及「查看日期」：選取與進入該日內容的語意正確，返回後可繼續瀏覽。 | 缺 |
+| C01 | 日曆上一月／下一月／今天：顯示相應月份並更新選取日期。 | 通：`tests/app/calendar-workflows.spec.js`，`C01: previous/next month and Today update the month and selected date` |
+| C02 | 點日期、雙擊日期及「查看日期」：選取與進入該日內容的語意正確，返回後可繼續瀏覽。 | 通：`tests/app/calendar-workflows.spec.js`，`C02: date selection, View Date and double-click navigate and return to the same date` |
 | C03 | 日期頁新增／學習／測驗：只對當日或目前篩選結果操作。 | 局：集合 selector |
 | C04 | 日期頁匯出 JSON、修改 JSON、刪除本日單字：匯出範圍與更新／刪除範圍正確；取消刪除不變。 | 局：JSON model |
 

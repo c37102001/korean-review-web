@@ -48,22 +48,43 @@ export async function signOut(page) {
   await expect(page.getByRole('heading', { name: '登入後開始測驗' })).toBeVisible();
 }
 
-export async function seedFolder(page, request, name) {
+export async function currentUserId(page) {
   const uid = await page.evaluate(async () => {
     const { auth } = await import('/korean-review-web/src/firebase.js');
     return auth.currentUser?.uid;
   });
-  expect(uid, 'The App must be signed in before seeding a folder').toBeTruthy();
-  const url = `http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents/users/${uid}/folders/seed-folder`;
-  const response = await request.patch(url, { headers: { Authorization: 'Bearer owner' }, data: { fields: {
-    id: { stringValue: 'seed-folder' },
-    name: { stringValue: name },
-    tag: { stringValue: '' },
-    wordIds: { arrayValue: { values: [] } },
-    createdAt: { stringValue: '2026-09-20T00:00:00.000Z' },
-    updatedAt: { timestampValue: '2026-09-20T00:00:00.000Z' },
-  } } });
+  expect(uid, 'The App must be signed in before seeding data').toBeTruthy();
+  return uid;
+}
+
+function firestoreValue(value, key = '') {
+  if (key === 'updatedAt') return { timestampValue: value };
+  if (value === null) return { nullValue: null };
+  if (Array.isArray(value)) return { arrayValue: { values: value.map((entry) => firestoreValue(entry)) } };
+  if (typeof value === 'object') return { mapValue: { fields: Object.fromEntries(
+    Object.entries(value).map(([field, entry]) => [field, firestoreValue(entry, field)]),
+  ) } };
+  if (typeof value === 'boolean') return { booleanValue: value };
+  if (typeof value === 'number') return { integerValue: String(value) };
+  return { stringValue: String(value) };
+}
+
+export async function seedDocument(page, request, collection, id, fields) {
+  const uid = await currentUserId(page);
+  const url = `http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents/users/${uid}/${collection}/${id}`;
+  const response = await request.patch(url, {
+    headers: { Authorization: 'Bearer owner' },
+    data: { fields: Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, firestoreValue(value, key)])) },
+  });
   expect(response.ok(), await response.text()).toBeTruthy();
+}
+
+export async function seedFolder(page, request, name) {
+  await seedDocument(page, request, 'folders', 'seed-folder', {
+    id: 'seed-folder', name, tag: '', wordIds: [],
+    createdAt: '2026-09-20T00:00:00.000Z',
+    updatedAt: '2026-09-20T00:00:00.000Z',
+  });
 }
 
 export async function setNetworkOffline(context, offline = true) {
