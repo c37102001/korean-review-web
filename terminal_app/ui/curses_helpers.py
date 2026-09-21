@@ -2,6 +2,8 @@
 from terminal_app.runtime import *
 from terminal_app.ui.theme import apply_text_style
 
+_cursor_visibility = 1
+
 def draw_line(stdscr: curses.window, y: int, x: int, text: str, attr: int = 0) -> None:
     height, width = stdscr.getmaxyx()
     if y < 0 or y >= height or x >= width:
@@ -141,16 +143,42 @@ def initialize_terminal_appearance(stdscr: curses.window) -> None:
 
 
 def set_cursor_visibility(visibility: int) -> int:
+    global _cursor_visibility
+    _cursor_visibility = visibility
     try:
         return curses.curs_set(visibility)
     except curses.error:
         return 0
 
 
+def _is_character_key(key: Any, character: str) -> bool:
+    return key == character if isinstance(key, str) else key == ord(character)
+
+
+def _hide_terminal_until_toggled(stdscr: curses.window, *, wide: bool) -> None:
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
+    stdscr.timeout(-1)
+    while True:
+        clear_with_default_background(stdscr)
+        stdscr.refresh()
+        key = stdscr.get_wch() if wide else stdscr.getch()
+        if _is_character_key(key, "3"):
+            break
+    try:
+        curses.curs_set(_cursor_visibility)
+    except curses.error:
+        pass
+
+
 def read_terminal_key(stdscr: curses.window, *, wide: bool = False) -> Any:
     key = stdscr.get_wch() if wide else stdscr.getch()
-    is_audio_toggle = key == "." if isinstance(key, str) else key == ord(".")
-    if is_audio_toggle:
+    if _is_character_key(key, "3"):
+        _hide_terminal_until_toggled(stdscr, wide=wide)
+        return curses.KEY_RESIZE
+    if _is_character_key(key, "."):
         enabled = toggle_auto_audio_enabled()
         height, width = stdscr.getmaxyx()
         status = f"自動播放語音：{'開啟' if enabled else '關閉'}"

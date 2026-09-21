@@ -6,7 +6,7 @@ import terminal_review_practice as terminal
 
 
 class OptionalPracticeTests(unittest.TestCase):
-    def test_study_repeat_shortcuts_leave_three_unassigned(self):
+    def test_study_repeat_shortcuts_leave_three_for_the_global_hide_toggle(self):
         source = (Path(__file__).parents[1] / 'terminal_app/ui/screens/study.py').read_text(encoding='utf-8')
         self.assertIn('1/2=重複:', source)
         self.assertEqual(source.count('key in ("1", "2")'), 2)

@@ -1,3 +1,4 @@
+import curses
 import os
 import tempfile
 import unittest
@@ -85,6 +86,31 @@ class FakeTerminalScreen:
         return None
 
 
+class HiddenTerminalScreen:
+    def __init__(self, keys):
+        self.keys = iter(keys)
+        self.erase_count = 0
+        self.timeout_values = []
+
+    def get_wch(self):
+        return next(self.keys)
+
+    def timeout(self, value):
+        self.timeout_values.append(value)
+
+    def attrset(self, _value):
+        return None
+
+    def bkgdset(self, *_args):
+        return None
+
+    def erase(self):
+        self.erase_count += 1
+
+    def refresh(self):
+        return None
+
+
 class TerminalDomainAudioTests(unittest.TestCase):
     def tearDown(self):
         set_auto_audio_enabled(True)
@@ -98,6 +124,14 @@ class TerminalDomainAudioTests(unittest.TestCase):
         self.assertFalse(is_auto_audio_enabled())
         self.assertIn('自動語音:關', auto_audio_control_label())
         self.assertTrue(any('自動播放語音：關閉' in line[2] for line in screen.lines))
+
+    def test_three_hides_everything_and_swallows_keys_until_three_is_pressed_again(self):
+        screen = HiddenTerminalScreen(['3', '6', 'x', '3'])
+        key = read_terminal_key(screen, wide=True)
+
+        self.assertEqual(key, curses.KEY_RESIZE)
+        self.assertEqual(screen.erase_count, 3)
+        self.assertEqual(screen.timeout_values, [-1])
 
     def test_domain_modules_do_not_import_ui_network_audio_or_cache(self):
         domain_dir = Path(__file__).parents[1] / 'terminal_app' / 'domain'
