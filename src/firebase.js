@@ -1,7 +1,9 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
+import { connectAuthEmulator } from 'firebase/auth';
 import {
   collection,
+  connectFirestoreEmulator,
   disableNetwork,
   doc,
   enableNetwork,
@@ -31,7 +33,13 @@ import {
 } from './firestoreSync.js';
 import { reviewAttemptSegmentsRef } from './repositories/reviewDaysRepository.js';
 
-const firebaseConfig = {
+const useTestEmulators = import.meta.env?.DEV && import.meta.env?.VITE_APP_TEST_EMULATORS === '1';
+const firebaseConfig = useTestEmulators ? {
+  apiKey: 'demo-key',
+  authDomain: 'demo-korean-review-web.firebaseapp.com',
+  projectId: 'demo-korean-review-web',
+  appId: 'demo-korean-review-web',
+} : {
   apiKey: 'AIzaSyCfy63R72H6LDCb-bR7L7RwkKNnGCTHPgU',
   authDomain: 'korean-review-web.firebaseapp.com',
   projectId: 'korean-review-web',
@@ -42,6 +50,7 @@ const firebaseConfig = {
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
+if (useTestEmulators) connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
 // Reuse the same IndexedDB-backed cache across browser tabs to avoid re-reading
 // the complete notebook whenever this trusted-device app is reopened.
 let db;
@@ -54,6 +63,7 @@ try {
   db = getFirestore(app);
 }
 export { db };
+if (useTestEmulators) connectFirestoreEmulator(db, '127.0.0.1', 8080);
 
 // Apply the saved manual mode before page listeners are attached. Firestore then
 // serves snapshots from IndexedDB and keeps writes pending until network resumes.

@@ -65,6 +65,32 @@ jobs:
       - run: npm ci
       - run: npm run test:emulator
 
+  app-workflow-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firestore-emulator-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:app
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-workflow-artifacts
+          path: test-results/app
+          if-no-files-found: ignore
+
   visual-test:
     runs-on: ubuntu-24.04
     container:
@@ -90,7 +116,7 @@ jobs:
           if-no-files-found: ignore
 
   build:
-    needs: [web-test, terminal-test, architecture-test, emulator-test, visual-test]
+    needs: [web-test, terminal-test, architecture-test, emulator-test, app-workflow-test, visual-test]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7

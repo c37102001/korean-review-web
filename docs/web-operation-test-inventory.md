@@ -14,9 +14,9 @@
 
 | ID | 操作與可觀察的預期結果 | 現況 |
 | --- | --- | --- |
-| G01 | 登入：有效帳密進首頁；錯誤帳密顯示錯誤且可重試，不能卡在載入中。 | 缺 |
-| G02 | 註冊／切回登入：切換表單模式、建立帳號後進首頁，失敗可重試。 | 缺 |
-| G03 | 登出：清除登入狀態並返回登入頁，另一帳號不看到前一帳號資料。 | 缺 |
+| G01 | 登入：有效帳密進首頁；錯誤帳密顯示錯誤且可重試，不能卡在載入中。 | 通：`tests/app/auth-workflows.spec.js`，`G01: valid login enters the real workspace; invalid password can be retried` |
+| G02 | 註冊／切回登入：切換表單模式、建立帳號後進首頁，失敗可重試。 | 通：`tests/app/auth-workflows.spec.js`，`G02: registration mode switches back to login; failed registration can be retried` |
+| G03 | 登出：清除登入狀態並返回登入頁，另一帳號不看到前一帳號資料。 | 通：`tests/app/auth-workflows.spec.js`，`G03: logout and reload keep two accounts and their cached folders isolated` |
 | G04 | 頂部／側邊主功能標籤：首頁、日曆、單字本、資料夾、筆記、YT 字幕、閱讀測驗均可進入且載入對應資料。 | 局：導航純函式、單頁 fixture |
 | G05 | 全域右下返回及頁內返回：每次只退一層，保留合理的來源頁狀態。 | 局：導航純函式 |
 | G06 | 更多／設定選單：開關、點外部及 Esc 關閉；選擇功能後不誤觸其他命令。 | 缺 |

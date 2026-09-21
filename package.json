@@ -12,6 +12,7 @@
     "test:terminal": "python -m unittest discover -s tests -p 'test_terminal*.py'",
     "test:architecture": "node --test tests/architecture-boundaries.test.mjs && node scripts/report_file_sizes.mjs",
     "test:visual": "playwright test",
+    "test:app": "firebase emulators:exec --only auth,firestore --project demo-korean-review-web \"playwright test --config playwright.app.config.js\"",
     "test:visual:update": "playwright test --update-snapshots",
     "test:emulator": "firebase emulators:exec --only firestore --project demo-korean-review-web \"node --test tests/emulator/*.test.mjs\"",
     "db:migrate-review-days": "node --env-file=.env scripts/migrate_review_days.mjs",
