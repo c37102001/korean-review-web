@@ -631,7 +631,7 @@ function AddExistingWordsModal({ folder, items, onAdd, onClose }) {
   );
 }
 
-export function FolderDetailPage({ folder, folders, store, updateStore, items, questions, onSaveFolder, onDeleteFolder, onAddWords, onAssignFolders, onCreateFolderAndAssign, onRemoveWords, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords, onBack }) {
+export function FolderDetailPage({ folder, folders, store, updateStore, items, questions, onSaveFolder, onDeleteFolder, onAddWords, onAssignFolders, onCreateFolderAndAssign, onRemoveWords, onSetNoReview, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords, onBack }) {
   const [addExistingOpen, setAddExistingOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -685,7 +685,7 @@ export function FolderDetailPage({ folder, folders, store, updateStore, items, q
         <label className="search"><Search size={18} /><input value={collection.query} onChange={(event) => collection.setQuery(event.target.value)} placeholder={collection.searchScope === 'word' ? '搜尋韓文單字或中文意思' : '搜尋這個資料夾中的全部卡片內容'} /></label>
         <SearchScopeControl value={collection.searchScope} onChange={collection.setSearchScope} />
       </div>
-      {!!staleIds.length && <button className="text-link" onClick={() => onRemoveWords(folder.id, staleIds)}>清理 {staleIds.length} 個不存在的單字 reference</button>}
+      {!!staleIds.length && <button className="text-link" onClick={() => onRemoveWords(folder.id, staleIds, false)}>清理 {staleIds.length} 個不存在的單字 reference</button>}
       {exportOpen && <ExportJsonModal items={folderItems} title={`匯出 ${folder.name} JSON`} onClose={() => setExportOpen(false)} />}
       {renameOpen && <FolderNameModal folder={folder} tagSuggestions={[...new Set(folders.map((entry) => entry.tag).filter(Boolean))]} onSave={onSaveFolder} onClose={() => setRenameOpen(false)} />}
       {addExistingOpen && <AddExistingWordsModal folder={folder} items={items} onAdd={onAddWords} onClose={() => setAddExistingOpen(false)} />}
@@ -732,6 +732,7 @@ export function FolderDetailPage({ folder, folders, store, updateStore, items, q
         onAssignFolders={onAssignFolders}
         onCreateFolderAndAssign={onCreateFolderAndAssign}
         onDeleteRecords={onDeleteRecords}
+        onSetNoReview={onSetNoReview}
         currentFolder={folder}
         onRemoveFromCurrentFolder={onRemoveWords}
         emptyMessage={collection.query ? '找不到符合的單字' : '這個資料夾還沒有單字'}
@@ -741,7 +742,7 @@ export function FolderDetailPage({ folder, folders, store, updateStore, items, q
   );
 }
 
-export function NotebookPage({ store, updateStore, items, questions, folders = [], onAssignFolders, onCreateFolderAndAssign, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords }) {
+export function NotebookPage({ store, updateStore, items, questions, folders = [], onAssignFolders, onCreateFolderAndAssign, onSetNoReview, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords }) {
   const [exportOpen, setExportOpen] = useState(false);
   const [jsonEditOpen, setJsonEditOpen] = useState(false);
   const [showLearned, setShowLearned] = useState(false);
@@ -885,6 +886,7 @@ export function NotebookPage({ store, updateStore, items, questions, folders = [
         onAssignFolders={onAssignFolders}
         onCreateFolderAndAssign={onCreateFolderAndAssign}
         onDeleteRecords={onDeleteRecords}
+        onSetNoReview={onSetNoReview}
         emptyMessage="找不到符合的單字"
         showPagination="always"
       />

@@ -5,6 +5,8 @@ import {
   FolderInput,
   FolderPlus,
   ListChecks,
+  PauseCircle,
+  PlayCircle,
   Trash2,
   X,
 } from 'lucide-react';
@@ -141,6 +143,7 @@ export function BulkWordActions({
   onAssignFolders,
   onCreateFolderAndAssign,
   onDeleteRecords,
+  onSetNoReview,
   currentFolder,
   onRemoveFromCurrentFolder,
 }) {
@@ -189,6 +192,10 @@ export function BulkWordActions({
         </div>
         {!!selectedIds.length && <div className="bulk-action-buttons">
           <button type="button" disabled={!!busyAction} onClick={() => setAssignOpen(true)}><FolderInput size={17} /> 加入資料夾</button>
+          {onSetNoReview && <>
+            <button type="button" disabled={!!busyAction} onClick={() => runAction('no-review', () => onSetNoReview(selectedIds, true))}><PauseCircle size={17} /> 不複習</button>
+            <button type="button" disabled={!!busyAction} onClick={() => runAction('review', () => onSetNoReview(selectedIds, false))}><PlayCircle size={17} /> 恢復複習</button>
+          </>}
           {currentFolder && <button type="button" disabled={!!busyAction} onClick={removeFromFolder} title="只從目前資料夾移除，保留單字卡"><X size={17} /> {busyAction === 'remove' ? '移除中' : '移出資料夾'}</button>}
           <button type="button" className="danger-soft" disabled={!!busyAction} onClick={permanentlyDelete} title="從單字本與所有資料夾永久刪除"><Trash2 size={17} /> {busyAction === 'delete' ? '刪除中' : '永久刪除'}</button>
         </div>}

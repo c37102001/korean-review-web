@@ -47,6 +47,7 @@ def normalize_records(records: List[Dict[str, Any]], state: Dict[str, Any]) -> T
             order=record_order(record),
             index=index,
             is_starred=record_id in starred,
+            no_review=item.get("noReview") is True,
         )
         if not card.ko:
             continue

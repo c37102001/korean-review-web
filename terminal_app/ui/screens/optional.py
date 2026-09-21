@@ -40,7 +40,7 @@ def optional_word_practice_setup(
     folders = list(state.get("folders") or [])
     row = 0
     while True:
-        active_cards = filtered_notebook_cards(cards, questions, state, config)
+        active_cards = [card for card in filtered_notebook_cards(cards, questions, state, config) if not card.no_review and card.id not in set(state.get("learnedWordIds") or [])]
         level_summary = "全部" if not config["levels"] else f"已選 {len(config['levels'])} 項"
         folder_summary = "全部" if not config["folder_ids"] else f"已選 {len(config['folder_ids'])} 項"
         rows = [
@@ -111,7 +111,7 @@ def create_optional_practice(
         kind = menu(stdscr, "新增練習 | 選擇類型", [(key, label) for key, label in OPTIONAL_PRACTICE_LABELS.items()])
         if not kind:
             return False
-        learned_ids = set(state.get("learnedWordIds") or [])
+        learned_ids = set(state.get("learnedWordIds") or []) | {card.id for card in cards if card.no_review}
         task: Dict[str, Any] = {
             "id": str(uuid.uuid4()), "kind": kind, "title": OPTIONAL_PRACTICE_LABELS[kind],
             "direction": "ko-zh", "createdAt": utc_now_iso(),
@@ -175,7 +175,7 @@ def run_optional_practice_menu(
             note for note in grammar_notes if note.category == NOTE_CATEGORY_GRAMMAR
         )
         question_by_id = {question.id: question for question in [*questions, *grammar_questions]}
-        learned_ids = set(state.get("learnedWordIds") or [])
+        learned_ids = set(state.get("learnedWordIds") or []) | {card.id for card in cards if card.no_review}
         task_questions: Dict[str, List[Question]] = {}
         for task in optional_state["tasks"]:
             answered = set(task.get("answeredIds") or [])

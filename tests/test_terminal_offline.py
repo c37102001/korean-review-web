@@ -50,6 +50,46 @@ class OfflineTests(unittest.TestCase):
         self.assertEqual(cached['folders'][0]['wordIds'], [])
         self.assertFalse(cached['pending']['folders']['system-unfamiliar']['word'])
 
+    def test_learned_folder_marks_local_word_as_no_review(self):
+        self.payload['records'] = [{'id': 'word', 'date': '2026-09-19', 'item': {'ko': '가다'}}]
+        self.payload['folders'].append({'id': 'system-learned', 'wordIds': []})
+        terminal._write_terminal_cache(self.session.uid, self.payload)
+        self.client.start_offline(self.session)
+        with patch.object(self.client, '_request_json', side_effect=AssertionError('network accessed')):
+            self.client.add_word_to_folder(self.session, 'system-learned', 'word', mark_no_review=True)
+        cached = terminal._read_terminal_cache(self.session.uid)
+        self.assertTrue(cached['records'][0]['item']['noReview'])
+        self.assertEqual(cached['pending']['folders']['system-learned'], {'word': True})
+
+    def test_learned_folder_offline_sync_updates_word_in_same_commit_without_reading_it(self):
+        self.payload['records'] = [{'id': 'word', 'date': '2026-09-19', 'item': {'ko': '가다'}}]
+        self.payload['folders'].append({'id': 'system-learned', 'wordIds': []})
+        self.payload['state']['learnedFolderId'] = 'system-learned'
+        terminal._write_terminal_cache(self.session.uid, self.payload)
+        self.client.start_offline(self.session)
+        self.client.add_word_to_folder(self.session, 'system-learned', 'word', mark_no_review=True)
+        payload = self.client.offline_payload
+        grammar_doc = {'updateTime': 'grammar-time', 'fields': {}}
+        folder_doc = {'updateTime': 'folder-time', 'fields': {}}
+
+        def request(method, url, **kwargs):
+            if method == 'POST':
+                return {}
+            if url.endswith('/grammarReview'):
+                return grammar_doc
+            if url.endswith('/system-learned'):
+                return folder_doc
+            if '/records/' in url:
+                raise AssertionError('word must not be read for a field update')
+            return {}
+
+        with patch.object(self.client, 'load_review_state', return_value=terminal.empty_state()), patch.object(self.client, '_list_documents', return_value=[]), patch.object(self.client, '_request_json', side_effect=request) as network:
+            offline.synchronize(self.client, self.session, payload, terminal)
+        writes = next(call.kwargs['payload']['writes'] for call in network.call_args_list if call.args[0] == 'POST')
+        word_write = next(write for write in writes if write.get('update', {}).get('name', '').endswith('/records/word'))
+        self.assertEqual(word_write['updateMask']['fieldPaths'], ['item.noReview'])
+        self.assertEqual(word_write['currentDocument'], {'exists': True})
+
     def test_reading_learned_toggle_is_available_offline_and_persisted(self):
         self.client.start_offline(self.session)
         with patch.object(self.client, '_request_json', side_effect=AssertionError('network accessed')):

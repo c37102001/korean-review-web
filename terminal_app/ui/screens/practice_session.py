@@ -4,6 +4,8 @@ from terminal_app.ui.curses_helpers import *
 from terminal_app.ui.screens.recognition import practice_mistake_questions, practice_mistake_review_menu
 
 def run_practice(stdscr: curses.window, title: str, questions: List[Question], config: Dict[str, Any], state: Dict[str, Any], client: FirebaseClient, session: AuthSession) -> bool:
+    excluded_ids = set(state.get("learnedWordIds") or [])
+    questions = [question for question in questions if question.kind == "grammar-example" or (question.item_id not in excluded_ids and not question.source.no_review)]
     idx = 0
     user_input = ""
     input_cursor = 0

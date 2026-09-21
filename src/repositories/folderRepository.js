@@ -9,6 +9,7 @@ import {
 import { db } from '../firebase.js';
 import { retryFirestoreWrite } from './firestoreWriteRepository.js';
 import { createUserContentRepository, tombstonePayload } from './userContentRepository.js';
+import { SYSTEM_LEARNED_FOLDER_ID } from '../folders/model.js';
 
 const contentRepository = createUserContentRepository('folders');
 
@@ -28,27 +29,46 @@ export const folderRepository = {
       { merge: true },
     ));
   },
-  async addWords(uid, folderId, wordIds) {
+  async addWords(uid, folderId, wordIds, markNoReview = folderId === SYSTEM_LEARNED_FOLDER_ID) {
     const ids = uniqueIds(wordIds);
     if (!ids.length) return;
-    await retryFirestoreWrite(() => setDoc(doc(db, 'users', uid, 'folders', folderId), {
-      wordIds: arrayUnion(...ids),
-      updatedAt: serverTimestamp(),
-    }, { merge: true }));
+    if (markNoReview && ids.length > 490) throw new Error('一次最多可以將 490 個單字加入已學習');
+    await retryFirestoreWrite(async () => {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'users', uid, 'folders', folderId), {
+        wordIds: arrayUnion(...ids), updatedAt: serverTimestamp(),
+      }, { merge: true });
+      if (markNoReview) ids.forEach((id) => batch.set(
+        doc(db, 'users', uid, 'records', id),
+        { item: { noReview: true }, updatedAt: serverTimestamp() },
+        { merge: true },
+      ));
+      await batch.commit();
+    });
   },
-  async removeWords(uid, folderId, wordIds) {
+  async removeWords(uid, folderId, wordIds, markNoReview = folderId === SYSTEM_LEARNED_FOLDER_ID) {
     const ids = uniqueIds(wordIds);
     if (!ids.length) return;
-    await retryFirestoreWrite(() => setDoc(doc(db, 'users', uid, 'folders', folderId), {
-      wordIds: arrayRemove(...ids),
-      updatedAt: serverTimestamp(),
-    }, { merge: true }));
+    if (markNoReview && ids.length > 490) throw new Error('一次最多可以從已學習移出 490 個單字');
+    await retryFirestoreWrite(async () => {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'users', uid, 'folders', folderId), {
+        wordIds: arrayRemove(...ids), updatedAt: serverTimestamp(),
+      }, { merge: true });
+      if (markNoReview) ids.forEach((id) => batch.set(
+        doc(db, 'users', uid, 'records', id),
+        { item: { noReview: true }, updatedAt: serverTimestamp() },
+        { merge: true },
+      ));
+      await batch.commit();
+    });
   },
-  async addWordsToFolders(uid, folderIds, wordIds) {
+  async addWordsToFolders(uid, folderIds, wordIds, learnedFolderId = SYSTEM_LEARNED_FOLDER_ID) {
     const targetFolderIds = uniqueIds(folderIds);
     const ids = uniqueIds(wordIds);
     if (!targetFolderIds.length || !ids.length) return;
-    if (targetFolderIds.length > 500) throw new Error('一次最多可以更新 500 個資料夾');
+    const markNoReview = targetFolderIds.includes(learnedFolderId);
+    if (targetFolderIds.length + (markNoReview ? ids.length : 0) > 500) throw new Error('這次更新超過 Firebase 單次批次上限');
     await retryFirestoreWrite(async () => {
       const batch = writeBatch(db);
       targetFolderIds.forEach((folderId) => batch.set(
@@ -56,12 +76,18 @@ export const folderRepository = {
         { wordIds: arrayUnion(...ids), updatedAt: serverTimestamp() },
         { merge: true },
       ));
+      if (markNoReview) ids.forEach((id) => batch.set(
+        doc(db, 'users', uid, 'records', id),
+        { item: { noReview: true }, updatedAt: serverTimestamp() },
+        { merge: true },
+      ));
       await batch.commit();
     });
   },
-  async createAndAssign(uid, folder, additionalFolderIds = []) {
+  async createAndAssign(uid, folder, additionalFolderIds = [], learnedFolderId = SYSTEM_LEARNED_FOLDER_ID) {
     const targetFolderIds = uniqueIds(additionalFolderIds);
-    if (targetFolderIds.length + 1 > 500) throw new Error('這次更新的資料夾數量超過 Firebase 單次批次上限');
+    const markNoReview = targetFolderIds.includes(learnedFolderId);
+    if (targetFolderIds.length + 1 + (markNoReview ? folder.wordIds.length : 0) > 500) throw new Error('這次更新超過 Firebase 單次批次上限');
     await retryFirestoreWrite(async () => {
       const batch = writeBatch(db);
       batch.set(doc(db, 'users', uid, 'folders', folder.id), {
@@ -71,6 +97,11 @@ export const folderRepository = {
       targetFolderIds.forEach((folderId) => batch.set(
         doc(db, 'users', uid, 'folders', folderId),
         { wordIds: arrayUnion(...folder.wordIds), updatedAt: serverTimestamp() },
+        { merge: true },
+      ));
+      if (markNoReview) uniqueIds(folder.wordIds).forEach((id) => batch.set(
+        doc(db, 'users', uid, 'records', id),
+        { item: { noReview: true }, updatedAt: serverTimestamp() },
         { merge: true },
       ));
       await batch.commit();

@@ -187,6 +187,19 @@ def synchronize(client, session, payload, api):
                 raise RuntimeError('待同步的資料夾已被刪除，已保留離線資料')
             writes.append({'transform': {'document': f'{prefix}/folders/{folder_id}', 'fieldTransforms': transforms},
                            'currentDocument': {'updateTime': folder_document['updateTime']}})
+        if folder_id == payload.get('state', {}).get('learnedFolderId'):
+            for word_id, included in words.items():
+                if not included:
+                    continue
+                writes.append({
+                    'update': {
+                        'name': f'{prefix}/records/{word_id}',
+                        'fields': {'item': api._to_firestore_value({'noReview': True})},
+                    },
+                    'updateMask': {'fieldPaths': ['item.noReview']},
+                    'updateTransforms': [{'fieldPath': 'updatedAt', 'setToServerValue': 'REQUEST_TIME'}],
+                    'currentDocument': {'exists': True},
+                })
     for test_id, learned in pending.get('readingTests', {}).items():
         reading_document = read(client._document_url(['users', uid, 'readingTests', test_id]))
         if not reading_document:

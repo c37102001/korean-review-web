@@ -515,7 +515,7 @@ export function CalendarPage({ store, items, selectedDate, setSelectedDate, onOp
   );
 }
 
-export function NotesPage({ store, updateStore, items, questions, date, allItems, folders = [], onAssignFolders, onCreateFolderAndAssign, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords }) {
+export function NotesPage({ store, updateStore, items, questions, date, allItems, folders = [], onAssignFolders, onCreateFolderAndAssign, onSetNoReview, onPractice, onStudy, onAddRecords, onUpdateRecord, onUpdateRecords, onDeleteRecord, onDeleteRecords }) {
   const [exportOpen, setExportOpen] = useState(false);
   const [jsonEditOpen, setJsonEditOpen] = useState(false);
   const starredSet = new Set(store.starred || []);
@@ -632,6 +632,7 @@ export function NotesPage({ store, updateStore, items, questions, date, allItems
         onAssignFolders={onAssignFolders}
         onCreateFolderAndAssign={onCreateFolderAndAssign}
         onDeleteRecords={onDeleteRecords}
+        onSetNoReview={onSetNoReview}
         emptyMessage="這個日期沒有符合資料夾篩選的單字"
       />
     </section>

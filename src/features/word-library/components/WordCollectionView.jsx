@@ -33,6 +33,7 @@ export function WordCollectionView({
   onAssignFolders,
   onCreateFolderAndAssign,
   onDeleteRecords,
+  onSetNoReview,
   currentFolder,
   onRemoveFromCurrentFolder,
   emptyMessage = '沒有符合的單字',
@@ -51,6 +52,7 @@ export function WordCollectionView({
           onAssignFolders={onAssignFolders}
           onCreateFolderAndAssign={onCreateFolderAndAssign}
           onDeleteRecords={onDeleteRecords}
+          onSetNoReview={onSetNoReview}
           currentFolder={currentFolder}
           onRemoveFromCurrentFolder={onRemoveFromCurrentFolder}
         />

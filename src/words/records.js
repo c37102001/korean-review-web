@@ -114,6 +114,7 @@ export function normalizeItemToV2(item, recordId, lookup = buildRecordLookup([])
   return {
     ko: item.ko,
     ...(item.pos ? { pos: item.pos } : {}),
+    ...(item.noReview === true ? { noReview: true } : {}),
     ...(variants.length ? { variants } : {}),
     meanings,
     ...(item.notes?.length ? { notes: item.notes } : {}),

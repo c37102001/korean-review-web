@@ -6,6 +6,7 @@ import {
   isSystemFolder,
   isUnfamiliarFolder,
   normalizeFolder,
+  SYSTEM_LEARNED_FOLDER_ID,
   SYSTEM_LEARNED_FOLDER_NAME,
   SYSTEM_UNFAMILIAR_FOLDER_NAME,
   systemFolderRank,
@@ -92,18 +93,18 @@ export function useWordFolders(user, enabled = true) {
 
   const addWords = useCallback(async (folderId, wordIds) => {
     if (!user) throw new Error('尚未登入');
-    await folderRepository.addWords(user.uid, folderId, wordIds);
-  }, [user]);
+    await folderRepository.addWords(user.uid, folderId, wordIds, isLearnedFolder(state.folders.find((folder) => folder.id === folderId) || { id: folderId }));
+  }, [user, state.folders]);
 
-  const removeWords = useCallback(async (folderId, wordIds) => {
+  const removeWords = useCallback(async (folderId, wordIds, preserveNoReview = true) => {
     if (!user) throw new Error('尚未登入');
-    await folderRepository.removeWords(user.uid, folderId, wordIds);
-  }, [user]);
+    await folderRepository.removeWords(user.uid, folderId, wordIds, preserveNoReview && isLearnedFolder(state.folders.find((folder) => folder.id === folderId) || { id: folderId }));
+  }, [user, state.folders]);
 
   const addWordsToFolders = useCallback(async (folderIds, wordIds) => {
     if (!user) throw new Error('尚未登入');
-    await folderRepository.addWordsToFolders(user.uid, folderIds, wordIds);
-  }, [user]);
+    await folderRepository.addWordsToFolders(user.uid, folderIds, wordIds, state.folders.find(isLearnedFolder)?.id || SYSTEM_LEARNED_FOLDER_ID);
+  }, [user, state.folders]);
 
   const createFolderAndAssign = useCallback(async (nameInput, wordIds, additionalFolderIds = [], tagInput = '') => {
     if (!user) throw new Error('尚未登入');
@@ -127,7 +128,7 @@ export function useWordFolders(user, enabled = true) {
       createdAt: now,
       updatedAt: now,
     });
-    await folderRepository.createAndAssign(user.uid, folder, additionalFolderIds);
+    await folderRepository.createAndAssign(user.uid, folder, additionalFolderIds, state.folders.find(isLearnedFolder)?.id || SYSTEM_LEARNED_FOLDER_ID);
     return folder;
   }, [user, state.folders]);
 

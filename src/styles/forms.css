@@ -426,6 +426,22 @@
   font-weight: 900;
 }
 
+.form-grid .word-no-review-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  align-self: end;
+  min-height: 48px;
+}
+
+.form-grid .word-no-review-option input[type="checkbox"] {
+  width: 19px;
+  height: 19px;
+  min-width: 19px;
+  padding: 0;
+  accent-color: #00796e;
+}
+
 .form-grid input,
 .form-grid select,
 .form-grid textarea {

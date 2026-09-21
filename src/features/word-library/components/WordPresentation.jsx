@@ -88,6 +88,7 @@ export function WordMetadata({ word }) {
     word.date || '',
     `${total} 次`,
     score !== 0 ? `熟悉分數 ${score > 0 ? `+${score}` : score}` : '',
+    word.noReview ? '不複習' : '',
   ].filter(Boolean);
   if (!metadata.length) return null;
   return (

@@ -77,13 +77,14 @@ export function assertUniqueIds(values, label) {
 export function validateImportItem(item, itemIndex) {
   const label = `第 ${itemIndex + 1} 筆資料`;
   assertPlainObject(item, label);
-  assertNoUnsupportedKeys(item, ['id', 'date', 'order', 'ko', 'pos', 'variants', 'meanings', 'notes', 'related'], label);
+  assertNoUnsupportedKeys(item, ['id', 'date', 'order', 'ko', 'pos', 'noReview', 'variants', 'meanings', 'notes', 'related'], label);
   assertString(item.id, `${label} 的 id`);
   assertString(item.date, `${label} 的 date`);
   assertSafeInteger(item.order, `${label} 的 order`);
   assertString(item.ko, `${label} 的 ko`, { required: true });
   assertString(item.pos, `${label} 的 pos`, { required: true });
   if (!isAllowedWordPos(item.pos)) throw new Error(`${label} 的 pos 請選擇：${WORD_POS_OPTIONS.join('、')}`);
+  if (item.noReview !== undefined && typeof item.noReview !== 'boolean') throw new Error(`${label} 的 noReview 需要是 true 或 false`);
   if (item.variants !== undefined) {
     if (!Array.isArray(item.variants)) throw new Error(`${label} 的 variants 需要是文字陣列`);
     item.variants.forEach((variant, variantIndex) => assertString(variant, `${label} 的第 ${variantIndex + 1} 個 variant`, { required: true }));
@@ -164,7 +165,7 @@ export function createRecordsFromImportEntries(entries, date, existingItems = []
     id: entry.existing.id,
     date: entry.existing.date,
     order: Number.isSafeInteger(entry.item.order) ? entry.item.order : orderBase + entry.index,
-    item: entry.item,
+    item: { ...entry.item, noReview: entry.item.noReview ?? entry.existing.noReview },
     createdAt: entry.existing.createdAt || now,
     updatedAt: now,
   }));
@@ -408,6 +409,7 @@ export function formatSingleWordJson(item) {
   const content = {
     ko: item.ko,
     ...(item.pos ? { pos: item.pos } : {}),
+    ...(item.noReview === true ? { noReview: true } : {}),
     ...(item.variants?.length ? { variants: item.variants } : {}),
     meanings: (item.meanings || []).map((meaning) => ({
       zh: meaning.zh,

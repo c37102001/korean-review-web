@@ -6,6 +6,7 @@ import { wordFolderIds } from '../../word-library/collection/model.js';
 import { copyText } from '../../../shared/clipboard.js';
 import { createId } from '../../../shared/id.js';
 import { WORD_POS_OPTIONS } from '../../../words/partOfSpeech.js';
+import { isLearnedFolder } from '../../../folders/model.js';
 import { formatPairLines, normalizeKoreanKey, normalizeWordVariants, parsePairLines, recordOrder, wordChineseSummary } from '../../../words/records.js';
 import {
   buildJsonImportDraft,
@@ -64,14 +65,17 @@ export function AddItemsModal({ title, date, lockedDate = false, initialKo = '',
 export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', initialVariants = [], onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], folders = [], initialFolderIds = [], requiredFolderIds = [], onSaved, onBusyChange, compactPanel = false }) {
   const isEditing = Boolean(editItem);
   const editFolderIds = wordFolderIds(folders, editItem?.id);
+  const editItemForForm = editItem && folders.some((folder) => editFolderIds.includes(folder.id) && isLearnedFolder(folder))
+    ? { ...editItem, noReview: true }
+    : editItem;
   const initialSelectedFolderIds = isEditing
     ? editFolderIds
     : [...new Set([...initialFolderIds, ...requiredFolderIds])];
   const [mode, setMode] = useState('manual');
   const [formDate, setFormDate] = useState(date);
-  const [jsonText, setJsonText] = useState(() => editItem ? formatSingleWordJson(editItem) : '');
+  const [jsonText, setJsonText] = useState(() => editItemForForm ? formatSingleWordJson(editItemForForm) : '');
   const [importDraft, setImportDraft] = useState(null);
-  const [manual, setManual] = useState(() => itemToManual(editItem, initialKo, initialVariants));
+  const [manual, setManual] = useState(() => itemToManual(editItemForForm, initialKo, initialVariants));
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [duplicates, setDuplicates] = useState([]);
@@ -80,6 +84,7 @@ export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', 
   const [importLog, setImportLog] = useState([]);
   const [importCompleted, setImportCompleted] = useState(null);
   const [selectedFolderIds, setSelectedFolderIds] = useState(() => initialSelectedFolderIds);
+  const selectedLearnedFolder = folders.some((folder) => selectedFolderIds.includes(folder.id) && isLearnedFolder(folder));
   const [jsonCopied, setJsonCopied] = useState(false);
   const submissionLockRef = useRef(false);
 
@@ -102,8 +107,8 @@ export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', 
 
   useEffect(() => {
     setFormDate(editItem?.date || date);
-    setManual(itemToManual(editItem, initialKo, initialVariants));
-    setJsonText(editItem ? formatSingleWordJson(editItem) : '');
+    setManual(itemToManual(editItemForForm, initialKo, initialVariants));
+    setJsonText(editItemForForm ? formatSingleWordJson(editItemForForm) : '');
     setMode('manual');
     setImportDraft(null);
     setMessage('');
@@ -461,6 +466,10 @@ export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', 
                 {manual.pos && !WORD_POS_OPTIONS.includes(manual.pos) && <option value={manual.pos} disabled>{manual.pos}（舊分類，請重新選擇）</option>}
                 {WORD_POS_OPTIONS.map((option) => <option key={option}>{option}</option>)}
               </select>
+            </label>
+            <label className="word-no-review-option">
+              <input type="checkbox" checked={manual.noReview || selectedLearnedFolder} disabled={selectedLearnedFolder} onChange={(event) => setManual({ ...manual, noReview: event.target.checked })} />
+              不複習
             </label>
             <VariantsEditor manual={manual} setManual={setManual} />
             <div className="wide-field meanings-editor">
@@ -832,6 +841,7 @@ function manualToItem(manual, allItems = []) {
   const variants = normalizeWordVariants(manual.variants, item.ko);
   if (variants.length) item.variants = variants;
   if (manual.pos) item.pos = manual.pos;
+  if (manual.noReview) item.noReview = true;
   const notesMarkdown = manual.notes.trim();
   if (notesMarkdown) item.notes = [notesMarkdown];
   const related = (manual.relatedSelected || []).filter((id) => allItems.some((candidate) => candidate.id === id));
@@ -841,11 +851,12 @@ function manualToItem(manual, allItems = []) {
 
 function itemToManual(item, initialKo = '', initialVariants = []) {
   if (!item) {
-    return { ko: initialKo, pos: '', variants: [...new Set(initialVariants.map(normalizeKoreanKey).filter(Boolean))], variantInput: '', meanings: [emptyManualMeaning()], notes: '', relatedSelected: [], relatedQuery: '' };
+    return { ko: initialKo, pos: '', noReview: false, variants: [...new Set(initialVariants.map(normalizeKoreanKey).filter(Boolean))], variantInput: '', meanings: [emptyManualMeaning()], notes: '', relatedSelected: [], relatedQuery: '' };
   }
   return {
     ko: item.ko || '',
     pos: item.pos || '',
+    noReview: item.noReview === true,
     variants: item.variants || [],
     variantInput: '',
     meanings: (item.meanings?.length ? item.meanings : [emptyManualMeaning()]).map((meaning) => ({
@@ -876,7 +887,7 @@ function mergeEditedItem(original, manual, allItems = []) {
     ...content
   } = original;
   const next = { ...content, ...edited };
-  ['pos', 'variants', 'meanings', 'notes', 'related'].forEach((key) => {
+  ['pos', 'noReview', 'variants', 'meanings', 'notes', 'related'].forEach((key) => {
     if (edited[key] === undefined) delete next[key];
   });
   return next;

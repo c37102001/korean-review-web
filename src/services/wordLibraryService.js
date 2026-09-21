@@ -8,7 +8,9 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase.js';
 import {
+  isLearnedFolder,
   isSystemFolder,
+  SYSTEM_LEARNED_FOLDER_ID,
   normalizeFolder,
   READING_SOURCE_FOLDER_ID,
   READING_SOURCE_FOLDER_NAME,
@@ -30,10 +32,12 @@ export async function writeLearningRecords(
   foldersToCreate = [],
   folderPatches = [],
   removeFolderIds = [],
+  learnedFolderId = SYSTEM_LEARNED_FOLDER_ID,
 ) {
   let queuedOffline = isBrowserOffline();
   const uniqueFolderIds = [...new Set(folderIds)].filter(Boolean);
   const extraWordIds = [...new Set(additionalFolderWordIds)].filter(Boolean);
+  const markExtraNoReview = uniqueFolderIds.includes(learnedFolderId);
   const newFolders = foldersToCreate.filter((folder) => folder?.id && folder?.name);
   const normalizedFolderPatches = folderPatches
     .filter((patch) => patch?.id)
@@ -44,7 +48,7 @@ export async function writeLearningRecords(
   if (records.length > MAX_ATOMIC_RECORD_WRITES) {
     throw new Error(`一次最多可以寫入 ${MAX_ATOMIC_RECORD_WRITES} 筆單字，請縮小匯入範圍`);
   }
-  if (records.length + uniqueFolderIds.length + newFolders.length
+  if (records.length + (markExtraNoReview ? extraWordIds.length : 0) + uniqueFolderIds.length + newFolders.length
     + normalizedFolderPatches.length + uniqueRemoveFolderIds.length > 500) {
     throw new Error('單字與資料夾更新超過 Firebase 單次批次上限');
   }
@@ -71,7 +75,13 @@ export async function writeLearningRecords(
       ko: record.item?.ko || record.id,
       detail: `正在整理第 ${index + 1}/${records.length} 筆：${record.item?.ko || record.id}`,
     });
-    normalizedRecords.push({ ...record, item: normalizeItemToV2(record.item, record.id, lookup) });
+    normalizedRecords.push({
+      ...record,
+      item: normalizeItemToV2({
+        ...record.item,
+        ...(markExtraNoReview ? { noReview: true } : {}),
+      }, record.id, lookup),
+    });
     if (onProgress) await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
@@ -104,6 +114,11 @@ export async function writeLearningRecords(
       normalizedRecords.forEach((record) => batch.set(
         doc(db, 'users', uid, 'records', record.id),
         { ...record, updatedAt: serverTimestamp() },
+      ));
+      if (markExtraNoReview) extraWordIds.filter((id) => !normalizedRecords.some((record) => record.id === id)).forEach((id) => batch.set(
+        doc(db, 'users', uid, 'records', id),
+        { item: { noReview: true }, updatedAt: serverTimestamp() },
+        { merge: true },
       ));
       uniqueFolderIds.forEach((folderId) => batch.set(
         doc(db, 'users', uid, 'folders', folderId),
@@ -166,13 +181,17 @@ export function sourceFolderWritePlan(folders, source, selectedFolderIds = []) {
 
 async function writeSourceLearningRecords(uid, records, folders, source, onProgress, selectedFolderIds = [], additionalFolderWordIds = []) {
   const plan = sourceFolderWritePlan(folders, source, selectedFolderIds);
+  const learnedSelected = folders.some((folder) => selectedFolderIds.includes(folder.id) && isLearnedFolder(folder));
   await writeLearningRecords(
     uid,
-    records,
+    learnedSelected ? records.map((record) => ({ ...record, item: { ...record.item, noReview: true } })) : records,
     onProgress,
     plan.folderIds,
     additionalFolderWordIds,
     plan.foldersToCreate,
+    [],
+    [],
+    folders.find(isLearnedFolder)?.id || SYSTEM_LEARNED_FOLDER_ID,
   );
 }
 
@@ -192,6 +211,22 @@ export async function writeReadingTestLearningRecords(uid, records, folders = []
 
 export async function writeLearningRecord(uid, record, onProgress, folderIds = []) {
   await writeLearningRecords(uid, [record], onProgress, folderIds);
+}
+
+export async function setWordsNoReview(uid, wordIds, noReview) {
+  const ids = [...new Set(wordIds.filter(Boolean))];
+  for (let offset = 0; offset < ids.length; offset += MAX_ATOMIC_RECORD_WRITES) {
+    const chunk = ids.slice(offset, offset + MAX_ATOMIC_RECORD_WRITES);
+    await retryFirestoreWrite(async () => {
+      const batch = writeBatch(db);
+      chunk.forEach((id) => batch.set(
+        doc(db, 'users', uid, 'records', id),
+        { item: { noReview }, updatedAt: serverTimestamp() },
+        { merge: true },
+      ));
+      await batch.commit();
+    });
+  }
 }
 
 export async function deleteLearningRecords(uid, recordIds, folders = []) {

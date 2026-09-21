@@ -96,7 +96,7 @@ def due_questions(state: Dict[str, Any], questions: List[Question], date_key: Op
 def daily_due_questions(state: Dict[str, Any], questions: List[Question], date_key: Optional[str] = None) -> List[Question]:
     date_key = date_key or today_string()
     learned_word_ids = set(state.get("learnedWordIds") or [])
-    terms = [question for question in questions if question.kind == "term" and question.item_id not in learned_word_ids]
+    terms = [question for question in questions if question.kind == "term" and question.item_id not in learned_word_ids and not question.source.no_review]
     return order_questions(due_questions(state, terms, date_key))
 
 
@@ -110,7 +110,7 @@ def daily_wrong_term_questions(
     term_by_id = {
         question.id: question
         for question in questions
-        if question.kind == "term" and question.item_id not in learned_word_ids
+        if question.kind == "term" and question.item_id not in learned_word_ids and not question.source.no_review
     }
     wrong_ids: set[str] = set()
     attempts = sorted(
@@ -306,7 +306,7 @@ def daily_recognition_questions(
     limit: int = DAILY_RECOGNITION_LIMIT,
 ) -> List[Question]:
     learned_word_ids = set(state.get("learnedWordIds") or [])
-    examples = [question for question in questions if question.kind == "example" and question.item_id not in learned_word_ids]
+    examples = [question for question in questions if question.kind == "example" and question.item_id not in learned_word_ids and not question.source.no_review]
     return daily_round_questions(
         state,
         examples,

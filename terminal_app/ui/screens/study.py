@@ -20,6 +20,8 @@ def run_study(
     session: AuthSession,
     front_side: str = "ko",
 ) -> None:
+    excluded_ids = set(state.get("learnedWordIds") or [])
+    cards = [card for card in cards if card.id not in excluded_ids and not card.no_review]
     front_side = "zh" if front_side == "zh" else "ko"
     idx = 0
     show_details = False

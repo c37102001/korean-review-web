@@ -190,10 +190,14 @@ class FirebaseClient:
                 raise RuntimeError(f'本機備份寫入失敗，待同步資料仍保留：{exc}') from exc
             raise
 
-    def offline_folder_change(self, session, folder_id, word_id, included):
+    def offline_folder_change(self, session, folder_id, word_id, included, mark_no_review=False):
         payload = _clone_json(self.offline_payload)
         payload['pending']['folders'].setdefault(folder_id, {})[word_id] = included
         sync_state_folder_membership({'folders': payload['folders']}, folder_id, word_id, included)
+        if mark_no_review:
+            for record in payload.get('records') or []:
+                if record.get('id') == word_id:
+                    record.setdefault('item', {})['noReview'] = True
         previous = self.offline_payload
         self.offline_payload = payload
         try:
@@ -293,13 +297,13 @@ class FirebaseClient:
             session, folders, SYSTEM_UNFAMILIAR_FOLDER_ID, SYSTEM_UNFAMILIAR_FOLDER_NAME, "unfamiliar"
         )
 
-    def add_word_to_folder(self, session: AuthSession, folder_id: str, word_id: str) -> None:
+    def add_word_to_folder(self, session: AuthSession, folder_id: str, word_id: str, mark_no_review: bool = False) -> None:
         if self.offline_mode:
-            self.offline_folder_change(session, folder_id, word_id, True)
+            self.offline_folder_change(session, folder_id, word_id, True, mark_no_review)
             return
         document_name = f"projects/{self.project_id}/databases/(default)/documents/users/{session.uid}/folders/{folder_id}"
         commit_url = f"https://firestore.googleapis.com/v1/projects/{self.project_id}/databases/(default)/documents:commit"
-        self._request_json("POST", commit_url, payload={"writes": [{
+        writes = [{
             "transform": {
                 "document": document_name,
                 "fieldTransforms": [
@@ -307,7 +311,16 @@ class FirebaseClient:
                     {"fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"},
                 ],
             },
-        }]}, session=session)
+        }]
+        if mark_no_review:
+            record_name = f"projects/{self.project_id}/databases/(default)/documents/users/{session.uid}/records/{word_id}"
+            writes.append({
+                "update": {"name": record_name, "fields": {"item": _to_firestore_value({"noReview": True})}},
+                "updateMask": {"fieldPaths": ["item.noReview"]},
+                "updateTransforms": [{"fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"}],
+                "currentDocument": {"exists": True},
+            })
+        self._request_json("POST", commit_url, payload={"writes": writes}, session=session)
 
     def remove_word_from_folder(self, session: AuthSession, folder_id: str, word_id: str) -> None:
         if self.offline_mode:
@@ -690,6 +703,7 @@ def mark_word_as_learned(
         session,
         str(state.get("learnedFolderId") or SYSTEM_LEARNED_FOLDER_ID),
         word_id,
+        mark_no_review=True,
     )
     state["learnedWordIds"] = [*learned_word_ids, word_id]
     sync_state_folder_membership(

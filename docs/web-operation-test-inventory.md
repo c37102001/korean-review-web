@@ -65,6 +65,7 @@
 | W15 | 匯出 JSON 的複製／下載：輸出目前指定範圍的完整資料，可重新解析。 | 局：資料格式 model |
 | W16 | 批次修改 JSON 的複製、檢查變更、返回編輯、放棄、確認保存：只更新選定範圍，錯誤 JSON 不寫入。 | 局：JSON model |
 | W17 | 單字本詞性單選下拉選單：切換特定詞性或全部時，卡片與數量正確；與資料夾、熟悉度等篩選條件一起生效，學習／測驗題目也只取目前結果。 | 通：`tests/app/word-pos-filter.spec.js`，`W17: notebook filters by one part of speech and combines it with folder selection`；`tests/word-collection.test.mjs`，`part-of-speech selection composes with folders and familiarity for cards and questions` |
+| W18 | 批次設定／恢復「不複習」：資料寫回且不覆蓋意思；已學習中的單字不能直接恢復複習。 | 通：`tests/app/no-review.spec.js`、`tests/review-eligibility.test.mjs`；已學習中恢復複習的錯誤提示待補 UI 測試 |
 
 ## 資料夾管理與單字編輯器
 
@@ -82,6 +83,7 @@
 | E05 | JSON 多筆匯入、缺漏／舊詞性逐筆選擇與套用修正：全部合規前不能寫入。 | 局：`word-pos-import.spec.js` 使用 mock 寫入 |
 | E06 | 匯入衝突：保留既有／使用匯入／A／B／合併／編輯後結果，及不存在 related 的清空處理；每種選擇得到正確最終卡片。 | 局：衝突 model |
 | E07 | 匯入的放棄、繼續檢查、全部匯入、完成與重複單字「開啟既有編輯」：狀態與實際寫入數一致，失敗可重試。 | 局：匯入 model |
+| E08 | 單字「不複習」在表單與 JSON 編輯中可設定；JSON 可省略此欄位，預設參與複習；加入已學習時自動設為 true。 | 通：`tests/app/no-review.spec.js`、`tests/review-eligibility.test.mjs`；JSON 匯入多筆的畫面流程待補 |
 
 ## 學習與測驗
 
@@ -98,6 +100,7 @@
 | P03 | 每日題、集合題、不熟悉題、今日錯題及自選練習完成：成績、錯題檢討、重測與每日排程各依模式處理。 | 局：review／session／pool 純函式 |
 | P04 | 公布答案後的星號、不熟悉／已學習、單字編輯：保存後本輪及重新進入顯示一致。 | 局：分類規則 |
 | P05 | 音效、自動發音、中文發音、重播：開關與播放語言正確，不在下一題意外重播。 | 局：語音純函式 |
+| P06 | 每日複習、自選練習、各列表測驗與學習均排除 `noReview=true` 及已學習單字；既有練習題組開始時亦排除，文法題維持可練。 | 局：`tests/review-eligibility.test.mjs`、`tests/app/no-review.spec.js`；自選題組重開的完整 E2E 待補 |
 | P06 | 例句聽力／閱讀、文法例句及分階段揭示：題面、答案和下一題狀態正確。 | 局：選題／揭示 model |
 | P07 | 結果頁再練一次、只重測錯題、重新儲存進度：題池與遠端進度回讀正確，失敗有提示。 | 局：session policy／repository |
 

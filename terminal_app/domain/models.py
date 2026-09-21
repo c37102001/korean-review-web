@@ -24,6 +24,7 @@ class Card:
     order: int = 0
     index: int = 0
     is_starred: bool = False
+    no_review: bool = False
 
 
 @dataclass
