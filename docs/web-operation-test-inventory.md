@@ -1,6 +1,6 @@
 # Web 可執行操作與測試清冊
 
-> 盤點基準：2026-09-21，`src/app/`、`src/features/`、`src/components/` 的實際互動。這是待完成清冊，不是「全部已測」聲明。優先實作順序見 [核心操作測試清單](core-workflow-test-checklist.md)。
+> 盤點基準：2026-09-21，`src/app/`、`src/features/`、`src/components/` 的實際互動。這是待完成清冊，不是「全部已測」聲明。優先實作順序見 [核心操作測試清單](core-workflow-test-checklist.md)，階段分配見 [八階段實作計畫](web-test-implementation-plan.md)。
 
 ## 覆蓋標準
 
