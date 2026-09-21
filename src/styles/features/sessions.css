@@ -1691,6 +1691,10 @@ textarea:focus {
   margin-bottom: 18px;
 }
 
+.filters.notebook-filters {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .multi-select-filter {
   position: relative;
   min-width: 0;

@@ -246,6 +246,7 @@ import {
   parsePairLines,
 } from '../words/records.js';
 import { recordOrder, sortRecords, wordChineseSummary, wordExamples } from '../words/records.js';
+import { WORD_POS_OPTIONS } from '../words/partOfSpeech.js';
 import '../styles.css';
 import { CONTENT_SCHEMA_VERSION } from './AppRuntime.jsx';
 function buildNotebookExport(items) {
@@ -800,7 +801,7 @@ export function NotebookPage({ store, updateStore, items, questions, folders = [
           onClose={() => setJsonEditOpen(false)}
         />
       )}
-      <div className="filters">
+      <div className="filters notebook-filters">
         <div className="word-search-tools filter-search-tools">
           <label className="search"><Search size={18} /><input value={collection.query} onChange={(e) => collection.setQuery(e.target.value)} placeholder={collection.searchScope === 'word' ? '搜尋韓文單字或中文意思' : '搜尋單字、例句、筆記或相關詞'} /></label>
           <SearchScopeControl value={collection.searchScope} onChange={collection.setSearchScope} />
@@ -821,6 +822,10 @@ export function NotebookPage({ store, updateStore, items, questions, folders = [
           includeUnfiled
           unfiledCount={collection.unfiledCount}
         />
+        <select aria-label="詞性" value={collection.selectedPos} onChange={(event) => collection.setSelectedPos(event.target.value)}>
+          <option value="">詞性：全部</option>
+          {WORD_POS_OPTIONS.map((pos) => <option value={pos} key={pos}>詞性：{pos}</option>)}
+        </select>
         <select value={collection.sort} onChange={(e) => collection.setSort(e.target.value)}>
           <option value="latest">最新</option>
           <option value="alphabetical">韓文字母</option>

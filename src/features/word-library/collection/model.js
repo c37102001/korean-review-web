@@ -202,12 +202,16 @@ export function deriveWordCollection({
   searchScope = 'word',
   selectedLevels = [],
   selectedFolderIds = [],
+  selectedPos = '',
   sort = 'source',
   pageNumber = 1,
   pageSize = 0,
 } = {}) {
   const folderFiltered = filterItemsByFolderSelection(items, folders, selectedFolderIds);
-  const enriched = enrichWordsWithStats(folderFiltered, questions, store)
+  const posFiltered = selectedPos
+    ? folderFiltered.filter((item) => item.pos === selectedPos)
+    : folderFiltered;
+  const enriched = enrichWordsWithStats(posFiltered, questions, store)
     .filter((item) => itemMatchesSearch(item, query, searchScope))
     .filter((item) => matchesFamiliarityLevels(item.level, selectedLevels, item.score));
   const filteredItems = sortWordCollection(enriched, sort);

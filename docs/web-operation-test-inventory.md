@@ -64,6 +64,7 @@
 | W14 | 隱藏／顯示已學習（單字本）：只影響列表可見性，不修改資料。 | 缺 |
 | W15 | 匯出 JSON 的複製／下載：輸出目前指定範圍的完整資料，可重新解析。 | 局：資料格式 model |
 | W16 | 批次修改 JSON 的複製、檢查變更、返回編輯、放棄、確認保存：只更新選定範圍，錯誤 JSON 不寫入。 | 局：JSON model |
+| W17 | 單字本詞性單選下拉選單：切換特定詞性或全部時，卡片與數量正確；與資料夾、熟悉度等篩選條件一起生效，學習／測驗題目也只取目前結果。 | 通：`tests/app/word-pos-filter.spec.js`，`W17: notebook filters by one part of speech and combines it with folder selection`；`tests/word-collection.test.mjs`，`part-of-speech selection composes with folders and familiarity for cards and questions` |
 
 ## 資料夾管理與單字編輯器
 

@@ -105,3 +105,30 @@ test('practice questions are derived from the same filtered word collection', ()
     ['b-term'],
   );
 });
+
+test('part-of-speech selection composes with folders and familiarity for cards and questions', () => {
+  const typedItems = items.map((item) => ({
+    ...item,
+    pos: item.id === 'word-b' ? '名詞' : '動詞',
+  }));
+  const result = deriveWordCollection({
+    items: typedItems,
+    questions,
+    store,
+    folders,
+    selectedPos: '動詞',
+    selectedFolderIds: ['folder-1', UNFILED_FOLDER_FILTER_ID],
+    selectedLevels: ['score-negative-1'],
+    pageSize: 1,
+    pageNumber: 3,
+  });
+  assert.deepEqual(result.filteredItems.map((item) => item.id), ['word-a']);
+  assert.deepEqual(result.filteredQuestions.map((question) => question.id), ['a-term', 'a-example']);
+  assert.equal(result.totalCount, 1);
+  assert.equal(result.pageNumber, 1);
+  assert.deepEqual(
+    deriveWordCollection({ items: typedItems, questions, selectedPos: '名詞' }).filteredItems.map((item) => item.id),
+    ['word-b'],
+  );
+  assert.equal(deriveWordCollection({ items: typedItems, questions, selectedPos: '其他' }).totalCount, 0);
+});

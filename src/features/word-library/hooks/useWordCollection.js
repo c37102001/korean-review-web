@@ -25,6 +25,7 @@ export function useWordCollection({
   const [searchScope, setSearchScope] = useState('word');
   const [selectedLevels, setSelectedLevels] = useState([]);
   const [selectedFolderIds, setSelectedFolderIds] = useState([]);
+  const [selectedPos, setSelectedPos] = useState('');
   const [sort, setSort] = useState(defaultSort);
   const [pageNumber, setPageNumber] = useState(1);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -40,12 +41,13 @@ export function useWordCollection({
     searchScope,
     selectedLevels,
     selectedFolderIds,
+    selectedPos,
     sort,
     pageNumber,
     pageSize,
-  }), [items, questions, store, folders, query, searchScope, selectedLevels, selectedFolderIds, sort, pageNumber, pageSize]);
+  }), [items, questions, store, folders, query, searchScope, selectedLevels, selectedFolderIds, selectedPos, sort, pageNumber, pageSize]);
 
-  useEffect(() => setPageNumber(1), [query, searchScope, selectedLevels, selectedFolderIds, sort]);
+  useEffect(() => setPageNumber(1), [query, searchScope, selectedLevels, selectedFolderIds, selectedPos, sort]);
 
   useEffect(() => {
     setPageNumber(1);
@@ -113,6 +115,8 @@ export function useWordCollection({
     toggleLevel,
     selectedFolderIds,
     setSelectedFolderIds,
+    selectedPos,
+    setSelectedPos,
     toggleFolder,
     sort,
     setSort,
