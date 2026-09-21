@@ -1,10 +1,18 @@
 import unittest
+from pathlib import Path
 from unittest.mock import ANY, patch
 
 import terminal_review_practice as terminal
 
 
 class OptionalPracticeTests(unittest.TestCase):
+    def test_study_repeat_shortcuts_leave_three_unassigned(self):
+        source = (Path(__file__).parents[1] / 'terminal_app/ui/screens/study.py').read_text(encoding='utf-8')
+        self.assertIn('1/2=重複:', source)
+        self.assertEqual(source.count('key in ("1", "2")'), 2)
+        self.assertNotIn('1/2/3=重複:', source)
+        self.assertNotIn('key in ("1", "2", "3")', source)
+
     @staticmethod
     def card_and_question():
         card = terminal.Card("word", "2026-09-10", "날씨", "天氣", meanings=[])

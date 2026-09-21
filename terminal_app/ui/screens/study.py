@@ -59,7 +59,7 @@ def run_study(
             stdscr,
             1,
             2,
-            f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回 A=自動:{'開' if auto_playing else '關'} 1/2/3=重複:{repeat_count} {auto_audio_control_label()} 0=星號 *=不熟悉 5={'中文' if front_side == 'ko' else '韓文'} 9=單字 7=例句 +=下一例句 8=詳情 ↑↓=捲動 4/6=上下張",
+            f"學習 | {title} | {idx + 1}/{len(cards)}  Esc=返回 A=自動:{'開' if auto_playing else '關'} 1/2=重複:{repeat_count} {auto_audio_control_label()} 0=星號 *=不熟悉 5={'中文' if front_side == 'ko' else '韓文'} 9=單字 7=例句 +=下一例句 8=詳情 ↑↓=捲動 4/6=上下張",
             curses.A_BOLD,
         )
         folder_notice, display_message = folder_prompt_notice(message)
@@ -161,7 +161,7 @@ def run_study(
                 auto_playing = False
                 message = "已暫停完整自動播放。"
                 continue
-            if key in ("1", "2", "3"):
+            if key in ("1", "2"):
                 repeat_count = int(key)
                 auto_card_id = ""
                 auto_steps = []
@@ -249,7 +249,7 @@ def run_study(
             auto_steps = []
             auto_step_index = 0
             message = "開始完整自動播放。"
-        elif key in ("1", "2", "3"):
+        elif key in ("1", "2"):
             repeat_count = int(key)
             message = f"每張卡片將完整播放 {repeat_count} 次。"
         elif key == "0":
