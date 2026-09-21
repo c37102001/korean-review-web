@@ -202,7 +202,6 @@ def prompt_login(client: FirebaseClient) -> AuthSession:
     default_password = os.getenv("TERMINAL_PRACTICE_PASSWORD", "")
     while True:
         clear_plain_screen()
-        print("Login | 韓文筆記 Terminal")
         print("可在 .env 設定 TERMINAL_PRACTICE_EMAIL / TERMINAL_PRACTICE_PASSWORD")
         email_input = input(f"Email [{default_email}]: " if default_email else "Email: ").strip()
         email = email_input or default_email
