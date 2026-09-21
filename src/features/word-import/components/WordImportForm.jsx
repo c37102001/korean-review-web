@@ -5,6 +5,7 @@ import { FolderPickerDropdown } from '../../word-library/components/BulkWordActi
 import { wordFolderIds } from '../../word-library/collection/model.js';
 import { copyText } from '../../../shared/clipboard.js';
 import { createId } from '../../../shared/id.js';
+import { WORD_POS_OPTIONS } from '../../../words/partOfSpeech.js';
 import { formatPairLines, normalizeKoreanKey, normalizeWordVariants, parsePairLines, recordOrder, wordChineseSummary } from '../../../words/records.js';
 import {
   buildJsonImportDraft,
@@ -187,6 +188,21 @@ export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', 
     setImportDraft((draft) => ({
       ...draft,
       invalid: draft.invalid.map((issue) => (issue.index === issueIndex ? { ...issue, text } : issue)),
+    }));
+  };
+
+  const updateInvalidPos = (issueIndex, pos) => {
+    setImportDraft((draft) => ({
+      ...draft,
+      invalid: draft.invalid.map((issue) => {
+        if (issue.index !== issueIndex) return issue;
+        try {
+          const item = JSON.parse(issue.text);
+          return { ...issue, text: JSON.stringify({ ...item, pos }, null, 2), error: '' };
+        } catch {
+          return issue;
+        }
+      }),
     }));
   };
 
@@ -403,6 +419,7 @@ export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', 
         <ImportReviewPanel
           draft={importDraft}
           onUpdateInvalidText={updateInvalidText}
+          onUpdateInvalidPos={updateInvalidPos}
           onApplyInvalidFix={applyInvalidFix}
           onContinue={handleContinueImportDraft}
           onUpdateConflictText={updateConflictText}
@@ -438,11 +455,11 @@ export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', 
               <input value={manual.ko} onChange={(event) => setManual({ ...manual, ko: event.target.value })} required />
             </label>
             <label>
-              詞性 / 類型
-              <select value={manual.pos} onChange={(event) => setManual({ ...manual, pos: event.target.value })}>
-                <option value="">不指定</option>
-                {manual.pos && !['名詞', '動詞', '形容詞', '副詞', '片語', '動詞片語', '句子', '文法', '比較'].includes(manual.pos) && <option value={manual.pos}>{manual.pos}</option>}
-                {['名詞', '動詞', '形容詞', '副詞', '片語', '動詞片語', '句子', '文法', '比較'].map((option) => <option key={option}>{option}</option>)}
+              詞性 / 類型 *
+              <select value={manual.pos} onChange={(event) => setManual({ ...manual, pos: event.target.value })} required>
+                <option value="">請選擇</option>
+                {manual.pos && !WORD_POS_OPTIONS.includes(manual.pos) && <option value={manual.pos} disabled>{manual.pos}（舊分類，請重新選擇）</option>}
+                {WORD_POS_OPTIONS.map((option) => <option key={option}>{option}</option>)}
               </select>
             </label>
             <VariantsEditor manual={manual} setManual={setManual} />
@@ -561,7 +578,7 @@ function ImportCompletePanel({ result, onDone }) {
   );
 }
 
-function ImportReviewPanel({ draft, onUpdateInvalidText, onApplyInvalidFix, onContinue, onUpdateConflictText, onResolveConflict, onClearMissingRelated, onCancel, saving }) {
+function ImportReviewPanel({ draft, onUpdateInvalidText, onUpdateInvalidPos, onApplyInvalidFix, onContinue, onUpdateConflictText, onResolveConflict, onClearMissingRelated, onCancel, saving }) {
   const pendingCount = draft.entries.filter(Boolean).length;
   return (
     <div className="import-review">
@@ -583,6 +600,20 @@ function ImportReviewPanel({ draft, onUpdateInvalidText, onApplyInvalidFix, onCo
                 <strong>第 {issue.index + 1} 筆</strong>
                 <span>{issue.error}</span>
               </div>
+              {(() => {
+                let item;
+                try { item = JSON.parse(issue.text); } catch { return null; }
+                if (!item || Array.isArray(item) || typeof item !== 'object' || WORD_POS_OPTIONS.includes(item.pos)) return null;
+                return (
+                  <label>
+                    {item.ko || `第 ${issue.index + 1} 筆`} 的詞性 / 類型{item.pos ? `（原值：${String(item.pos)}）` : '（未填）'}
+                    <select value="" onChange={(event) => onUpdateInvalidPos(issue.index, event.target.value)}>
+                      <option value="">請選擇</option>
+                      {WORD_POS_OPTIONS.map((option) => <option key={option}>{option}</option>)}
+                    </select>
+                  </label>
+                );
+              })()}
               <textarea value={issue.text} onChange={(event) => onUpdateInvalidText(issue.index, event.target.value)} spellCheck="false" />
               <button type="button" onClick={() => onApplyInvalidFix(issue.index)}>套用修正</button>
             </div>
@@ -791,6 +822,7 @@ function manualMeaningToItemMeaning(meaning, index) {
 
 function manualToItem(manual, allItems = []) {
   if (!manual.ko.trim()) throw new Error('韓文是必填');
+  if (!WORD_POS_OPTIONS.includes(manual.pos)) throw new Error('請選擇有效的詞性 / 類型');
   const meaningInputs = (manual.meanings || []).filter(manualMeaningHasContent);
   if (!meaningInputs.length) throw new Error('至少需要 1 個中文意思');
   const item = {

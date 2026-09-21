@@ -749,7 +749,7 @@ function normalizeRecords(records) {
       itemId: item.id,
       date: item.date,
       kind: 'term',
-      pos: item.pos || '未分類',
+      pos: item.pos || '',
       ko: item.ko,
       zh: item.zh,
       source: item,

@@ -49,7 +49,7 @@ export function StudyPage({ store, updateStore, set, allItems = [], folders = []
     const latestById = new Map(allItems.map((entry) => [entry.id, entry]));
     return set.items.map((entry) => latestById.get(entry.id) || entry);
   }, [set.items, allItems]);
-  const types = ['全部', ...new Set(currentItems.map((item) => item.pos || '未分類'))];
+  const types = ['全部', ...new Set(currentItems.map((item) => item.pos).filter(Boolean))];
   const filtered = useMemo(() => {
     const starredSet = new Set(store.starred || []);
     return currentItems
@@ -274,7 +274,7 @@ export function StudyPage({ store, updateStore, set, allItems = [], folders = []
                 {showChinese ? <EyeOff size={16} /> : <Eye size={16} />} {showChinese ? '隱藏中文' : '顯示中文'}
               </button>
             )}
-            <small>{frontShowsChinese ? '點擊看韓文' : showChinese ? item.pos || '未分類' : '點擊查看韓文例句'}</small>
+            <small>{frontShowsChinese ? '點擊看韓文' : showChinese ? item.pos || '' : '點擊查看韓文例句'}</small>
           </div>
           <div className="flash-face back">
             <div className="flash-back-content" onClick={(event) => event.stopPropagation()}>

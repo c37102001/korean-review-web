@@ -42,7 +42,7 @@ test('Naver dictionary links use the current Korean dictionary search route', ()
 
 test('single-word JSON editing uses the import envelope and preserves existing example ids', () => {
   const original = {
-    id: 'word', date: '2026-09-14', ko: '나름', pos: '名詞／副詞性表達',
+    id: 'word', date: '2026-09-14', ko: '나름', pos: '名詞',
     meanings: [{ id: 'word-0', zh: '按照自己的方式', examples: [{ id: 'word-0-ex-0', ko: '저도 나름대로 열심히 했어요.', zh: '我也努力了。' }] }],
     notes: [], related: [],
   };
@@ -62,7 +62,7 @@ test('single-word JSON editing uses the import envelope and preserves existing e
 });
 
 test('single-word JSON editing rejects malformed, multiple, duplicate and unsupported data', () => {
-  const original = { id: 'word', ko: '나름', meanings: [{ zh: '自己的方式', examples: [] }] };
+  const original = { id: 'word', ko: '나름', pos: '名詞', meanings: [{ zh: '自己的方式', examples: [] }] };
   const other = { id: 'other', ko: '날씨', meanings: [{ zh: '天氣', examples: [] }] };
   const input = JSON.parse(helpers.formatSingleWordJson(original));
   assert.throws(() => helpers.parseSingleWordEditJson('{', original, [original]), /JSON/);
@@ -113,6 +113,7 @@ test('editing a word computes both folder additions and removals', () => {
 function item(ko, zh, extra = {}) {
   return {
     ko,
+    pos: '名詞',
     meanings: [{ zh, examples: [] }],
     related: [],
     ...extra,

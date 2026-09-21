@@ -1,4 +1,5 @@
 import { createId } from '../../shared/id.js';
+import { isAllowedWordPos, WORD_POS_OPTIONS } from '../../words/partOfSpeech.js';
 import {
   buildRecordLookup,
   normalizeItemToV2,
@@ -81,7 +82,8 @@ export function validateImportItem(item, itemIndex) {
   assertString(item.date, `${label} 的 date`);
   assertSafeInteger(item.order, `${label} 的 order`);
   assertString(item.ko, `${label} 的 ko`, { required: true });
-  assertString(item.pos, `${label} 的 pos`);
+  assertString(item.pos, `${label} 的 pos`, { required: true });
+  if (!isAllowedWordPos(item.pos)) throw new Error(`${label} 的 pos 請選擇：${WORD_POS_OPTIONS.join('、')}`);
   if (item.variants !== undefined) {
     if (!Array.isArray(item.variants)) throw new Error(`${label} 的 variants 需要是文字陣列`);
     item.variants.forEach((variant, variantIndex) => assertString(variant, `${label} 的第 ${variantIndex + 1} 個 variant`, { required: true }));
@@ -120,6 +122,7 @@ export function validateImportItem(item, itemIndex) {
 }
 
 export function createRecordsForDate(date, rawItems, existingItems = []) {
+  rawItems.forEach(validateImportItem);
   const now = new Date().toISOString();
   const orderBase = Date.now() * 1000;
   const records = rawItems.map((item, index) => ({
@@ -145,6 +148,9 @@ export function createRecordsForDate(date, rawItems, existingItems = []) {
 }
 
 export function createRecordsFromImportEntries(entries, date, existingItems = [], forceDate = false) {
+  entries.filter(Boolean).forEach((entry) => {
+    if (entry.action !== 'existing') validateImportItem(entry.item, entry.index);
+  });
   const now = new Date().toISOString();
   const orderBase = Date.now() * 1000;
   const addRecords = entries.filter((entry) => entry.action === 'add').map((entry) => ({

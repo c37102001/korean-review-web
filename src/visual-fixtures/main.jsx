@@ -48,6 +48,7 @@ function FixtureApp() {
   let content;
   if (fixture === 'word-card') content = <section className="page fixture-page"><WordCard word={words[1]} folders={folders} onSpeak={noop} onEdit={noop} onDelete={asyncNoop} onToggleStar={noop} selectable onToggleSelected={noop} onToggleChinese={noop} /></section>;
   else if (fixture === 'word-edit') content = <section className="page fixture-page"><AddItemsForm title="編輯單字" date={words[0].date} editItem={words[0]} allItems={words} folders={folders} onUpdateRecord={async (record) => { window.__wordEditResult = record; }} /></section>;
+  else if (fixture === 'word-import') content = <section className="page fixture-page"><AddItemsForm title="新增單字" date="2026-09-21" onWriteRecords={async (records) => { window.__wordImportResult = records; }} /></section>;
   else if (fixture === 'notebook') content = <CollectionFixture />;
   else if (fixture === 'folder') content = <CollectionFixture folder />;
   else if (fixture === 'study') content = <StudyPage store={store} updateStore={updateStore} set={createStudySession(words, '視覺測試')} allItems={words} folders={folders} onUpdateRecord={asyncNoop} {...commonClassification} />;
