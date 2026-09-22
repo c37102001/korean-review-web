@@ -21,6 +21,18 @@ import {
   studyCardDoubleTapAction,
 } from './model.js';
 
+export function StudyKoreanWord({ item }) {
+  const variants = [...new Set((item.variants || []).filter((form) => form && form !== item.ko))];
+  return (
+    <div className="study-korean-word">
+      <div className="study-pronunciation-row"><strong>{item.ko}</strong><TextSpeakButton text={item.ko} lang="ko-KR" label="播放韓文單字" /></div>
+      {variants.length > 0 && <div className="study-korean-variants" aria-label="活用形式">
+        {variants.map((form) => <span key={form} lang="ko">{form}</span>)}
+      </div>}
+    </div>
+  );
+}
+
 export function StudyPage({ store, updateStore, set, allItems = [], folders = [], onUpdateRecord, onBack, learnedWordIds = new Set(), unfamiliarWordIds = new Set(), onToggleLearned, onToggleUnfamiliar }) {
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
@@ -263,7 +275,7 @@ export function StudyPage({ store, updateStore, set, allItems = [], folders = []
           </div>
           <div className="flash-face front">
             <span>{index + 1} / {ordered.length}</span>
-            <div className="study-pronunciation-row"><strong>{item.ko}</strong><TextSpeakButton text={item.ko} lang="ko-KR" label="播放韓文單字" /></div>
+            <StudyKoreanWord item={item} />
             {frontShowsChinese && <div className="study-pronunciation-row"><span className="flashcard-translation">{item.zh}</span><TextSpeakButton text={item.zh} lang="zh-TW" label="播放中文意思" /></div>}
             {frontSide === 'zh' && hideChineseInitially && (
               <button
@@ -280,7 +292,7 @@ export function StudyPage({ store, updateStore, set, allItems = [], folders = []
             <div className="flash-back-content" onClick={(event) => event.stopPropagation()}>
               <div className="flash-back-answer">
                 <div className="flash-back-answer-copy">
-                  <div className="study-pronunciation-row"><strong>{item.ko}</strong><TextSpeakButton text={item.ko} lang="ko-KR" label="播放韓文單字" /></div>
+                  <StudyKoreanWord item={item} />
                   {frontSide === 'ko' && showChinese && <div className="study-pronunciation-row"><span>{item.zh}</span><TextSpeakButton text={item.zh} lang="zh-TW" label="播放中文意思" /></div>}
                   {frontSide === 'ko' && hideChineseInitially && (
                     <button

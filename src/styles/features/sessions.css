@@ -571,6 +571,33 @@
   flex: 0 0 auto;
 }
 
+.study-korean-word {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.study-korean-variants {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  max-height: 150px;
+  max-width: 100%;
+  overflow-y: auto;
+  font-size: calc(22px * var(--user-font-scale, 1));
+  font-weight: 700;
+  line-height: 1.35;
+  color: #50636a;
+  text-align: center;
+}
+
+.study-korean-variants > span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 700px) {
   .study-pronunciation-row > strong { font-size: calc(33.0px * var(--user-font-scale, 1)); }
   .study-pronunciation-row > span { font-size: calc(24.2px * var(--user-font-scale, 1)); }
