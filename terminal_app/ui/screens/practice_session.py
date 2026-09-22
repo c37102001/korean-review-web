@@ -1,6 +1,6 @@
 
 from terminal_app.runtime import *
-from terminal_app.domain.content import card_korean_forms
+from terminal_app.domain.content import card_korean_forms, card_korean_speech
 from terminal_app.ui.curses_helpers import *
 from terminal_app.ui.screens.recognition import practice_mistake_questions, practice_mistake_review_menu
 
@@ -92,7 +92,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             set_cursor_visibility(0)
             return False
         question = questions[idx]
-        answer_word = question.source.ko if question.source.pos != "文法" else ""
+        answer_word = card_korean_speech(question.source) if question.source.pos != "文法" else ""
         prompt = question.zh if config["direction"] == "zh-ko" else card_korean_forms(question.source) if question.kind == "term" else question.ko
         answer = question.ko if config["direction"] == "zh-ko" else question.zh
         if question.kind == "term":
@@ -242,7 +242,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             spoken_question_id = question.id
             message = (
                 "已自動播放韓文題目。"
-                if speak_korean(question.ko)
+                if speak_korean(answer_word if question.kind == "term" else question.ko)
                 else "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
             )
             continue
@@ -443,7 +443,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                 elif config["direction"] == "ko-zh" and not answer_visible:
                     message = (
                         "已重播韓文題目。"
-                        if speak_korean(question.ko)
+                        if speak_korean(answer_word if question.kind == "term" else question.ko)
                         else "無法播放語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
                     )
             elif key == "+":

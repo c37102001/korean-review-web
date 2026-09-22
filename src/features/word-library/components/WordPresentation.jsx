@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import { Eye, EyeOff, Folder, Trash2, X } from 'lucide-react';
 
 import { EditIconButton, KoreanSpeakButton, StarButton } from '../../../components/actions/ContentActionButtons.jsx';
+import { wordSpeechText } from '../../../words/speech.js';
 import { relatedWords, wordExamples } from '../../../words/records.js';
 import './word-presentation.css';
 
@@ -141,7 +142,7 @@ export function WordCard({
       onClick={onOpen ? () => onOpen(word) : undefined}
     >
       <div className="card-head word-card-head">
-        <h3 className="speakable-heading"><span>{word.ko}</span><KoreanSpeakButton text={word.ko} onSpeak={onSpeak} /></h3>
+        <h3 className="speakable-heading"><span>{word.ko}</span><KoreanSpeakButton text={wordSpeechText(word)} onSpeak={onSpeak} /></h3>
         <WordCardActions
           word={word}
           isStarred={isStarred}
@@ -357,7 +358,7 @@ export function WordDetailCard({
   return (
     <article className="word-card word-detail-card">
       <div className="card-head word-card-head">
-        <h3 className="speakable-heading"><span>{word.ko}</span><KoreanSpeakButton text={word.ko} onSpeak={onSpeak} /></h3>
+        <h3 className="speakable-heading"><span>{word.ko}</span><KoreanSpeakButton text={wordSpeechText(word)} onSpeak={onSpeak} /></h3>
         <WordCardActions
           word={word}
           isStarred={isStarred}

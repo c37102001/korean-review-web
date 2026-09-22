@@ -7,6 +7,7 @@ import { EditIconButton, StarButton } from '../../../components/actions/ContentA
 import { TextSpeakButton } from '../../../components/actions/TextSpeakButton.jsx';
 import { speakText, speakTextAndWait } from '../../../audio/speech.js';
 import { toggleStarredItem } from '../../../review-engine/index.js';
+import { wordSpeechText } from '../../../words/speech.js';
 import { WordDetails } from '../../word-library/components/WordPresentation.jsx';
 import { useWordClassification } from '../core/useWordClassification.js';
 import { useSessionWakeLock } from '../core/useSessionWakeLock.js';
@@ -25,7 +26,7 @@ export function StudyKoreanWord({ item }) {
   const variants = [...new Set((item.variants || []).filter((form) => form && form !== item.ko))];
   return (
     <div className="study-korean-word">
-      <div className="study-pronunciation-row"><strong>{item.ko}</strong><TextSpeakButton text={item.ko} lang="ko-KR" label="播放韓文單字" /></div>
+      <div className="study-pronunciation-row"><strong>{item.ko}</strong><TextSpeakButton text={wordSpeechText(item)} lang="ko-KR" label="播放韓文單字與活用" /></div>
       {variants.length > 0 && <div className="study-korean-variants" aria-label="活用形式">
         {variants.map((form) => <span key={form} lang="ko">{form}</span>)}
       </div>}
@@ -74,12 +75,13 @@ export function StudyPage({ store, updateStore, set, allItems = [], folders = []
   const isLearned = !!item && classification.isLearned(item.id);
   const isUnfamiliar = !!item && classification.isUnfamiliar(item.id);
   const showChinese = shouldShowStudyChinese(hideChineseInitially, cardChineseRevealed);
+  const koreanSpeech = wordSpeechText(item);
   const frontShowsChinese = frontSide === 'zh' && showChinese;
-  const frontText = frontShowsChinese ? item?.zh : item?.ko;
-  const backText = frontSide === 'ko' ? item?.zh : item?.ko;
+  const frontText = frontShowsChinese ? item?.zh : koreanSpeech;
+  const backText = frontSide === 'ko' ? item?.zh : koreanSpeech;
   const frontLang = frontShowsChinese ? 'zh-TW' : 'ko-KR';
   const backLang = frontSide === 'ko' ? 'zh-TW' : 'ko-KR';
-  const visibleBackText = frontSide === 'ko' && !showChinese ? item?.ko : backText;
+  const visibleBackText = frontSide === 'ko' && !showChinese ? koreanSpeech : backText;
   const visibleBackLang = frontSide === 'ko' && !showChinese ? 'ko-KR' : backLang;
   const autoPlaySpeechSequence = useMemo(() => buildStudyAutoPlaySpeechSequence(item, {
     frontSide,

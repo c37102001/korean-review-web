@@ -52,7 +52,7 @@ from terminal_app.api.firestore_codec import parse_value as _parse_firestore_val
 from terminal_app.api.firestore_codec import to_value as _to_firestore_value
 from terminal_app.api.transport import JsonHttpTransport
 from terminal_app.domain.models import AuthSession, Card, GrammarNote, PartialCheckResult, Question, ReadingTest, YoutubeSubtitle
-from terminal_app.domain.content import item_zh, normalize_grammar_notes, normalize_reading_tests, normalize_records, normalize_youtube_subtitles, order_questions, record_order
+from terminal_app.domain.content import card_korean_speech, item_zh, normalize_grammar_notes, normalize_reading_tests, normalize_records, normalize_youtube_subtitles, order_questions, record_order
 from terminal_app.domain.practice import (
     add_optional_practice_task,
     answer_optional_practice_task,
@@ -1074,7 +1074,7 @@ def card_examples(card: Card) -> List[Dict[str, str]]:
 def study_auto_audio_steps(card: Card, repeat_count: int) -> List[Tuple[str, int, str, int]]:
     repeats = min(3, max(1, int(repeat_count or 1)))
     examples = card_examples(card)
-    cycle: List[Tuple[str, int, str]] = [("front", -1, card.ko)]
+    cycle: List[Tuple[str, int, str]] = [("front", -1, card_korean_speech(card))]
     if examples:
         cycle.extend(("back", index, example.get("ko", "")) for index, example in enumerate(examples))
     else:

@@ -6,6 +6,7 @@ import {
   speechLanguageKey,
   speakText,
 } from '../../../audio/speech.js';
+import { wordSpeechText } from '../../../words/speech.js';
 
 export function waitFor(milliseconds) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -14,11 +15,11 @@ export function waitFor(milliseconds) {
 export function practiceAnswerSpeech(question, useChinese = false) {
   return useChinese
     ? { text: question?.zh || '', lang: 'zh-TW' }
-    : { text: question?.ko || '', lang: 'ko-KR' };
+    : { text: question?.kind === 'term' ? wordSpeechText(question.source || question) : question?.ko || '', lang: 'ko-KR' };
 }
 
 export function speakAnswer(question) {
-  speakText(question?.ko, 'ko-KR');
+  speakText(practiceAnswerSpeech(question).text, 'ko-KR');
 }
 
 export function speakPracticeAnswer(question, useChinese = false, onError = () => {}) {

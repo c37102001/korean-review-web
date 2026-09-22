@@ -12,6 +12,10 @@ def card_korean_forms(card: Card) -> str:
     return " / ".join(dict.fromkeys(form for form in [card.ko, *card.variants] if form))
 
 
+def card_korean_speech(card: Card) -> str:
+    return ". ".join(dict.fromkeys(form for form in [card.ko, *card.variants] if form))
+
+
 def record_order(record: Dict[str, Any]) -> int:
     value = record.get("order")
     if isinstance(value, int) and not isinstance(value, bool):

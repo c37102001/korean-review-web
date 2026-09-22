@@ -4,6 +4,7 @@ import { Check, RotateCcw } from 'lucide-react';
 import { KoreanSpeakButton } from '../../../components/actions/ContentActionButtons.jsx';
 import { TextSpeakButton } from '../../../components/actions/TextSpeakButton.jsx';
 import { speakText } from '../../../audio/speech.js';
+import { wordSpeechText } from '../../../words/speech.js';
 import { NOTE_CATEGORY_GRAMMAR, NOTE_CATEGORY_VOCABULARY } from '../../../notes/model.js';
 import { WordDetailCard } from '../../word-library/components/WordPresentation.jsx';
 
@@ -42,7 +43,7 @@ export function PracticeMistakeReview({ questions = [], onRetry = null }) {
               <article className="practice-mistake-card" key={question.id}>
                 <div className="practice-mistake-word">
                   <h3>{korean}</h3>
-                  <KoreanSpeakButton text={korean} onSpeak={speakText} />
+                  <KoreanSpeakButton text={grammarExample ? korean : wordSpeechText(question.source || question)} onSpeak={speakText} />
                 </div>
                 <p>{chinese}</p>
                 {question.kind === 'example' && question.ko !== korean && (

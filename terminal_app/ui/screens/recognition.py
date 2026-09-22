@@ -1,5 +1,6 @@
 
 from terminal_app.runtime import *
+from terminal_app.domain.content import card_korean_speech
 from terminal_app.ui.curses_helpers import *
 
 def run_daily_recognition(
@@ -200,7 +201,7 @@ def run_daily_recognition(
             if is_auto_audio_enabled() and not grammar_mode and not was_revealed and revealed:
                 message = (
                     "已自動播放所屬韓文單字。"
-                    if speak_korean(card.ko)
+                    if speak_korean(card_korean_speech(card))
                     else "無法播放單字語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
                 )
             scroll_offset = 0
@@ -212,7 +213,7 @@ def run_daily_recognition(
         elif key == "9" and not grammar_mode:
             message = (
                 "已重播韓文單字。"
-                if speak_korean(card.ko)
+                if speak_korean(card_korean_speech(card))
                 else "無法播放單字語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
             )
         elif key == "-" and not grammar_mode:

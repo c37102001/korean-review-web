@@ -1,6 +1,6 @@
 
 from terminal_app.runtime import *
-from terminal_app.domain.content import card_korean_forms
+from terminal_app.domain.content import card_korean_forms, card_korean_speech
 from terminal_app.ui.curses_helpers import *
 
 def ordered_study_cards(cards: List[Card], order_mode: str) -> List[Card]:
@@ -227,7 +227,7 @@ def run_study(
             spoken_card_id = card.id
             message = (
                 "已自動播放韓文單字。"
-                if speak_korean(card.ko)
+                if speak_korean(card_korean_speech(card))
                 else "無法播放單字語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
             )
             continue
@@ -285,7 +285,7 @@ def run_study(
         elif key == "9":
             message = (
                 "已重播韓文單字。"
-                if speak_korean(card.ko)
+                if speak_korean(card_korean_speech(card))
                 else "無法播放單字語音：請確認 edge-tts 與 cvlc／ffplay 可用。"
             )
         elif key in ("7", "+"):

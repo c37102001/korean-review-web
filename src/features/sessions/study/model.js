@@ -1,4 +1,5 @@
 import { wordExamples } from '../../../words/records.js';
+import { wordSpeechText } from '../../../words/speech.js';
 
 export function shouldShowStudyChinese(hideChineseInitially, cardChineseRevealed) {
   return !hideChineseInitially || cardChineseRevealed;
@@ -22,7 +23,7 @@ export function buildStudyAutoPlaySpeechSequence(item, {
   const repeatCount = Math.min(3, Math.max(1, Number(voiceRepeatCount) || 1));
   const includeChinese = !hideChineseInitially;
   const cycle = [{
-    text: item.ko,
+    text: wordSpeechText(item),
     lang: 'ko-KR',
     face: frontSide === 'ko' || hideChineseInitially ? 'front' : 'back',
   }];
