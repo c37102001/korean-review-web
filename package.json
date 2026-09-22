@@ -16,7 +16,8 @@
     "test:visual:update": "playwright test --update-snapshots",
     "test:emulator": "firebase emulators:exec --only firestore --project demo-korean-review-web \"node --test tests/emulator/*.test.mjs\"",
     "db:migrate-review-days": "node --env-file=.env scripts/migrate_review_days.mjs",
-    "db:migrate-word-pos": "node --env-file=.env scripts/migrate_word_pos.mjs"
+    "db:migrate-word-pos": "node --env-file=.env scripts/migrate_word_pos.mjs",
+    "db:migrate-word-variants": "node --env-file=.env scripts/migrate_word_variants.mjs"
   },
   "keywords": [],
   "author": "",
@@ -31,6 +32,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@dongsa/conjugation": "1.0.0",
     "@firebase/rules-unit-testing": "^3.0.4",
     "@playwright/test": "^1.63.0",
     "@vitejs/plugin-react": "^4.3.4",
