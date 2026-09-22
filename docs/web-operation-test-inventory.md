@@ -29,7 +29,7 @@
 | --- | --- | --- |
 | H01 | 今日測驗：只用今天到期單字開始，無題時禁用；完成後火焰／進度更新。 | 局：選題規則與原始碼比對 |
 | H02 | 查看明日題數：只在點擊時計算，可再點重新計算。 | 通：`tests/app/home-controls.spec.js`，`H02: tomorrow count is calculated on demand and recalculated after data changes` |
-| H03 | 首頁新增單字：進標準編輯器，儲存後單字本可找到。 | 缺 |
+| H03 | 首頁新增單字：進標準編輯器，儲存後單字本可找到。 | 通：`tests/app/word-editor-workflows.spec.js`，`H03 E01 E02 W12: home manual editor saves forms, meanings and variants and rejects incomplete input` |
 | H04 | 新增練習：切換單字、例句聽力、例句閱讀、文法類型；設定題數、方向、文法、搜尋／熟悉度／資料夾條件後建立相應題池。 | 局：題池 domain 測試 |
 | H05 | 自選練習「開始」：未做完可續做；答對暫移出 pool、答錯仍可再抽到；完成後從待練區消失。 | 局：題池 domain 測試 |
 | H06 | 移除自選練習：確認後移除，取消則保留。 | 缺 |
@@ -40,7 +40,7 @@
 | C01 | 日曆上一月／下一月／今天：顯示相應月份並更新選取日期。 | 通：`tests/app/calendar-workflows.spec.js`，`C01: previous/next month and Today update the month and selected date` |
 | C02 | 點日期、雙擊日期及「查看日期」：選取與進入該日內容的語意正確，返回後可繼續瀏覽。 | 通：`tests/app/calendar-workflows.spec.js`，`C02: date selection, View Date and double-click navigate and return to the same date` |
 | C03 | 日期頁新增／學習／測驗：只對當日或目前篩選結果操作。 | 局：集合 selector |
-| C04 | 日期頁匯出 JSON、修改 JSON、刪除本日單字：匯出範圍與更新／刪除範圍正確；取消刪除不變。 | 局：JSON model |
+| C04 | 日期頁匯出 JSON、修改 JSON、刪除本日單字：匯出範圍與更新／刪除範圍正確；取消刪除不變。 | 通：`tests/app/date-word-workflows.spec.js`，`C04 W16: date JSON review returns, abandons and confirms only scoped edits; deletion stays scoped` |
 
 ## 共用單字集合與單卡
 
@@ -59,11 +59,11 @@
 | W09 | 勾選單卡、選取／取消本頁、清除：選取數量正確，切換篩選／分頁後不誤選。 | 通：`tests/app/word-collection-workflows.spec.js`，`W02 W03 W04 W09 W14: filters compose, sort and pagination retain correct selection`、`W04 W09: page controls and select-current-page operate only on visible words` |
 | W10 | 批次加入既有／新資料夾及從目前資料夾移出：只改指定 membership，回讀後一致。 | 通：`tests/app/folder-workflows.spec.js`，`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
 | W11 | 單卡或批次永久刪除：確認後單字與各資料夾 reference 消失；取消無變動。 | 通：`tests/app/folder-workflows.spec.js`，`F05 W11: stale folder references can be removed and single-card deletion clears memberships`、`F03 F05 W10 W11: add references, remove membership, and permanently delete a card`；資料文件保留 `deletedAt` tombstone 供增量同步 |
-| W12 | 單卡編輯入口與列表上方新增入口：打開正確單字／日期／資料夾的編輯器。 | 局：編輯器 fixture，入口未測 |
+| W12 | 單卡編輯入口與列表上方新增入口：打開正確單字／日期／資料夾的編輯器。 | 通：`tests/app/word-editor-workflows.spec.js`，`H03 E01 E02 W12: home manual editor saves forms, meanings and variants and rejects incomplete input`、`E03 E04: editing JSON changes only the selected word and folders, preserving review progress`、`W12: adding from a folder detail page assigns the new word to that folder`；`tests/app/date-word-workflows.spec.js`，`C04 W16: date JSON review returns, abandons and confirms only scoped edits; deletion stays scoped`；`tests/app/folder-workflows.spec.js`，`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
 | W13 | 列表的學習／測驗：只使用目前篩選結果；錯題頁答對後清單相應縮減。 | 局：集合／錯題 model |
 | W14 | 隱藏／顯示已學習（單字本）：只影響列表可見性，不修改資料。 | 通：`tests/app/word-collection-workflows.spec.js`，`W02 W03 W04 W09 W14: filters compose, sort and pagination retain correct selection` |
 | W15 | 匯出 JSON 的複製／下載：輸出目前指定範圍的完整資料，可重新解析。 | 通：`tests/app/word-collection-workflows.spec.js`，`W15: export copy and download contain parseable source data`；`tests/app/folder-workflows.spec.js`，`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
-| W16 | 批次修改 JSON 的複製、檢查變更、返回編輯、放棄、確認保存：只更新選定範圍，錯誤 JSON 不寫入。 | 局：JSON model |
+| W16 | 批次修改 JSON 的複製、檢查變更、返回編輯、放棄、確認保存：只更新選定範圍，錯誤 JSON 不寫入。 | 通：`tests/app/date-word-workflows.spec.js`，`C04 W16: date JSON review returns, abandons and confirms only scoped edits; deletion stays scoped` |
 | W17 | 單字本詞性單選下拉選單：切換特定詞性或全部時，卡片與數量正確；與資料夾、熟悉度等篩選條件一起生效，學習／測驗題目也只取目前結果。 | 通：`tests/app/word-pos-filter.spec.js`，`W17: notebook filters by one part of speech and combines it with folder selection`；`tests/word-collection.test.mjs`，`part-of-speech selection composes with folders and familiarity for cards and questions` |
 | W18 | 批次設定／恢復「不複習」：資料寫回且不覆蓋意思；已學習中的單字不能直接恢復複習。 | 通：`tests/app/no-review.spec.js`，`noReview can be batch-set, edited, and never enters study or practice`、`adding a word to the learned folder sets noReview without erasing its meanings`；`tests/review-eligibility.test.mjs` |
 
@@ -76,14 +76,14 @@
 | F03 | 開資料夾、搜尋／切範圍、加入現有單字（搜尋、複選、確認）：回讀後成員正確。 | 通：`tests/app/folder-workflows.spec.js`，`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
 | F04 | 編輯資料夾 tag／名稱、刪除資料夾：系統資料夾限制與一般資料夾刪除語意正確，單字仍保留。 | 通：`tests/app/folder-workflows.spec.js`，`F01 F02 F04: create, rename, tag, pin, collapse and delete preserve words` |
 | F05 | 在資料夾詳情編輯卡片、移出卡片、批次操作與清理失效 reference：只影響指定資料夾或指定卡片。 | 通：`tests/app/folder-workflows.spec.js`，`F05 W11: stale folder references can be removed and single-card deletion clears memberships`、`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
-| E01 | 手動新增：日期、韓文、七種詞性、活用形式、中文意思、句型、成對例句、Markdown 筆記與關聯詞可輸入並保存；必填錯誤阻止寫入。 | 局：表單 SSR、匯入驗證 |
-| E02 | 新增／刪除多個意思、加入／移除活用形式、搜尋／加入／移除關聯詞：保存後結構完整，最後一個意思不可刪空。 | 局：domain model |
-| E03 | 編輯既有單字的表單、資料夾複選勾選／取消：回讀後內容與 membership 一致，原作答進度不遺失。 | 局：`word-edit.spec.js` 只按未變更內容的保存 |
-| E04 | 表單／JSON 模式切換、JSON 複製與清除、JSON 修改並儲存：資料內容真的變更；取消不寫入。 | 局：JSON model、未變更內容的 fixture |
-| E05 | JSON 多筆匯入、缺漏／舊詞性逐筆選擇與套用修正：全部合規前不能寫入。 | 局：`word-pos-import.spec.js` 使用 mock 寫入 |
-| E06 | 匯入衝突：保留既有／使用匯入／A／B／合併／編輯後結果，及不存在 related 的清空處理；每種選擇得到正確最終卡片。 | 局：衝突 model |
-| E07 | 匯入的放棄、繼續檢查、全部匯入、完成與重複單字「開啟既有編輯」：狀態與實際寫入數一致，失敗可重試。 | 局：匯入 model |
-| E08 | 單字「不複習」在表單與 JSON 編輯中可設定；JSON 可省略此欄位，預設參與複習；加入已學習時自動設為 true。 | 通：`tests/app/no-review.spec.js`、`tests/review-eligibility.test.mjs`；JSON 匯入多筆的畫面流程待補 |
+| E01 | 手動新增：日期、韓文、七種詞性、活用形式、中文意思、句型、成對例句、Markdown 筆記與關聯詞可輸入並保存；必填錯誤阻止寫入。 | 通：`tests/app/word-editor-workflows.spec.js`，`H03 E01 E02 W12: home manual editor saves forms, meanings and variants and rejects incomplete input`、`E02 E03: manual edit changes folder membership and related words without deleting the card` |
+| E02 | 新增／刪除多個意思、加入／移除活用形式、搜尋／加入／移除關聯詞：保存後結構完整，最後一個意思不可刪空。 | 通：`tests/app/word-editor-workflows.spec.js`，`H03 E01 E02 W12: home manual editor saves forms, meanings and variants and rejects incomplete input`、`E02 E03: manual edit changes folder membership and related words without deleting the card`、`E02: removing a variant and an extra meaning preserves the final meaning` |
+| E03 | 編輯既有單字的表單、資料夾複選勾選／取消：回讀後內容與 membership 一致，原作答進度不遺失。 | 通：`tests/app/word-editor-workflows.spec.js`，`E02 E03: manual edit changes folder membership and related words without deleting the card`、`E03 E04: editing JSON changes only the selected word and folders, preserving review progress` |
+| E04 | 表單／JSON 模式切換、JSON 複製與清除、JSON 修改並儲存：資料內容真的變更；取消不寫入。 | 通：`tests/app/word-editor-workflows.spec.js`，`E03 E04: editing JSON changes only the selected word and folders, preserving review progress`、`E04: closing a modified single-word JSON editor does not write changes` |
+| E05 | JSON 多筆匯入、缺漏／舊詞性逐筆選擇與套用修正：全部合規前不能寫入。 | 通：`tests/app/word-import-workflows.spec.js`，`E05 E07: invalid part of speech is repaired per word before any batch write` |
+| E06 | 匯入衝突：保留既有／使用匯入／A／B／合併／編輯後結果，及不存在 related 的清空處理；每種選擇得到正確最終卡片。 | 通：`tests/app/word-import-workflows.spec.js`，`E06: existing-word conflict 保留既有單字 persists the selected outcome`、`E06: existing-word conflict 使用匯入資料取代 persists the selected outcome`、`E06: existing-word conflict 直接合併 persists the selected outcome`、`E06: duplicate words within one JSON batch 保留 A keep the selected record`、`E06: duplicate words within one JSON batch 保留 B keep the selected record`、`E06: edited conflict result is the only version written`、`E06: missing related references must be removed explicitly before import` |
+| E07 | 匯入的放棄、繼續檢查、全部匯入、完成與重複單字「開啟既有編輯」：狀態與實際寫入數一致，失敗可重試。 | 通：`tests/app/word-import-workflows.spec.js`，`E05 E07: invalid part of speech is repaired per word before any batch write`、`E07: abandoning an invalid batch leaves the database untouched`、`E07: rejected batch write stays in review and succeeds on retry`；`tests/app/word-editor-workflows.spec.js`，`E07: a rejected write keeps the edited word and allows retry`、`E07: duplicate manual word opens the existing editor instead of creating another card` |
+| E08 | 單字「不複習」在表單與 JSON 編輯中可設定；JSON 可省略此欄位，預設參與複習；加入已學習時自動設為 true。 | 通：`tests/app/no-review.spec.js`、`tests/review-eligibility.test.mjs`；`tests/app/word-import-workflows.spec.js`，`E08: multiword JSON import defaults noReview to false and preserves an explicit true` |
 
 ## 學習與測驗
 

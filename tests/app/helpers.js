@@ -1,4 +1,5 @@
 import { expect } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 
 const projectId = 'demo-korean-review-web';
 const authAdminUrl = `http://127.0.0.1:9099/emulator/v1/projects/${projectId}/accounts`;
@@ -107,6 +108,15 @@ export async function readDocument(page, request, collection, id) {
   return response.json();
 }
 
+export async function listDocuments(page, request, collection) {
+  const uid = await currentUserId(page);
+  const response = await request.get(`http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents/users/${uid}/${collection}`, {
+    headers: { Authorization: 'Bearer owner' },
+  });
+  expect(response.ok(), await response.text()).toBeTruthy();
+  return (await response.json()).documents || [];
+}
+
 export async function setNetworkOffline(context, offline = true) {
   await context.setOffline(offline);
 }
@@ -117,3 +127,13 @@ export async function failFirestoreWrites(page) {
     return route.continue();
   });
 }
+
+export async function setEmulatorRules(request, content = null) {
+  const rules = content ?? await readFile(new URL('../../firestore.rules', import.meta.url), 'utf8');
+  const response = await request.put(`http://127.0.0.1:8080/emulator/v1/projects/${projectId}:securityRules`, {
+    data: { ignore_errors: false, rules: { files: [{ name: 'security.rules', content: rules }] } },
+  });
+  expect(response.ok(), await response.text()).toBeTruthy();
+}
+
+export const denyFirestoreWrites = 'rules_version = "2"; service cloud.firestore { match /databases/{database}/documents { match /{document=**} { allow read: if true; allow write: if false; } } }';
