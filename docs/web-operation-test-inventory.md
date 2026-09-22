@@ -48,34 +48,34 @@
 
 | ID | 操作與可觀察的預期結果 | 現況 |
 | --- | --- | --- |
-| W01 | 搜尋輸入與「單字／全部」範圍切換：結果及數量正確，清空恢復；韓文和中文意思皆可在「單字」找到。 | 局：selector 單元測試 |
-| W02 | 熟悉度多選／清除：多值取聯集，重新篩選後分頁有效。 | 局：selector 單元測試 |
-| W03 | 資料夾多選、無資料夾、標籤群展開／收合、群組選取與清除：結果取聯集，不重複卡片。 | 局：selector 單元測試 |
-| W04 | 排序「最新／韓文字母／低分優先」及上一頁／下一頁：順序、邊界與頁碼正確。 | 局：selector 單元測試 |
-| W05 | 隱藏／顯示全部中文與個別眼睛：兩種控制互動後，每張卡中文顯示狀態符合操作。 | 局：fixture 有點擊；無真實入口 |
-| W06 | 點卡片開詳情、關閉、開相關單字；內容、例句及補充說明完整，不改動資料。 | 局：WordDetails 渲染測試 |
-| W07 | 韓文／中文發音按鈕：傳入正確語言及文字，按鈕不誤觸卡片翻面或開詳情。 | 局：語音選擇純函式 |
-| W08 | 星號加入／取消：單卡、詳情與學習／測驗中顯示一致；重新進入保留。 | 局：store 規則測試 |
-| W09 | 勾選單卡、選取／取消本頁、清除：選取數量正確，切換篩選／分頁後不誤選。 | 局：集合 selector |
-| W10 | 批次加入既有／新資料夾及從目前資料夾移出：只改指定 membership，回讀後一致。 | 局：folder model |
-| W11 | 單卡或批次永久刪除：確認後單字與各資料夾 reference 消失；取消無變動。 | 局：repository／folder model |
+| W01 | 搜尋輸入與「單字／全部」範圍切換：結果及數量正確，清空恢復；韓文和中文意思皆可在「單字」找到。 | 通：`tests/app/word-collection-workflows.spec.js`，`W01 W05 W06 W07 W08: search, reveal, details, pronunciation and star work from a real list` |
+| W02 | 熟悉度多選／清除：多值取聯集，重新篩選後分頁有效。 | 通：`tests/app/word-collection-workflows.spec.js`，`W02 W03 W04 W09 W14: filters compose, sort and pagination retain correct selection`、`W04 W09: page controls and select-current-page operate only on visible words` |
+| W03 | 資料夾多選、無資料夾、標籤群展開／收合、群組選取與清除：結果取聯集，不重複卡片。 | 通：`tests/app/word-collection-workflows.spec.js`，`W02 W03 W04 W09 W14: filters compose, sort and pagination retain correct selection` |
+| W04 | 排序「最新／韓文字母／低分優先」及上一頁／下一頁：順序、邊界與頁碼正確。 | 通：`tests/app/word-collection-workflows.spec.js`，`W02 W03 W04 W09 W14: filters compose, sort and pagination retain correct selection`、`W04 W09: page controls and select-current-page operate only on visible words` |
+| W05 | 隱藏／顯示全部中文與個別眼睛：兩種控制互動後，每張卡中文顯示狀態符合操作。 | 通：`tests/app/word-collection-workflows.spec.js`，`W01 W05 W06 W07 W08: search, reveal, details, pronunciation and star work from a real list`；`tests/app/calendar-workflows.spec.js`，`C02: date selection, View Date and double-click navigate and return to the same date`；`tests/app/folder-workflows.spec.js`，`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
+| W06 | 點卡片開詳情、關閉、開相關單字；內容、例句及補充說明完整，不改動資料。 | 通：`tests/app/word-collection-workflows.spec.js`，`W01 W05 W06 W07 W08: search, reveal, details, pronunciation and star work from a real list` |
+| W07 | 單字列表／詳情的韓文及例句發音按鈕：傳入正確語言與文字，不誤開詳情；中文發音屬學習／測驗控制，列入 S05／P05。 | 通：`tests/app/word-collection-workflows.spec.js`，`W01 W05 W06 W07 W08: search, reveal, details, pronunciation and star work from a real list` |
+| W08 | 星號加入／取消：單卡、詳情與學習／測驗中顯示一致；重新進入保留。 | 通：`tests/app/word-collection-workflows.spec.js`，`W01 W05 W06 W07 W08: search, reveal, details, pronunciation and star work from a real list`、`W08: starred words stay selected in study and practice after reload` |
+| W09 | 勾選單卡、選取／取消本頁、清除：選取數量正確，切換篩選／分頁後不誤選。 | 通：`tests/app/word-collection-workflows.spec.js`，`W02 W03 W04 W09 W14: filters compose, sort and pagination retain correct selection`、`W04 W09: page controls and select-current-page operate only on visible words` |
+| W10 | 批次加入既有／新資料夾及從目前資料夾移出：只改指定 membership，回讀後一致。 | 通：`tests/app/folder-workflows.spec.js`，`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
+| W11 | 單卡或批次永久刪除：確認後單字與各資料夾 reference 消失；取消無變動。 | 通：`tests/app/folder-workflows.spec.js`，`F05 W11: stale folder references can be removed and single-card deletion clears memberships`、`F03 F05 W10 W11: add references, remove membership, and permanently delete a card`；資料文件保留 `deletedAt` tombstone 供增量同步 |
 | W12 | 單卡編輯入口與列表上方新增入口：打開正確單字／日期／資料夾的編輯器。 | 局：編輯器 fixture，入口未測 |
 | W13 | 列表的學習／測驗：只使用目前篩選結果；錯題頁答對後清單相應縮減。 | 局：集合／錯題 model |
-| W14 | 隱藏／顯示已學習（單字本）：只影響列表可見性，不修改資料。 | 缺 |
-| W15 | 匯出 JSON 的複製／下載：輸出目前指定範圍的完整資料，可重新解析。 | 局：資料格式 model |
+| W14 | 隱藏／顯示已學習（單字本）：只影響列表可見性，不修改資料。 | 通：`tests/app/word-collection-workflows.spec.js`，`W02 W03 W04 W09 W14: filters compose, sort and pagination retain correct selection` |
+| W15 | 匯出 JSON 的複製／下載：輸出目前指定範圍的完整資料，可重新解析。 | 通：`tests/app/word-collection-workflows.spec.js`，`W15: export copy and download contain parseable source data`；`tests/app/folder-workflows.spec.js`，`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
 | W16 | 批次修改 JSON 的複製、檢查變更、返回編輯、放棄、確認保存：只更新選定範圍，錯誤 JSON 不寫入。 | 局：JSON model |
 | W17 | 單字本詞性單選下拉選單：切換特定詞性或全部時，卡片與數量正確；與資料夾、熟悉度等篩選條件一起生效，學習／測驗題目也只取目前結果。 | 通：`tests/app/word-pos-filter.spec.js`，`W17: notebook filters by one part of speech and combines it with folder selection`；`tests/word-collection.test.mjs`，`part-of-speech selection composes with folders and familiarity for cards and questions` |
-| W18 | 批次設定／恢復「不複習」：資料寫回且不覆蓋意思；已學習中的單字不能直接恢復複習。 | 通：`tests/app/no-review.spec.js`、`tests/review-eligibility.test.mjs`；已學習中恢復複習的錯誤提示待補 UI 測試 |
+| W18 | 批次設定／恢復「不複習」：資料寫回且不覆蓋意思；已學習中的單字不能直接恢復複習。 | 通：`tests/app/no-review.spec.js`，`noReview can be batch-set, edited, and never enters study or practice`、`adding a word to the learned folder sets noReview without erasing its meanings`；`tests/review-eligibility.test.mjs` |
 
 ## 資料夾管理與單字編輯器
 
 | ID | 操作與可觀察的預期結果 | 現況 |
 | --- | --- | --- |
-| F01 | 建立、重新命名、標記 tag 的資料夾；同 tag 歸組，無 tag 進無標籤組。 | 局：folder model |
-| F02 | 資料夾釘選／取消、tag 群收合／展開：順序與可見性正確。 | 局：分組純函式 |
-| F03 | 開資料夾、搜尋／切範圍、加入現有單字（搜尋、複選、確認）：回讀後成員正確。 | 缺 |
-| F04 | 編輯資料夾 tag／名稱、刪除資料夾：系統資料夾限制與一般資料夾刪除語意正確，單字仍保留。 | 局：folder model |
-| F05 | 在資料夾詳情編輯卡片、移出卡片、批次操作與清理失效 reference：只影響指定資料夾或指定卡片。 | 缺 |
+| F01 | 建立、重新命名、標記 tag 的資料夾；同 tag 歸組，無 tag 進無標籤組。 | 通：`tests/app/folder-workflows.spec.js`，`F01 F02 F04: create, rename, tag, pin, collapse and delete preserve words` |
+| F02 | 資料夾釘選／取消、tag 群收合／展開：順序與可見性正確。 | 通：`tests/app/folder-workflows.spec.js`，`F01 F02 F04: create, rename, tag, pin, collapse and delete preserve words` |
+| F03 | 開資料夾、搜尋／切範圍、加入現有單字（搜尋、複選、確認）：回讀後成員正確。 | 通：`tests/app/folder-workflows.spec.js`，`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
+| F04 | 編輯資料夾 tag／名稱、刪除資料夾：系統資料夾限制與一般資料夾刪除語意正確，單字仍保留。 | 通：`tests/app/folder-workflows.spec.js`，`F01 F02 F04: create, rename, tag, pin, collapse and delete preserve words` |
+| F05 | 在資料夾詳情編輯卡片、移出卡片、批次操作與清理失效 reference：只影響指定資料夾或指定卡片。 | 通：`tests/app/folder-workflows.spec.js`，`F05 W11: stale folder references can be removed and single-card deletion clears memberships`、`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
 | E01 | 手動新增：日期、韓文、七種詞性、活用形式、中文意思、句型、成對例句、Markdown 筆記與關聯詞可輸入並保存；必填錯誤阻止寫入。 | 局：表單 SSR、匯入驗證 |
 | E02 | 新增／刪除多個意思、加入／移除活用形式、搜尋／加入／移除關聯詞：保存後結構完整，最後一個意思不可刪空。 | 局：domain model |
 | E03 | 編輯既有單字的表單、資料夾複選勾選／取消：回讀後內容與 membership 一致，原作答進度不遺失。 | 局：`word-edit.spec.js` 只按未變更內容的保存 |
@@ -101,8 +101,8 @@
 | P04 | 公布答案後的星號、不熟悉／已學習、單字編輯：保存後本輪及重新進入顯示一致。 | 局：分類規則 |
 | P05 | 音效、自動發音、中文發音、重播：開關與播放語言正確，不在下一題意外重播。 | 局：語音純函式 |
 | P06 | 每日複習、自選練習、各列表測驗與學習均排除 `noReview=true` 及已學習單字；既有練習題組開始時亦排除，文法題維持可練。 | 局：`tests/review-eligibility.test.mjs`、`tests/app/no-review.spec.js`；自選題組重開的完整 E2E 待補 |
-| P06 | 例句聽力／閱讀、文法例句及分階段揭示：題面、答案和下一題狀態正確。 | 局：選題／揭示 model |
-| P07 | 結果頁再練一次、只重測錯題、重新儲存進度：題池與遠端進度回讀正確，失敗有提示。 | 局：session policy／repository |
+| P07 | 例句聽力／閱讀、文法例句及分階段揭示：題面、答案和下一題狀態正確。 | 局：選題／揭示 model |
+| P08 | 結果頁再練一次、只重測錯題、重新儲存進度：題池與遠端進度回讀正確，失敗有提示。 | 局：session policy／repository |
 
 ## 筆記、YT 字幕與閱讀測驗
 

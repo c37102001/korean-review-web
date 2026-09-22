@@ -41,6 +41,12 @@ test('C02: date selection, View Date and double-click navigate and return to the
   await page.getByRole('button', { name: '查看日期' }).click();
   await expect(page.getByRole('heading', { name: '日期筆記' })).toBeVisible();
   await expect(page.getByText('날짜단어', { exact: true })).toBeVisible();
+  const dateCard = page.locator('.word-grid .word-card');
+  await expect(dateCard.getByText('日期單字')).toHaveCount(0);
+  await dateCard.getByRole('button', { name: '顯示中文' }).click();
+  await expect(dateCard.getByText('日期單字')).toBeVisible();
+  await page.locator('.notebook-actions').getByRole('button', { name: '顯示中文' }).click();
+  await expect(dateCard.getByText('日期單字')).toBeVisible();
   await page.getByRole('button', { name: '回到上一層' }).click();
   await expect(page.locator('.panel-title h2')).toHaveText('2026-09-15');
   await currentMonthDay(page, 17).dblclick();

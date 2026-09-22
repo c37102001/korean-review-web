@@ -87,6 +87,26 @@ export async function seedFolder(page, request, name) {
   });
 }
 
+export async function seedWord(page, request, id, ko, zh, options = {}) {
+  const { date = '2026-09-21', pos = '名詞', notes = [], examples = [], ...rest } = options;
+  await seedDocument(page, request, 'records', id, {
+    id, date,
+    createdAt: `${date}T00:00:00.000Z`,
+    updatedAt: '2026-09-21T00:00:00.000Z',
+    item: { ko, pos, meanings: [{ zh, examples }], notes, ...rest },
+  });
+}
+
+export async function readDocument(page, request, collection, id) {
+  const uid = await currentUserId(page);
+  const response = await request.get(`http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents/users/${uid}/${collection}/${id}`, {
+    headers: { Authorization: 'Bearer owner' },
+  });
+  if (response.status() === 404) return null;
+  expect(response.ok(), await response.text()).toBeTruthy();
+  return response.json();
+}
+
 export async function setNetworkOffline(context, offline = true) {
   await context.setOffline(offline);
 }
