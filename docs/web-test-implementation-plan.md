@@ -2,7 +2,7 @@
 
 > 規劃基準：2026-09-21。這是實作計畫，**不是已完成的測試報告**。操作定義與目前缺口見 [Web 可執行操作與測試清冊](web-operation-test-inventory.md)；高風險流程見 [核心操作測試清單](core-workflow-test-checklist.md)。
 
-> 實作進度（2026-09-22）：第 1–4 階段已完成；第 4 階段的真實 App 測試見 `tests/app/word-editor-workflows.spec.js`、`word-import-workflows.spec.js`、`date-word-workflows.spec.js`，各操作證據以清冊為準。第 5–8 階段尚待實作。
+> 實作進度（2026-09-22）：第 1–5 階段已完成；第 5 階段的真實 App 測試見 `tests/app/study-session-workflows.spec.js`、`practice-session-workflows.spec.js`、`session-entry-workflows.spec.js`，條件式結果按鈕另見 `tests/visual/practice-recovery.spec.js`。各操作證據與測試層級以清冊為準。第 6–8 階段尚待實作。
 
 ## 共同規則
 

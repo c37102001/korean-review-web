@@ -27,19 +27,19 @@
 
 | ID | 操作與可觀察的預期結果 | 現況 |
 | --- | --- | --- |
-| H01 | 今日測驗：只用今天到期單字開始，無題時禁用；完成後火焰／進度更新。 | 局：選題規則與原始碼比對 |
+| H01 | 今日測驗：只用今天到期單字開始，無題時禁用；完成後火焰／進度更新。 | 通：`tests/app/practice-session-workflows.spec.js`，`H01 H07 P02-P03 P08: daily review records answers, and wrong-review shrinks after retry`；Emulator 回讀進度，日曆火焰與首頁完成度均驗證 |
 | H02 | 查看明日題數：只在點擊時計算，可再點重新計算。 | 通：`tests/app/home-controls.spec.js`，`H02: tomorrow count is calculated on demand and recalculated after data changes` |
 | H03 | 首頁新增單字：進標準編輯器，儲存後單字本可找到。 | 通：`tests/app/word-editor-workflows.spec.js`，`H03 E01 E02 W12: home manual editor saves forms, meanings and variants and rejects incomplete input` |
 | H04 | 新增練習：切換單字、例句聽力、例句閱讀、文法類型；設定題數、方向、文法、搜尋／熟悉度／資料夾條件後建立相應題池。 | 局：題池 domain 測試 |
 | H05 | 自選練習「開始」：未做完可續做；答對暫移出 pool、答錯仍可再抽到；完成後從待練區消失。 | 局：題池 domain 測試 |
 | H06 | 移除自選練習：確認後移除，取消則保留。 | 缺 |
-| H07 | 今日錯題「查看」及最不熟悉 30 題「測驗」：開啟正確題組；錯題頁可再選學習／測驗。 | 局：選題與 session factory 測試 |
+| H07 | 今日錯題「查看」及最不熟悉 30 題「測驗」：開啟正確題組；錯題頁可再選學習／測驗。 | 通：`tests/app/practice-session-workflows.spec.js`，`H01 H07 P02-P03 P08: daily review records answers, and wrong-review shrinks after retry`；`tests/app/session-entry-workflows.spec.js`，`W13 C03 H07: folder, date and weakest entry points pass only eligible scoped words` |
 | H08 | 字體縮小／放大：在界限內變更並持續生效；界限按鈕禁用。 | 通：`tests/app/home-controls.spec.js`，`H08: font size respects both bounds and survives a reload` |
 | H09 | 語音設定：選韓／中文語音、試聽、取消與儲存，重新開啟保留選擇；不支援時正確禁用。 | 通：`tests/app/home-controls.spec.js`，`H09: voice previews use the selected language; cancel discards and save persists`、`H09: unsupported speech disables saving instead of pretending to play` |
 | H10 | 關閉／取消新增練習視窗：不新增待練任務；保存失敗時保留所選條件並顯示錯誤。 | 缺 |
 | C01 | 日曆上一月／下一月／今天：顯示相應月份並更新選取日期。 | 通：`tests/app/calendar-workflows.spec.js`，`C01: previous/next month and Today update the month and selected date` |
 | C02 | 點日期、雙擊日期及「查看日期」：選取與進入該日內容的語意正確，返回後可繼續瀏覽。 | 通：`tests/app/calendar-workflows.spec.js`，`C02: date selection, View Date and double-click navigate and return to the same date` |
-| C03 | 日期頁新增／學習／測驗：只對當日或目前篩選結果操作。 | 局：集合 selector |
+| C03 | 日期頁新增／學習／測驗：只對當日或目前篩選結果操作。 | 通：`tests/app/date-word-workflows.spec.js`，`C04 W16: date JSON review returns, abandons and confirms only scoped edits; deletion stays scoped`；`tests/app/session-entry-workflows.spec.js`，`W13 C03 H07: folder, date and weakest entry points pass only eligible scoped words`（資料夾篩選後分別開學習與測驗） |
 | C04 | 日期頁匯出 JSON、修改 JSON、刪除本日單字：匯出範圍與更新／刪除範圍正確；取消刪除不變。 | 通：`tests/app/date-word-workflows.spec.js`，`C04 W16: date JSON review returns, abandons and confirms only scoped edits; deletion stays scoped` |
 
 ## 共用單字集合與單卡
@@ -60,7 +60,7 @@
 | W10 | 批次加入既有／新資料夾及從目前資料夾移出：只改指定 membership，回讀後一致。 | 通：`tests/app/folder-workflows.spec.js`，`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
 | W11 | 單卡或批次永久刪除：確認後單字與各資料夾 reference 消失；取消無變動。 | 通：`tests/app/folder-workflows.spec.js`，`F05 W11: stale folder references can be removed and single-card deletion clears memberships`、`F03 F05 W10 W11: add references, remove membership, and permanently delete a card`；資料文件保留 `deletedAt` tombstone 供增量同步 |
 | W12 | 單卡編輯入口與列表上方新增入口：打開正確單字／日期／資料夾的編輯器。 | 通：`tests/app/word-editor-workflows.spec.js`，`H03 E01 E02 W12: home manual editor saves forms, meanings and variants and rejects incomplete input`、`E03 E04: editing JSON changes only the selected word and folders, preserving review progress`、`W12: adding from a folder detail page assigns the new word to that folder`；`tests/app/date-word-workflows.spec.js`，`C04 W16: date JSON review returns, abandons and confirms only scoped edits; deletion stays scoped`；`tests/app/folder-workflows.spec.js`，`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
-| W13 | 列表的學習／測驗：只使用目前篩選結果；錯題頁答對後清單相應縮減。 | 局：集合／錯題 model |
+| W13 | 列表的學習／測驗：只使用目前篩選結果；錯題頁答對後清單相應縮減。 | 通：`tests/app/session-entry-workflows.spec.js`，`W13 C03 H07: folder, date and weakest entry points pass only eligible scoped words`；`tests/app/practice-session-workflows.spec.js`，`H01 H07 P02-P03 P08: daily review records answers, and wrong-review shrinks after retry`；`tests/app/no-review.spec.js`，`noReview can be batch-set, edited, and never enters study or practice` |
 | W14 | 隱藏／顯示已學習（單字本）：只影響列表可見性，不修改資料。 | 通：`tests/app/word-collection-workflows.spec.js`，`W02 W03 W04 W09 W14: filters compose, sort and pagination retain correct selection` |
 | W15 | 匯出 JSON 的複製／下載：輸出目前指定範圍的完整資料，可重新解析。 | 通：`tests/app/word-collection-workflows.spec.js`，`W15: export copy and download contain parseable source data`；`tests/app/folder-workflows.spec.js`，`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
 | W16 | 批次修改 JSON 的複製、檢查變更、返回編輯、放棄、確認保存：只更新選定範圍，錯誤 JSON 不寫入。 | 通：`tests/app/date-word-workflows.spec.js`，`C04 W16: date JSON review returns, abandons and confirms only scoped edits; deletion stays scoped` |
@@ -89,20 +89,20 @@
 
 | ID | 操作與可觀察的預期結果 | 現況 |
 | --- | --- | --- |
-| S01 | 學習篩詞性、韓／中文正面、隨機、只看星號：可見卡片及順序符合選項。 | 局：model，單頁 fixture |
-| S02 | 上／下一張、點卡翻面、Enter 與方向鍵操作：卡片／索引正確；在表單輸入時不攔鍵。 | 局：鍵盤 intent、一次翻面 fixture |
-| S03 | 手機卡片左／中／右雙擊與磁吸：上一張／翻面／下一張，單擊與滑動不誤觸。 | 局：區域計算純函式 |
-| S04 | 每張先隱藏中文、單卡顯示／隱藏及空白鍵：僅允許的卡片面生效，換張恢復預期狀態。 | 局：顯示規則純函式 |
-| S05 | 自動播放開關、語音／例句語音開關及完整播放次數：播放順序與停止符合設定；退出後不繼續播放。 | 局：語音規則純函式 |
-| S06 | 學習卡的發音、星號、不熟悉／已學習切換、編輯與返回：各項更改保存，返回原來源。 | 局：分類規則，無完整 UI 路徑 |
-| P01 | 測驗開始前的方向、打字／心中作答、題源、星號、原順序／隨機、紀錄開關：產生對應題組和持久化政策。 | 局：session factory／policy |
-| P02 | 打字確認、公佈答案、下一題；韓翻中自評答對／答錯：顯示正確答案，只有一次有效作答。 | 局：答案 model、答案畫面 fixture |
-| P03 | 每日題、集合題、不熟悉題、今日錯題及自選練習完成：成績、錯題檢討、重測與每日排程各依模式處理。 | 局：review／session／pool 純函式 |
-| P04 | 公布答案後的星號、不熟悉／已學習、單字編輯：保存後本輪及重新進入顯示一致。 | 局：分類規則 |
-| P05 | 音效、自動發音、中文發音、重播：開關與播放語言正確，不在下一題意外重播。 | 局：語音純函式 |
-| P06 | 每日複習、自選練習、各列表測驗與學習均排除 `noReview=true` 及已學習單字；既有練習題組開始時亦排除，文法題維持可練。 | 局：`tests/review-eligibility.test.mjs`、`tests/app/no-review.spec.js`；自選題組重開的完整 E2E 待補 |
-| P07 | 例句聽力／閱讀、文法例句及分階段揭示：題面、答案和下一題狀態正確。 | 局：選題／揭示 model |
-| P08 | 結果頁再練一次、只重測錯題、重新儲存進度：題池與遠端進度回讀正確，失敗有提示。 | 局：session policy／repository |
+| S01 | 學習篩詞性、韓／中文正面、隨機、只看星號：可見卡片及順序符合選項。 | 通：`tests/app/study-session-workflows.spec.js`，`S01-S02 S04-S06: study filters, keyboard, Chinese reveal, speech and classification persist`；題組亂序規則另見 `tests/session-model.test.mjs` |
+| S02 | 上／下一張、點卡翻面、Enter 與方向鍵操作：卡片／索引正確；在表單輸入時不攔鍵。 | 通：`tests/app/study-session-workflows.spec.js`，`S02-S03: study arrows and touch double taps navigate only the intended card` |
+| S03 | 手機卡片左／中／右雙擊與磁吸：上一張／翻面／下一張，單擊與滑動不誤觸。 | 通：`tests/app/study-session-workflows.spec.js`，`S02-S03: study arrows and touch double taps navigate only the intended card`、`S03: touching an aligned mobile card restores its top edge after a small page drift` |
+| S04 | 每張先隱藏中文、單卡顯示／隱藏及空白鍵：僅允許的卡片面生效，換張恢復預期狀態。 | 通：`tests/app/study-session-workflows.spec.js`，`S01-S02 S04-S06: study filters, keyboard, Chinese reveal, speech and classification persist`、`S02-S03: study arrows and touch double taps navigate only the intended card` |
+| S05 | 自動播放開關、語音／例句語音開關及完整播放次數：播放順序與停止符合設定；退出後不繼續播放。 | 通：`tests/app/study-session-workflows.spec.js`，`S05: autoplay uses configured repetition and stops speech when disabled or leaving study`；語音使用受控替身 |
+| S06 | 學習卡的發音、星號、不熟悉／已學習切換、編輯與返回：各項更改保存，返回原來源。 | 通：`tests/app/study-session-workflows.spec.js`，`S01-S02 S04-S06: study filters, keyboard, Chinese reveal, speech and classification persist`；Emulator 回讀單字與資料夾 |
+| P01 | 測驗開始前的方向、打字／心中作答、題源、星號、原順序／隨機、紀錄開關：產生對應題組和持久化政策。 | 通：`tests/app/practice-session-workflows.spec.js`，`W13 P01-P04 P08: filtered notebook test can self-grade, review and retry only mistakes without recording`、`P01-P02: typed answers, answer reveal and recording choice follow the selected policy`；`tests/session-model.test.mjs` 驗證題目排序政策 |
+| P02 | 打字確認、公佈答案、下一題；韓翻中自評答對／答錯：顯示正確答案，只有一次有效作答。 | 通：`tests/app/practice-session-workflows.spec.js`，`H01 H07 P02-P03 P08: daily review records answers, and wrong-review shrinks after retry`、`P01-P02: typed answers, answer reveal and recording choice follow the selected policy`、`P02 P08: a wrong typed answer reveals the Korean card and can be retried correctly` |
+| P03 | 每日題、集合題、不熟悉題、今日錯題及自選練習完成：成績、錯題檢討、重測與每日排程各依模式處理。 | 通：`tests/app/practice-session-workflows.spec.js`，`H01 H07 P02-P03 P08: daily review records answers, and wrong-review shrinks after retry`、`W13 P01-P04 P08: filtered notebook test can self-grade, review and retry only mistakes without recording`；`tests/app/session-entry-workflows.spec.js`，`W13 C03 H07: folder, date and weakest entry points pass only eligible scoped words`、`P03 P07: listening, reading and grammar practice reveal the expected stages and finish` |
+| P04 | 公布答案後的星號、不熟悉／已學習、單字編輯：保存後本輪及重新進入顯示一致。 | 通：`tests/app/session-entry-workflows.spec.js`，`P01-P02 P04 P07: example source reveals its source card, classification and edit persist`；`tests/app/practice-session-workflows.spec.js`，`P01-P02: typed answers, answer reveal and recording choice follow the selected policy` |
+| P05 | 音效、自動發音、中文發音、重播：開關與播放語言正確，不在下一題意外重播。 | 通：`tests/app/practice-session-workflows.spec.js`，`P05: daily audio controls replay the requested language and stop automatic prompt speech`、`P05: moving to the next daily question does not replay the previous answer`；語音使用受控替身 |
+| P06 | 每日複習、自選練習、各列表測驗與學習均排除 `noReview=true` 及已學習單字；既有練習題組開始時亦排除，文法題維持可練。 | 通：`tests/app/practice-session-workflows.spec.js`，`P06: an existing optional word task drops a word marked no-review before it starts`；`tests/app/no-review.spec.js`，`noReview can be batch-set, edited, and never enters study or practice`；`tests/app/session-entry-workflows.spec.js`，`W13 C03 H07: folder, date and weakest entry points pass only eligible scoped words`、`P03 P07: listening, reading and grammar practice reveal the expected stages and finish` |
+| P07 | 例句聽力／閱讀、文法例句及分階段揭示：題面、答案和下一題狀態正確。 | 通：`tests/app/session-entry-workflows.spec.js`，`P03 P07: listening, reading and grammar practice reveal the expected stages and finish` |
+| P08 | 結果頁再練一次、只重測錯題、重新儲存進度：題池與遠端進度回讀正確，失敗有提示。 | 通：`tests/app/practice-session-workflows.spec.js`，`W13 P01-P04 P08: filtered notebook test can self-grade, review and retry only mistakes without recording`、`P08: a failed optional answer keeps the question available and succeeds on retry`；`tests/visual/practice-recovery.spec.js`，`P08: completion retry exposes the error and calls the save callback again`、`P08: repeatable session restarts its full question set after completion`。後兩項使用受控 session fixture：目前一般入口沒有 `REPEATABLE` policy，完成 callback 失敗也無穩定可重現的 UI 入口；不可把 fixture 當作真實 App 持久化測試 |
 
 ## 筆記、YT 字幕與閱讀測驗
 
