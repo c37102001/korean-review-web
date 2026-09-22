@@ -1,5 +1,6 @@
 
 from terminal_app.runtime import *
+from terminal_app.domain.content import card_korean_forms
 from terminal_app.ui.curses_helpers import *
 from terminal_app.ui.screens.recognition import practice_mistake_questions, practice_mistake_review_menu
 
@@ -92,7 +93,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             return False
         question = questions[idx]
         answer_word = question.source.ko if question.source.pos != "文法" else ""
-        prompt = question.zh if config["direction"] == "zh-ko" else question.ko
+        prompt = question.zh if config["direction"] == "zh-ko" else card_korean_forms(question.source) if question.kind == "term" else question.ko
         answer = question.ko if config["direction"] == "zh-ko" else question.zh
         if question.kind == "term":
             examples = card_examples(question.source)
@@ -127,7 +128,8 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
         star_prefix = f"{'★' if question.source.is_starred else '☆'} " if allow_star else ""
         folder_notice, display_message = folder_prompt_notice(message)
         y = draw_wrapped(stdscr, 2, 2, width - 4, f"{star_prefix}題目: {prompt}{length_hint}{folder_notice}")
-        draw_line(stdscr, y, 2, f"答案: {answer}" if show_hint else "答案: hidden (press 8)")
+        display_answer = card_korean_forms(question.source) if question.kind == "term" and config["direction"] == "zh-ko" else answer
+        draw_line(stdscr, y, 2, f"答案: {display_answer}" if show_hint else "答案: hidden (press 8)")
         input_y = y + 1
         if self_grade_mode:
             record_status = "已記錄" if should_record_results else "未紀錄"

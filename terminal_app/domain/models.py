@@ -25,6 +25,7 @@ class Card:
     index: int = 0
     is_starred: bool = False
     no_review: bool = False
+    variants: List[str] = field(default_factory=list)
 
 
 @dataclass

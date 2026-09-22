@@ -8,6 +8,10 @@ def item_zh(item: Dict[str, Any]) -> str:
     return "；".join(str(meaning.get("zh", "")).strip() for meaning in item.get("meanings", []) if meaning.get("zh"))
 
 
+def card_korean_forms(card: Card) -> str:
+    return " / ".join(dict.fromkeys(form for form in [card.ko, *card.variants] if form))
+
+
 def record_order(record: Dict[str, Any]) -> int:
     value = record.get("order")
     if isinstance(value, int) and not isinstance(value, bool):
@@ -48,6 +52,7 @@ def normalize_records(records: List[Dict[str, Any]], state: Dict[str, Any]) -> T
             index=index,
             is_starred=record_id in starred,
             no_review=item.get("noReview") is True,
+            variants=[str(value).strip() for value in item.get("variants", []) if str(value).strip()] if isinstance(item.get("variants"), list) else [],
         )
         if not card.ko:
             continue

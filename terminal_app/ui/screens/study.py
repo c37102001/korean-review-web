@@ -1,5 +1,6 @@
 
 from terminal_app.runtime import *
+from terminal_app.domain.content import card_korean_forms
 from terminal_app.ui.curses_helpers import *
 
 def ordered_study_cards(cards: List[Card], order_mode: str) -> List[Card]:
@@ -72,12 +73,12 @@ def run_study(
             for line in _split_by_cell_width(str(text), line_width):
                 detail_lines.append((line, indent, attr))
 
-        front_text = card.ko if front_side == "ko" else card.zh
+        front_text = card_korean_forms(card) if front_side == "ko" else card.zh
         append_detail(f"{'★' if card.is_starred else '☆'} {front_text}{folder_notice}", attr=curses.A_BOLD)
         on_back = auto_face != "front"
         show_full_details = show_chinese or show_details or auto_face == "back"
         if front_side == "zh" and show_full_details:
-            append_detail(f"韓文: {card.ko}", attr=curses.A_BOLD)
+            append_detail(f"韓文: {card_korean_forms(card)}", attr=curses.A_BOLD)
         if front_side == "ko" and on_back and show_chinese and card.zh:
             append_detail(f"中文: {card.zh}", attr=curses.A_BOLD)
         if on_back and show_full_details and card.meanings:
