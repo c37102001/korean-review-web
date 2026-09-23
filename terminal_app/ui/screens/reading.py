@@ -1,6 +1,15 @@
 
 from terminal_app.runtime import *
 from terminal_app.ui.curses_helpers import *
+from terminal_app.ui.screens.highlights import render_highlight_markers, run_highlight_editor, run_highlight_export
+
+
+def _reading_highlight_entries(test: ReadingTest) -> List[Dict[str, str]]:
+    return [
+        {"id": f"{test.id}-passage", "ko": test.passage["ko"]},
+        {"id": f"{test.id}-question", "ko": test.question["ko"]},
+        *({"id": f"{test.id}-option-{option['id']}", "ko": option["ko"]} for option in test.options),
+    ]
 
 def _reading_content_lines(
     test: ReadingTest,
@@ -15,11 +24,11 @@ def _reading_content_lines(
         wrapped = _split_by_cell_width(text, max(1, width - _text_cell_width(indent)))
         lines.extend((indent + part, attr) for part in wrapped)
 
-    append(test.passage["ko"])
+    append(render_highlight_markers(test.passage["ko"], f"{test.id}-passage", test.highlights))
     if submitted and test.passage.get("zh"):
         append(test.passage["zh"], curses.A_DIM)
     append()
-    append(test.question["ko"], curses.A_BOLD)
+    append(render_highlight_markers(test.question["ko"], f"{test.id}-question", test.highlights), curses.A_BOLD)
     if submitted and test.question.get("zh"):
         append(test.question["zh"], curses.A_DIM)
     append()
@@ -32,7 +41,8 @@ def _reading_content_lines(
             elif option["id"] == selected_id:
                 marker = "✗"
         attr = curses.A_BOLD if option["id"] in (selected_id, test.answer if submitted else "") else 0
-        append(f"{marker} {index + 1}. {option['ko']}", attr)
+        option_text = render_highlight_markers(option["ko"], f"{test.id}-option-{option['id']}", test.highlights)
+        append(f"{marker} {index + 1}. {option_text}", attr)
         if submitted and option.get("zh"):
             append(option["zh"], curses.A_DIM, "    ")
         append()
@@ -50,6 +60,22 @@ def _update_cached_reading_learned(uid: str, test_id: str, learned: bool) -> Non
         for record in container:
             if str(record.get("id") or record.get("_docId") or "") == test_id:
                 record["learned"] = bool(learned)
+    _write_terminal_cache(uid, cached)
+
+
+def _update_reading_highlights(state: Dict[str, Any], uid: str, test_id: str, highlights: List[Dict[str, Any]], update_cache: bool) -> None:
+    for record in state.get("readingTests") or []:
+        if str(record.get("id") or record.get("_docId") or "") == test_id:
+            record["highlights"] = _clone_json(highlights)
+    if not update_cache:
+        return
+    cached = _read_terminal_cache(uid)
+    if not cached:
+        return
+    for container in (cached.get("readingTests") or [], (cached.get("state") or {}).get("readingTests") or []):
+        for record in container:
+            if str(record.get("id") or record.get("_docId") or "") == test_id:
+                record["highlights"] = _clone_json(highlights)
     _write_terminal_cache(uid, cached)
 
 
@@ -77,7 +103,7 @@ def run_reading_test_detail(
         status = "已學習" if test.learned else "未學習"
         draw_line(stdscr, 0, 2, f"閱讀測驗 | {status}", curses.A_BOLD)
         controls = "↑↓=捲動 ←→=選項 Enter=作答" if not submitted else "↑↓=捲動 R=再做一次"
-        draw_line(stdscr, 1, 2, f"{controls} L=切換已學習 Esc=返回", curses.A_DIM)
+        draw_line(stdscr, 1, 2, f"{controls} Space=劃線 E=匯出 L=已學習 Esc=返回", curses.A_DIM)
         for row, (line, attr) in enumerate(lines[scroll_offset:scroll_offset + viewport_height], 2):
             draw_line(stdscr, row, 2, line, attr)
         if message:
@@ -91,6 +117,17 @@ def run_reading_test_detail(
         key_text = key.lower() if isinstance(key, str) else ""
         if key in ("\x1b", 27):
             return
+        if key == " ":
+            entries = _reading_highlight_entries(test)
+            def save_highlights(next_highlights):
+                client.set_content_highlights(session, "readingTests", test.id, next_highlights)
+                test.highlights = _clone_json(next_highlights)
+                _update_reading_highlights(state, session.uid, test.id, next_highlights, not client.offline_mode)
+            test.highlights = run_highlight_editor(stdscr, entries, test.highlights, save_highlights, 0)
+            continue
+        if key_text == "e":
+            run_highlight_export(stdscr, test.highlights)
+            continue
         if key_text == "l":
             previous = test.learned
             try:

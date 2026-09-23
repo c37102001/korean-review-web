@@ -1,5 +1,6 @@
 import { firestoreTimestampIso } from '../shared/firestoreTimestamp.js';
 import { createId } from '../shared/id.js';
+import { normalizeTextHighlights } from '../features/text-selection/model.js';
 
 export const UNTAGGED_READING_TEST_LABEL = '無標籤';
 
@@ -36,8 +37,14 @@ export function normalizeReadingTest(input, fallbackId = '') {
       zh: String(option?.zh || '').trim(),
     }))
     : [];
+  const id = String(input?.id || fallbackId);
+  const entries = [
+    { id: `${id}-passage`, ko: input?.passage?.ko },
+    { id: `${id}-question`, ko: input?.question?.ko },
+    ...options.map((option) => ({ id: `${id}-option-${option.id}`, ko: option.ko })),
+  ];
   return {
-    id: String(input?.id || fallbackId),
+    id,
     tag: String(input?.tag || '').trim(),
     passage: {
       ko: String(input?.passage?.ko || '').trim(),
@@ -48,6 +55,7 @@ export function normalizeReadingTest(input, fallbackId = '') {
       zh: String(input?.question?.zh || '').trim(),
     },
     options,
+    highlights: normalizeTextHighlights(input?.highlights, entries),
     answer: String(input?.answer || '').trim(),
     learned: input?.learned === true,
     order: Number.isSafeInteger(input?.order) ? input.order : 0,
@@ -106,6 +114,7 @@ export function formatReadingTestsJson(tests = []) {
       options: test.options,
       answer: test.answer,
       learned: test.learned === true,
+      ...(test.highlights?.length ? { highlights: test.highlights } : {}),
       ...(Number.isSafeInteger(test.order) ? { order: test.order } : {}),
     })),
   }, null, 2);

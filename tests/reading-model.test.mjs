@@ -33,6 +33,20 @@ test('reading test tags normalize and round-trip through JSON', () => {
   assert.equal(parsed.tag, 'TOPIK');
 });
 
+test('reading highlights persist only while their source text and offsets remain valid', () => {
+  const source = readingTest('highlighted', 'TOPIK');
+  source.passage.ko = '최근 글';
+  source.highlights = [
+    { id: 'valid', entryId: 'highlighted-passage', text: '최근', start: 0, end: 2 },
+    { id: 'stale', entryId: 'highlighted-passage', text: '이전', start: 0, end: 2 },
+  ];
+
+  const normalized = normalizeReadingTest(source);
+  assert.deepEqual(normalized.highlights, [source.highlights[0]]);
+  const [roundTripped] = parseReadingTestsJson(formatReadingTestsJson([normalized]), [normalized]);
+  assert.deepEqual(roundTripped.highlights, [source.highlights[0]]);
+});
+
 test('reading tests group by tag and place learned tests last inside each group', () => {
   const groups = groupReadingTestsByTag([
     readingTest('learned-first', 'TOPIK', true),

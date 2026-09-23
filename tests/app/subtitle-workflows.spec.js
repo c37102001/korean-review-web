@@ -184,6 +184,29 @@ test('Y03 Y04 Y05: the stubbed player synchronizes SRT and selected text creates
   await entries.first().dispatchEvent('pointerdown', { pointerType: 'touch' });
   await selectText(page, korean, 0, 3);
   await expect(dictionary).toHaveAttribute('href', /query=%EC%B2%AB%20%EB%AC%B8/);
+  await page.getByRole('button', { name: /畫線標記/ }).click();
+  let highlight = korean.locator('.reading-text-highlight');
+  await expect(highlight).toHaveText('첫 문');
+  await expect.poll(async () => (
+    await readDocument(page, request, 'ytSubtitles', 'player-note')
+  )?.fields.highlights?.arrayValue.values.length).toBe(1);
+  await page.getByRole('button', { name: '匯出劃線' }).click();
+  const exportDialog = page.getByRole('dialog', { name: '匯出劃線' });
+  await expect(exportDialog.locator('pre')).toHaveText('첫 문');
+  await exportDialog.getByRole('button', { name: '複製' }).click();
+  await expect(exportDialog.getByRole('button', { name: '已複製' })).toBeVisible();
+  await exportDialog.getByRole('button', { name: '關閉' }).click();
+  await page.reload();
+  await openSubtitles(page);
+  await subtitleCard(page, '播放同步').click();
+  highlight = korean.locator('.reading-text-highlight');
+  await expect(highlight).toHaveText('첫 문');
+  await highlight.click();
+  await page.getByRole('button', { name: /刪除.*畫線/ }).click();
+  await expect.poll(async () => (
+    await readDocument(page, request, 'ytSubtitles', 'player-note')
+  )?.fields.highlights?.arrayValue.values?.length || 0).toBe(0);
+  await selectText(page, korean, 0, 3);
   await page.getByRole('button', { name: '將選取的韓文新增為單字' }).click();
   let addDialog = page.getByRole('dialog');
   await expect(addDialog.getByLabel('韓文 *')).toHaveValue('첫 문');

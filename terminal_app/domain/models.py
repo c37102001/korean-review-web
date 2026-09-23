@@ -58,6 +58,7 @@ class YoutubeSubtitle:
     entries: List[Dict[str, Any]]
     created_at: str = ""
     updated_at: str = ""
+    highlights: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -67,6 +68,7 @@ class ReadingTest:
     question: Dict[str, str]
     options: List[Dict[str, str]]
     answer: str
+    highlights: List[Dict[str, Any]] = field(default_factory=list)
     learned: bool = False
     order: int = 0
     created_at: str = ""

@@ -352,7 +352,11 @@ class FirebaseClient:
             payload = self.offline_payload
             previous = _clone_json(payload)
             pending = payload.setdefault("pending", {})
-            pending.setdefault("readingTests", {})[test_id] = bool(learned)
+            pending_entry = pending.setdefault("readingTests", {}).setdefault(test_id, {})
+            if not isinstance(pending_entry, dict):
+                pending_entry = {"learned": bool(pending_entry)}
+                pending["readingTests"][test_id] = pending_entry
+            pending_entry["learned"] = bool(learned)
             for record in payload.setdefault("readingTests", []):
                 if str(record.get("id") or record.get("_docId") or "") == test_id:
                     record["learned"] = bool(learned)
@@ -374,6 +378,52 @@ class FirebaseClient:
                     "fields": {"learned": _to_firestore_value(bool(learned))},
                 },
                 "updateMask": {"fieldPaths": ["learned"]},
+                "updateTransforms": [{"fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"}],
+                "currentDocument": {"exists": True},
+            }]},
+            session=session,
+        )
+
+    def set_content_highlights(
+        self,
+        session: AuthSession,
+        collection_id: str,
+        content_id: str,
+        highlights: List[Dict[str, Any]],
+    ) -> None:
+        if collection_id not in ("readingTests", "ytSubtitles"):
+            raise ValueError("不支援的劃線內容類型")
+        normalized = _clone_json(highlights)
+        if self.offline_mode:
+            payload = _clone_json(self.offline_payload)
+            pending_entry = payload.setdefault("pending", {}).setdefault(collection_id, {}).setdefault(content_id, {})
+            if not isinstance(pending_entry, dict):
+                pending_entry = {"learned": bool(pending_entry)}
+                payload["pending"][collection_id][content_id] = pending_entry
+            pending_entry["highlights"] = normalized
+            for record in payload.setdefault(collection_id, []):
+                if str(record.get("id") or record.get("_docId") or "") == content_id:
+                    record["highlights"] = normalized
+                    record["updatedAt"] = utc_now_iso()
+                    break
+            previous = self.offline_payload
+            self.offline_payload = payload
+            try:
+                self.persist_offline(session)
+            except RuntimeError:
+                self.offline_payload = previous
+                raise
+            return
+        document_name = f"projects/{self.project_id}/databases/(default)/documents/users/{session.uid}/{collection_id}/{content_id}"
+        self._request_json(
+            "POST",
+            f"https://firestore.googleapis.com/v1/projects/{self.project_id}/databases/(default)/documents:commit",
+            payload={"writes": [{
+                "update": {
+                    "name": document_name,
+                    "fields": {"highlights": _to_firestore_value(normalized)},
+                },
+                "updateMask": {"fieldPaths": ["highlights"]},
                 "updateTransforms": [{"fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"}],
                 "currentDocument": {"exists": True},
             }]},

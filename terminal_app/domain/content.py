@@ -4,6 +4,33 @@ from typing import Any, Dict, Iterable, List, Tuple
 from .models import Card, GrammarNote, Question, ReadingTest, YoutubeSubtitle
 
 
+def normalize_text_highlights(highlights: Any, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    entry_by_id = {str(entry.get("id") or ""): str(entry.get("ko") or "") for entry in entries}
+    normalized: List[Dict[str, Any]] = []
+    seen = set()
+    for index, highlight in enumerate(highlights if isinstance(highlights, list) else []):
+        if not isinstance(highlight, dict):
+            continue
+        entry_id = str(highlight.get("entryId") or "")
+        text = str(highlight.get("text") or "")
+        start = highlight.get("start")
+        end = highlight.get("end")
+        key = (entry_id, start, end)
+        source = entry_by_id.get(entry_id)
+        if (
+            source is None or not text or isinstance(start, bool) or isinstance(end, bool)
+            or not isinstance(start, int) or not isinstance(end, int)
+            or start < 0 or end <= start or source[start:end] != text or key in seen
+        ):
+            continue
+        seen.add(key)
+        normalized.append({
+            "id": str(highlight.get("id") or f"highlight-{index}-{entry_id}-{start}-{end}"),
+            "entryId": entry_id, "text": text, "start": start, "end": end,
+        })
+    return normalized
+
+
 def item_zh(item: Dict[str, Any]) -> str:
     return "；".join(str(meaning.get("zh", "")).strip() for meaning in item.get("meanings", []) if meaning.get("zh"))
 
@@ -128,6 +155,7 @@ def normalize_youtube_subtitles(records: List[Dict[str, Any]]) -> List[YoutubeSu
             youtube_url=str(record.get("youtubeUrl") or "").strip(),
             mode="srt" if record.get("mode") == "srt" else "json",
             entries=entries,
+            highlights=normalize_text_highlights(record.get("highlights"), entries),
             created_at=str(record.get("createdAt") or ""),
             updated_at=str(record.get("updatedAt") or ""),
         ))
@@ -157,12 +185,18 @@ def normalize_reading_tests(records: List[Dict[str, Any]]) -> List[ReadingTest]:
             or answer not in {option["id"] for option in options}
         ):
             continue
+        reading_entries = [
+            {"id": f"{test_id}-passage", "ko": str(passage.get("ko") or "").strip()},
+            {"id": f"{test_id}-question", "ko": str(question.get("ko") or "").strip()},
+            *({"id": f"{test_id}-option-{option['id']}", "ko": option["ko"]} for option in options),
+        ]
         tests.append(ReadingTest(
             id=test_id,
             passage={"ko": str(passage.get("ko") or "").strip(), "zh": str(passage.get("zh") or "").strip()},
             question={"ko": str(question.get("ko") or "").strip(), "zh": str(question.get("zh") or "").strip()},
             options=options,
             answer=answer,
+            highlights=normalize_text_highlights(record.get("highlights"), reading_entries),
             learned=record.get("learned") is True,
             order=int(record.get("order")) if isinstance(record.get("order"), int) else 0,
             created_at=str(record.get("createdAt") or ""),

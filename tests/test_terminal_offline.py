@@ -96,7 +96,21 @@ class OfflineTests(unittest.TestCase):
             self.client.set_reading_test_learned(self.session, 'reading', True)
         cached = terminal._read_terminal_cache(self.session.uid)
         self.assertTrue(cached['readingTests'][0]['learned'])
-        self.assertEqual(cached['pending']['readingTests'], {'reading': True})
+        self.assertEqual(cached['pending']['readingTests'], {'reading': {'learned': True}})
+
+    def test_content_highlights_are_available_offline_and_journaled_by_collection(self):
+        self.payload['ytSubtitles'] = [{'id': 'subtitle', 'highlights': []}]
+        terminal._write_terminal_cache(self.session.uid, self.payload)
+        highlights = [{'id': 'line', 'entryId': 'entry', 'text': '단어', 'start': 0, 'end': 2}]
+        self.client.start_offline(self.session)
+        with patch.object(self.client, '_request_json', side_effect=AssertionError('network accessed')):
+            self.client.set_content_highlights(self.session, 'readingTests', 'reading', highlights)
+            self.client.set_content_highlights(self.session, 'ytSubtitles', 'subtitle', highlights)
+        cached = terminal._read_terminal_cache(self.session.uid)
+        self.assertEqual(cached['readingTests'][0]['highlights'], highlights)
+        self.assertEqual(cached['ytSubtitles'][0]['highlights'], highlights)
+        self.assertEqual(cached['pending']['readingTests']['reading']['highlights'], highlights)
+        self.assertEqual(cached['pending']['ytSubtitles']['subtitle']['highlights'], highlights)
 
     def test_local_optional_practice_can_be_created_and_completed(self):
         self.client.start_offline(self.session)

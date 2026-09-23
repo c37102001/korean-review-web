@@ -27,8 +27,10 @@ def begin(payload):
         'baseGrammarReview': copy.deepcopy(payload.get('grammarReview') or {}),
         'folders': {},
         'readingTests': {},
+        'ytSubtitles': {},
     })
     payload['pending'].setdefault('readingTests', {})
+    payload['pending'].setdefault('ytSubtitles', {})
     return payload
 
 
@@ -200,19 +202,25 @@ def synchronize(client, session, payload, api):
                     'updateTransforms': [{'fieldPath': 'updatedAt', 'setToServerValue': 'REQUEST_TIME'}],
                     'currentDocument': {'exists': True},
                 })
-    for test_id, learned in pending.get('readingTests', {}).items():
-        reading_document = read(client._document_url(['users', uid, 'readingTests', test_id]))
-        if not reading_document:
-            raise RuntimeError('待同步的閱讀題已被刪除，已保留離線資料')
-        writes.append({
-            'update': {
-                'name': f'{prefix}/readingTests/{test_id}',
-                'fields': {'learned': api._to_firestore_value(bool(learned))},
-            },
-            'updateMask': {'fieldPaths': ['learned']},
-            'updateTransforms': [{'fieldPath': 'updatedAt', 'setToServerValue': 'REQUEST_TIME'}],
-            'currentDocument': {'updateTime': reading_document['updateTime']},
-        })
+    for collection_id in ('readingTests', 'ytSubtitles'):
+        for content_id, raw_changes in pending.get(collection_id, {}).items():
+            changes = raw_changes if isinstance(raw_changes, dict) else {'learned': bool(raw_changes)}
+            allowed = {'highlights'} | ({'learned'} if collection_id == 'readingTests' else set())
+            fields = {key: value for key, value in changes.items() if key in allowed}
+            if not fields:
+                continue
+            document = read(client._document_url(['users', uid, collection_id, content_id]))
+            if not document:
+                raise RuntimeError('待同步的內容已被刪除，已保留離線資料')
+            writes.append({
+                'update': {
+                    'name': f'{prefix}/{collection_id}/{content_id}',
+                    'fields': {key: api._to_firestore_value(value) for key, value in fields.items()},
+                },
+                'updateMask': {'fieldPaths': list(fields)},
+                'updateTransforms': [{'fieldPath': 'updatedAt', 'setToServerValue': 'REQUEST_TIME'}],
+                'currentDocument': {'updateTime': document['updateTime']},
+            })
     if len(writes) > 500:
         raise RuntimeError('離線資料超過單次同步上限，資料已保留')
     client._request_json('POST', f'https://firestore.googleapis.com/v1/projects/{client.project_id}/databases/(default)/documents:commit',

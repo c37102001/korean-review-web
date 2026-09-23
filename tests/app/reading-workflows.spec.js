@@ -153,7 +153,7 @@ test('R03: learned state, editing, folder navigation, delete cancellation, and c
   assertNoProductionRequests();
 });
 
-test('R04: selected text opens Naver, temporary highlights toggle, and persisted words expose details', async ({ page, request, context }) => {
+test('R04: selected text opens Naver, highlights persist and export, and saved words expose details', async ({ page, request, context }) => {
   page.on('pageerror', (error) => { throw error; });
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'reading-selection@example.test');
@@ -195,13 +195,31 @@ test('R04: selected text opens Naver, temporary highlights toggle, and persisted
   await expect(dictionary).toHaveAttribute('href', /query=%EC%9A%94%EC%A6%98/);
   await expect(dictionary).toHaveAttribute('target', '_blank');
   await page.getByRole('button', { name: /畫線標記/ }).click();
-  const highlight = passage.locator('.reading-text-highlight');
+  let highlight = passage.locator('.reading-text-highlight');
+  await expect(highlight).toHaveText('요즘');
+  await expect.poll(async () => (
+    await readDocument(page, request, 'readingTests', 'selection-test')
+  )?.fields.highlights?.arrayValue.values.length).toBe(1);
+  await page.getByRole('button', { name: '匯出劃線' }).click();
+  const exportDialog = page.getByRole('dialog', { name: '匯出劃線' });
+  await expect(exportDialog.locator('pre')).toHaveText('요즘');
+  await exportDialog.getByRole('button', { name: '複製' }).click();
+  await expect(exportDialog.getByRole('button', { name: '已複製' })).toBeVisible();
+  await exportDialog.getByRole('button', { name: '關閉' }).click();
+  await page.reload();
+  await openReading(page);
+  await page.locator('.reading-test-card').click();
+  const reloadedPassage = page.locator('.reading-passage [data-selectable-entry-id]');
+  highlight = reloadedPassage.locator('.reading-text-highlight');
   await expect(highlight).toHaveText('요즘');
   await highlight.click();
   await page.getByRole('button', { name: /刪除.*畫線/ }).click();
   await expect(highlight).toHaveCount(0);
+  await expect.poll(async () => (
+    await readDocument(page, request, 'readingTests', 'selection-test')
+  )?.fields.highlights?.arrayValue.values?.length || 0).toBe(0);
 
-  await selectText(page, passage, 0, 2);
+  await selectText(page, reloadedPassage, 0, 2);
   await page.getByRole('button', { name: '將選取的韓文新增為單字' }).click();
   const addDialog = page.getByRole('dialog');
   await expect(addDialog.getByLabel('韓文 *')).toHaveValue('요즘');
@@ -212,7 +230,7 @@ test('R04: selected text opens Naver, temporary highlights toggle, and persisted
   await expect.poll(async () => (
     (await listDocuments(page, request, 'records')).filter((doc) => !doc.fields.deletedAt).length
   )).toBe(1);
-  await expect(passage.locator('.subtitle-known-word').filter({ hasText: '요즘' })).toBeVisible();
+  await expect(reloadedPassage.locator('.subtitle-known-word').filter({ hasText: '요즘' })).toBeVisible();
   await expect.poll(async () => (
     (await readDocument(page, request, 'folders', 'reading-folder'))?.fields.wordIds.arrayValue.values.length
   )).toBe(1);

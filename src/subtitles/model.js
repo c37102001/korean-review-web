@@ -1,5 +1,6 @@
 import { firestoreTimestampIso } from '../shared/firestoreTimestamp.js';
 import { createId } from '../shared/id.js';
+import { normalizeTextHighlights } from '../features/text-selection/model.js';
 
 export const YT_SUBTITLE_MODE_JSON = 'json';
 export const YT_SUBTITLE_MODE_SRT = 'srt';
@@ -116,6 +117,7 @@ export function normalizeYoutubeSubtitle(note, fallbackId = '') {
     videoId: youtubeVideoId(note?.youtubeUrl || note?.videoId || ''),
     mode,
     entries,
+    highlights: normalizeTextHighlights(note?.highlights, entries),
     createdAt: firestoreTimestampIso(note?.createdAt),
     updatedAt: firestoreTimestampIso(note?.updatedAt),
   };

@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 import terminal_review_practice as terminal
+from terminal_app.ui.screens.highlights import highlight_lines, render_highlight_markers
 
 
 def reading_test(learned=False):
@@ -19,6 +20,14 @@ def reading_test(learned=False):
 
 
 class TerminalReadingTests(unittest.TestCase):
+    def test_highlights_are_rendered_and_exported_one_per_line(self):
+        highlights = [
+            {'id': 'one', 'entryId': 'reading-passage', 'text': '한국어', 'start': 0, 'end': 3},
+            {'id': 'two', 'entryId': 'reading-question', 'text': '고르십시오', 'start': 0, 'end': 5},
+        ]
+        self.assertEqual(render_highlight_markers('한국어 글', 'reading-passage', highlights), '⟦한국어⟧ 글')
+        self.assertEqual(highlight_lines(highlights), ['한국어', '고르십시오'])
+
     def test_chinese_is_revealed_only_after_submitting(self):
         test = reading_test()
         hidden, _ = terminal._reading_content_lines(test, 80, '1', False)
@@ -41,6 +50,16 @@ class TerminalReadingTests(unittest.TestCase):
         self.assertTrue(terminal._parse_firestore_value(write['update']['fields']['learned']))
         self.assertEqual(write['updateMask']['fieldPaths'], ['learned'])
         self.assertTrue(write['update']['name'].endswith('/users/uid/readingTests/reading'))
+
+    def test_online_highlight_update_writes_only_the_content_field(self):
+        client = terminal.FirebaseClient('key', 'project')
+        session = terminal.AuthSession('test@example.com', 'uid', 'token', 'refresh')
+        highlights = [{'id': 'one', 'entryId': 'reading-passage', 'text': '한국어', 'start': 0, 'end': 3}]
+        with patch.object(client, '_request_json', return_value={}) as request:
+            client.set_content_highlights(session, 'readingTests', 'reading', highlights)
+        write = request.call_args.kwargs['payload']['writes'][0]
+        self.assertEqual(write['updateMask']['fieldPaths'], ['highlights'])
+        self.assertEqual(terminal._parse_firestore_value(write['update']['fields']['highlights']), highlights)
 
 
 if __name__ == '__main__':

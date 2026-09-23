@@ -1,15 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ExternalLink, Eye, EyeOff, FolderOpen, Link2, Pause, Play, Plus, Trash2 } from 'lucide-react';
+import { ExternalLink, Eye, EyeOff, FolderOpen, Highlighter, Link2, Pause, Play, Plus, Trash2 } from 'lucide-react';
 
 import { EditIconButton } from '../../../components/actions/ContentActionButtons.jsx';
 import { isSystemFolder, YT_SOURCE_FOLDER_NAME } from '../../../folders/model.js';
 import { todayString } from '../../../shared/date.js';
+import { createId } from '../../../shared/id.js';
 import { subtitleEntryAtTime, YOUTUBE_EMBED_ORIGIN, YT_SUBTITLE_MODE_SRT } from '../../../subtitles/model.js';
 import { loadYoutubeIframeApi, subtitleTimeLabel } from '../../../subtitles/player.js';
 import { AddItemsModal } from '../../word-import/components/WordImportForm.jsx';
 import { WordMatchesModal } from '../../word-library/components/WordPresentation.jsx';
 import { SelectableKoreanText } from '../../text-selection/components/SelectableKoreanText.jsx';
 import { SelectionActionPopover, WordDefinitionPopover } from '../../text-selection/components/SelectionOverlays.jsx';
+import { HighlightExportModal } from '../../text-selection/components/HighlightExportModal.jsx';
 import { useDismissibleWordDefinition, useTextSelectionActions } from '../../text-selection/hooks/useTextSelectionActions.js';
 import { YoutubeSubtitleEditorModal } from './YoutubeSubtitlesPage.jsx';
 
@@ -19,6 +21,8 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
   const [editingWord, setEditingWord] = useState(null);
   const [viewingWords, setViewingWords] = useState([]);
   const [quickAdd, setQuickAdd] = useState(null);
+  const [localHighlights, setLocalHighlights] = useState(note?.highlights || []);
+  const [exportHighlights, setExportHighlights] = useState(false);
   const [playerLoaded, setPlayerLoaded] = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [activeSubtitleEntryId, setActiveSubtitleEntryId] = useState(null);
@@ -27,7 +31,7 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
   const youtubePlayerRef = useRef(null);
   const subtitleListRef = useRef(null);
   const subtitleEntryRefs = useRef(new Map());
-  const { selectionAction, setSelectionAction, clearSelectionAction } = useTextSelectionActions({ entries: note?.entries || [] });
+  const { selectionAction, setSelectionAction, clearSelectionAction } = useTextSelectionActions({ entries: note?.entries || [], trackOffsets: true });
   const [definitionBubble, setDefinitionBubble] = useDismissibleWordDefinition();
   useEffect(() => {
     document.documentElement.classList.add('yt-reader-scroll-snap');
@@ -41,7 +45,8 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
     setPlayerLoaded(false);
     setIsVideoPlaying(false);
     setActiveSubtitleEntryId(null);
-  }, [note?.id]);
+    setLocalHighlights(note?.highlights || []);
+  }, [note?.id, note?.highlights]);
   const subtitleFolder = useMemo(() => folders.find((folder) => (
     !isSystemFolder(folder) && folder.name.toLocaleLowerCase() === YT_SOURCE_FOLDER_NAME.toLocaleLowerCase()
   )) || null, [folders]);
@@ -171,6 +176,45 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
       left: Math.min(Math.max(10, rect.left + (rect.width / 2)), window.innerWidth - 18),
     });
   };
+  const showHighlightActions = (event, highlight, entry) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setSelectionAction({
+      ko: highlight.text, entry, start: highlight.start, end: highlight.end, highlight,
+      top: rect.bottom + 8,
+      left: Math.min(Math.max(10, rect.left + (rect.width / 2) - 63), window.innerWidth - 136),
+    });
+  };
+  const saveHighlights = async (nextHighlights, previousHighlights) => {
+    setLocalHighlights(nextHighlights);
+    setError('');
+    try {
+      await onSave({ ...note, highlights: nextHighlights });
+    } catch (saveError) {
+      setLocalHighlights(previousHighlights);
+      setError(saveError.message || '儲存劃線失敗');
+    }
+  };
+  const addHighlight = () => {
+    if (!selectionAction || !Number.isSafeInteger(selectionAction.start) || !Number.isSafeInteger(selectionAction.end)) return;
+    const highlight = {
+      id: createId(), entryId: selectionAction.entry.id, text: selectionAction.ko,
+      start: selectionAction.start, end: selectionAction.end,
+    };
+    const alreadyExists = localHighlights.some((current) => (
+      current.entryId === highlight.entryId && current.start === highlight.start && current.end === highlight.end
+    ));
+    const previousHighlights = localHighlights;
+    clearSelectionAction({ removeRanges: true });
+    if (!alreadyExists) saveHighlights([...localHighlights, highlight], previousHighlights);
+  };
+  const removeHighlight = () => {
+    if (!selectionAction?.highlight) return;
+    const previousHighlights = localHighlights;
+    saveHighlights(localHighlights.filter((highlight) => highlight.id !== selectionAction.highlight.id), previousHighlights);
+    setSelectionAction(null);
+  };
 
   return (
     <section className="page yt-reader-page">
@@ -181,6 +225,7 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
           <div className="actions">
             {watchUrl && <a className="edit-icon-button" href={watchUrl} target="_blank" rel="noopener noreferrer" title="在 YouTube 開啟影片" aria-label="在 YouTube 開啟影片"><ExternalLink size={15} /></a>}
             <EditIconButton label="編輯字幕筆記" onClick={() => setEditing(note)} />
+            <button className="edit-icon-button" onClick={() => setExportHighlights(true)} title="匯出劃線" aria-label="匯出劃線"><Highlighter size={15} /></button>
             <button className="edit-icon-button delete-icon-button" onClick={deleteNote} title="刪除字幕筆記" aria-label="刪除字幕筆記"><Trash2 size={15} /></button>
           </div>
         </div>
@@ -190,6 +235,8 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
         selection={selectionAction}
         onAdd={() => { pauseVideo(); setQuickAdd(selectionAction); clearSelectionAction({ removeRanges: true }); }}
         onLookup={() => { pauseVideo(); clearSelectionAction({ removeRanges: true }); }}
+        onAddHighlight={addHighlight}
+        onRemoveHighlight={removeHighlight}
       />
       <WordDefinitionPopover definition={definitionBubble} />
       <div className="yt-reader-floating-actions" aria-label="字幕閱讀控制">
@@ -204,7 +251,7 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
         <div className="yt-subtitle-list" ref={subtitleListRef} aria-label="字幕列表">
           {note.entries.map((entry, index) => {
             const clickable = note.mode === YT_SUBTITLE_MODE_SRT && entry.startMs !== null && !!embedUrl;
-            const content = <><strong><span className="yt-subtitle-entry-index">{index + 1}</span>{entry.startMs !== null && <small className="yt-subtitle-entry-time">{subtitleTimeLabel(entry.startMs)}</small>}<SelectableKoreanText className="yt-subtitle-ko" entry={entry} words={subtitleWords} onSelectWords={showDefinition} onOpenWords={(words) => { pauseVideo(); clearSelectionAction({ removeRanges: true }); setDefinitionBubble(null); setViewingWords(words); }} /></strong><p className={!showChinese ? 'is-hidden' : ''} aria-hidden={!showChinese}>{entry.zh}</p></>;
+            const content = <><strong><span className="yt-subtitle-entry-index">{index + 1}</span>{entry.startMs !== null && <small className="yt-subtitle-entry-time">{subtitleTimeLabel(entry.startMs)}</small>}<SelectableKoreanText className="yt-subtitle-ko" entry={entry} words={subtitleWords} highlights={localHighlights} onSelectWords={showDefinition} onOpenWords={(words) => { pauseVideo(); clearSelectionAction({ removeRanges: true }); setDefinitionBubble(null); setViewingWords(words); }} onSelectHighlight={showHighlightActions} /></strong><p className={!showChinese ? 'is-hidden' : ''} aria-hidden={!showChinese}>{entry.zh}</p></>;
             const isPlaying = activeSubtitleEntryId === entry.id;
             const className = `yt-subtitle-entry ${clickable ? 'clickable' : ''} ${isPlaying ? 'is-playing' : ''}`;
             const setEntryRef = (element) => {
@@ -256,6 +303,7 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
       />}
       {editingWord && <AddItemsModal title="編輯單字" date={editingWord.date} lockedDate editItem={editingWord} allItems={allItems} folders={folders} onUpdateRecord={onUpdateRecord} onClose={() => setEditingWord(null)} />}
       {!!viewingWords.length && <WordMatchesModal items={viewingWords} allItems={allItems} onSpeak={onSpeak} onOpenItems={setViewingWords} onEdit={(word) => { setViewingWords([]); setEditingWord(word); }} onDelete={onDeleteRecord} onClose={() => setViewingWords([])} />}
+      {exportHighlights && <HighlightExportModal highlights={localHighlights} onClose={() => setExportHighlights(false)} />}
       {editing && <YoutubeSubtitleEditorModal note={editing} onSave={async (nextNote) => { await onSave(nextNote); setEditing(null); }} onClose={() => setEditing(null)} />}
     </section>
   );

@@ -188,7 +188,7 @@ def run_terminal_ui(stdscr: curses.window, client: FirebaseClient, session: Auth
                 stdscr, grammar_notes, state, client, session, NOTE_CATEGORY_VOCABULARY
             )
         elif choice == "youtube_subtitles":
-            run_youtube_subtitles(stdscr, youtube_subtitles)
+            run_youtube_subtitles(stdscr, youtube_subtitles, client, session)
         elif choice == "reading_tests":
             run_reading_tests(stdscr, state, client, session)
 

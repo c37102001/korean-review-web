@@ -191,8 +191,10 @@ Terminal 單字例句聽力使用 Microsoft Neural 韓文語音，並將產生�
 Terminal 的「YT字幕」會使用 `yt-dlp` 與 `ffmpeg` 將影片原音下載為 MP3，並快取在
 `~/.cache/korean-review-web-terminal/youtube-audio`。開啟有 YouTube 連結的字幕時會
 自動播放；SRT 字幕會跟隨原音進度切換目前句，`↑/↓` 可跳至上一句或下一句，`Enter`
-會從目前句起點重播，`7` 或空白鍵可暫停／繼續。JSON 字幕沒有時間戳，因此只能播放
-原音，無法自動同步或逐句跳轉。離開字幕頁面時播放器會自動停止。
+會從目前句起點重播，`7` 可暫停／繼續。JSON 字幕沒有時間戳，因此只能播放原音，
+無法自動同步或逐句跳轉。離開字幕頁面時播放器會自動停止。字幕與閱讀測驗都可按
+空白鍵進入劃線模式，以方向鍵選取文字後再按空白鍵儲存；`D` 刪除游標所在劃線，
+`E` 匯出所有劃線並可複製。劃線會同步至資料庫，離線操作則於恢復連線後同步。
 
 YouTube 格式解析需要 Deno 或 Node.js，以及 yt-dlp 的 EJS 元件。請安裝
 `requirements-terminal.txt`；下載器會啟用本機 JavaScript runtime，若缺少 EJS

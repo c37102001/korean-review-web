@@ -328,6 +328,24 @@
   border-bottom-style: solid;
 }
 
+.highlight-export-modal {
+  width: min(520px, 100%);
+}
+
+.highlight-export-content {
+  max-height: min(55vh, 520px);
+  margin: 18px 0;
+  padding: 16px;
+  overflow: auto;
+  border: 1px solid #dce8e5;
+  border-radius: 8px;
+  background: #f7faf9;
+  color: #26383f;
+  font: inherit;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
 .reading-passage .reading-translation {
   margin-top: 18px;
   padding-top: 18px;

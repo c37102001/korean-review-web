@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BookOpen, Check, FolderOpen, Pencil, Trash2, X } from 'lucide-react';
+import { BookOpen, Check, FolderOpen, Highlighter, Pencil, Trash2, X } from 'lucide-react';
 
 import { isSystemFolder, READING_SOURCE_FOLDER_NAME } from '../../../folders/model.js';
 import { todayString } from '../../../shared/date.js';
@@ -8,6 +8,7 @@ import { WordMatchesModal } from '../../word-library/components/WordPresentation
 import { AddItemsModal } from '../../word-import/components/WordImportForm.jsx';
 import { SelectableKoreanText } from '../../text-selection/components/SelectableKoreanText.jsx';
 import { SelectionActionPopover, WordDefinitionPopover } from '../../text-selection/components/SelectionOverlays.jsx';
+import { HighlightExportModal } from '../../text-selection/components/HighlightExportModal.jsx';
 import { useDismissibleWordDefinition, useTextSelectionActions } from '../../text-selection/hooks/useTextSelectionActions.js';
 import { ReadingTestsEditorModal } from './ReadingTestsPage.jsx';
 
@@ -19,13 +20,14 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
   const [quickAdd, setQuickAdd] = useState(null);
   const [editingWord, setEditingWord] = useState(null);
   const [viewingWords, setViewingWords] = useState([]);
-  const [localHighlights, setLocalHighlights] = useState([]);
+  const [localHighlights, setLocalHighlights] = useState(test?.highlights || []);
+  const [exportHighlights, setExportHighlights] = useState(false);
   useEffect(() => {
     setSelected('');
     setSubmitted(false);
     setError('');
-    setLocalHighlights([]);
-  }, [test?.id]);
+    setLocalHighlights(test?.highlights || []);
+  }, [test?.id, test?.highlights]);
   const entries = useMemo(() => test ? [
     { id: `${test.id}-passage`, ko: test.passage.ko, zh: test.passage.zh },
     { id: `${test.id}-question`, ko: test.question.ko, zh: test.question.zh },
@@ -74,6 +76,16 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
       left: Math.min(Math.max(10, rect.left + (rect.width / 2) - 63), window.innerWidth - 136),
     });
   };
+  const saveHighlights = async (nextHighlights, previousHighlights) => {
+    setLocalHighlights(nextHighlights);
+    setError('');
+    try {
+      await onSave({ ...test, highlights: nextHighlights });
+    } catch (saveError) {
+      setLocalHighlights(previousHighlights);
+      setError(saveError.message || '儲存劃線失敗');
+    }
+  };
   const addHighlight = () => {
     const highlight = {
       id: createId(),
@@ -85,13 +97,15 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
     const alreadyExists = localHighlights.some((current) => (
       current.entryId === highlight.entryId && current.start === highlight.start && current.end === highlight.end
     ));
+    const previousHighlights = localHighlights;
     clearSelectionAction({ removeRanges: true });
     if (alreadyExists) return;
-    setLocalHighlights((current) => [...current, highlight]);
+    saveHighlights([...localHighlights, highlight], previousHighlights);
   };
   const removeHighlight = () => {
     if (!selectionAction?.highlight) return;
-    setLocalHighlights((current) => current.filter((highlight) => highlight.id !== selectionAction.highlight.id));
+    const previousHighlights = localHighlights;
+    saveHighlights(localHighlights.filter((highlight) => highlight.id !== selectionAction.highlight.id), previousHighlights);
     setSelectionAction(null);
   };
   const deleteWord = async (word) => {
@@ -108,6 +122,7 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
         <div><span className="eyebrow">Reading Practice</span><h1>閱讀題</h1></div>
         <div className="actions notebook-actions">
           <button type="button" className={`learned-visibility-button ${test.learned ? 'active' : ''}`} aria-pressed={test.learned} title={test.learned ? '取消已學習' : '標記已學習'} onClick={toggleLearned}>{test.learned ? <Check size={18} /> : <BookOpen size={18} />}已學習</button>
+          <button type="button" onClick={() => setExportHighlights(true)}><Highlighter size={17} /> 匯出劃線</button>
           <button type="button" onClick={() => setEditing(true)}><Pencil size={17} /> 編輯</button>
           <button type="button" className="delete-icon-button" onClick={deleteTest}><Trash2 size={17} /> 刪除</button>
         </div>
@@ -163,6 +178,7 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
       />}
       {editingWord && <AddItemsModal title="編輯單字" date={editingWord.date} lockedDate editItem={editingWord} allItems={allItems} folders={folders} onUpdateRecord={onUpdateRecord} onClose={() => setEditingWord(null)} />}
       {!!viewingWords.length && <WordMatchesModal items={viewingWords} allItems={allItems} onSpeak={onSpeak} onOpenItems={setViewingWords} onEdit={(word) => { setViewingWords([]); setEditingWord(word); }} onDelete={onDeleteRecord} onClose={() => setViewingWords([])} />}
+      {exportHighlights && <HighlightExportModal highlights={localHighlights} onClose={() => setExportHighlights(false)} />}
     </section>
   );
 }

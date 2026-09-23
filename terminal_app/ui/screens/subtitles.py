@@ -1,6 +1,17 @@
 
 from terminal_app.runtime import *
 from terminal_app.ui.curses_helpers import *
+from terminal_app.ui.screens.highlights import render_highlight_markers, run_highlight_editor, run_highlight_export
+
+
+def _update_cached_subtitle_highlights(uid: str, subtitle_id: str, highlights: List[Dict[str, Any]]) -> None:
+    cached = _read_terminal_cache(uid)
+    if not cached:
+        return
+    for record in cached.get("ytSubtitles") or []:
+        if str(record.get("id") or record.get("_docId") or "") == subtitle_id:
+            record["highlights"] = _clone_json(highlights)
+    _write_terminal_cache(uid, cached)
 
 def subtitle_time_label(milliseconds: Any) -> str:
     try:
@@ -32,6 +43,8 @@ def run_youtube_subtitle_detail(
     stdscr: curses.window,
     subtitles: List[YoutubeSubtitle],
     start_index: int,
+    client: FirebaseClient,
+    session: AuthSession,
 ) -> None:
     subtitle_index = start_index
     entry_index = 0
@@ -89,7 +102,7 @@ def run_youtube_subtitle_detail(
                 2,
                 (
                     f"YT字幕 | {subtitle_index + 1}/{len(subtitles)} | {subtitle.title}  "
-                    "Esc=列表 5=中文 4/6=上下篇 7/Space=播放暫停 Enter=跳至此句 ↑↓=上下句"
+                    "Esc=列表 5=中文 4/6=上下篇 7=播放暫停 Enter=跳轉 ↑↓=句 Space=劃線 E=匯出"
                 ),
                 curses.A_BOLD,
             )
@@ -112,7 +125,8 @@ def run_youtube_subtitle_detail(
                 entry_line_offsets.append(len(detail_lines))
                 marker = "▶" if index == entry_index else " "
                 timestamp = f" [{subtitle_time_label(entry['startMs'])}]" if entry.get("startMs") is not None else ""
-                append_detail(f"{marker} {index + 1}.{timestamp} {entry['ko']}", attr=curses.A_BOLD if index == entry_index else 0)
+                korean = render_highlight_markers(entry["ko"], entry["id"], subtitle.highlights)
+                append_detail(f"{marker} {index + 1}.{timestamp} {korean}", attr=curses.A_BOLD if index == entry_index else 0)
                 if show_chinese:
                     append_detail(entry["zh"], indent=4, attr=curses.A_DIM)
 
@@ -153,6 +167,17 @@ def run_youtube_subtitle_detail(
                 key = "\n"
             if key in ("\x1b", 27):
                 return
+            if key == " ":
+                if not entries:
+                    message = "這篇字幕沒有可劃線的內容。"
+                    continue
+                def save_highlights(next_highlights):
+                    client.set_content_highlights(session, "ytSubtitles", subtitle.id, next_highlights)
+                    subtitle.highlights = _clone_json(next_highlights)
+                    if not client.offline_mode:
+                        _update_cached_subtitle_highlights(session.uid, subtitle.id, next_highlights)
+                subtitle.highlights = run_highlight_editor(stdscr, entries, subtitle.highlights, save_highlights, entry_index)
+                continue
             if key in (curses.KEY_UP, curses.KEY_DOWN):
                 if entries:
                     step = -1 if key == curses.KEY_UP else 1
@@ -175,7 +200,7 @@ def run_youtube_subtitle_detail(
                 next_entries = next_subtitle.entries
                 next_start = next_entries[0].get("startMs") if next_entries else 0
                 message = prepare_audio(next_subtitle, float(next_start or 0))
-            elif key in ("7", " "):
+            elif key == "7":
                 if audio_player:
                     if audio_player.paused and not audio_player.process and entries and entries[entry_index].get("startMs") is not None:
                         changed = audio_player.play_from(float(entries[entry_index]["startMs"]) / 1000)
@@ -197,6 +222,8 @@ def run_youtube_subtitle_detail(
                     message = f"已跳至第 {entry_index + 1} 句並播放。"
                 elif subtitle.mode != YT_SUBTITLE_MODE_SRT:
                     message = "JSON 字幕沒有時間戳，無法跳轉音訊。"
+            elif key.lower() == "e":
+                run_highlight_export(stdscr, subtitle.highlights)
     finally:
         if audio_player:
             audio_player.stop()
@@ -205,6 +232,8 @@ def run_youtube_subtitle_detail(
 def run_youtube_subtitles(
     stdscr: curses.window,
     subtitles: List[YoutubeSubtitle],
+    client: FirebaseClient,
+    session: AuthSession,
 ) -> None:
     if not subtitles:
         wait_message(stdscr, "YT字幕", "目前還沒有字幕筆記。")
@@ -246,7 +275,7 @@ def run_youtube_subtitles(
         elif key == curses.KEY_DOWN:
             cursor = (cursor + 1) % len(notes)
         elif key in ("\n", "\r", curses.KEY_ENTER, 10, 13):
-            run_youtube_subtitle_detail(stdscr, notes, cursor)
+            run_youtube_subtitle_detail(stdscr, notes, cursor, client, session)
             set_cursor_visibility(0)
 
 
