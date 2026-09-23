@@ -122,7 +122,7 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
         <div><span className="eyebrow">Reading Practice</span><h1>閱讀題</h1></div>
         <div className="actions notebook-actions">
           <button type="button" className={`learned-visibility-button ${test.learned ? 'active' : ''}`} aria-pressed={test.learned} title={test.learned ? '取消已學習' : '標記已學習'} onClick={toggleLearned}>{test.learned ? <Check size={18} /> : <BookOpen size={18} />}已學習</button>
-          <button type="button" onClick={() => setExportHighlights(true)}><Highlighter size={17} /> 匯出劃線</button>
+          <button type="button" className="reading-highlight-export-button" title="匯出劃線" aria-label="匯出劃線" onClick={() => setExportHighlights(true)}><Highlighter size={17} /><span>匯出劃線</span></button>
           <button type="button" onClick={() => setEditing(true)}><Pencil size={17} /> 編輯</button>
           <button type="button" className="delete-icon-button" onClick={deleteTest}><Trash2 size={17} /> 刪除</button>
         </div>
