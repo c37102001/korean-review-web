@@ -230,6 +230,14 @@ test('Firebase date records use ascending order and a stable id fallback', () =>
   assert.deepEqual(records.map((record) => record.id), ['third', 'first', 'second']);
 });
 
+test('a pending local record tombstone is excluded before word normalization', () => {
+  const normalized = helpers.normalizeRecords([
+    { id: 'active', date: '2026-07-22', item: item('가다', '去') },
+    { id: 'pending-delete', updatedAt: null },
+  ]);
+  assert.deepEqual(normalized.items.map((entry) => entry.id), ['active']);
+});
+
 test('empty JSON imports are rejected before opening review', () => {
   assert.throws(() => helpers.buildJsonImportDraft('{"data":[]}', '2026-07-22'), /至少需要包含 1 筆/);
 });

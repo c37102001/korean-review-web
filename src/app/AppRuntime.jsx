@@ -718,7 +718,9 @@ function useFirestoreStore(user) {
 }
 
 function normalizeRecords(records) {
-  const normalizedRecords = normalizeRecordSet(records);
+  // A local delete snapshot can remove item before serverTimestamp resolves
+  // deletedAt. Keep that pending tombstone out of the word domain meanwhile.
+  const normalizedRecords = normalizeRecordSet(records.filter((record) => record?.item));
   const items = normalizedRecords.map((record, index) => ({
     ...record.item,
     id: record.id,

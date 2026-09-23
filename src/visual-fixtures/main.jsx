@@ -11,7 +11,7 @@ import { YoutubeSubtitleReader } from '../features/subtitles/pages/YoutubeSubtit
 import { ReadingTestPage } from '../features/reading/pages/ReadingTestPage.jsx';
 import { StudyPage } from '../features/sessions/study/StudyPage.jsx';
 import { PracticePage } from '../features/sessions/practice/PracticePage.jsx';
-import { createFixedWordPracticeSession, createStudySession, PRACTICE_ORDER_POLICY } from '../features/sessions/core/sessionDefinitions.js';
+import { createFixedWordPracticeSession, createStudySession, PRACTICE_ORDER_POLICY, PRACTICE_RETRY_POLICY } from '../features/sessions/core/sessionDefinitions.js';
 import { folders, notes, questions, readingTest, subtitle, words } from './data.js';
 import '../styles.css';
 
@@ -56,6 +56,16 @@ function FixtureApp() {
     const session = createFixedWordPracticeSession(questions, '視覺測試');
     session.policy = { ...session.policy, order: PRACTICE_ORDER_POLICY.FIXED };
     content = <PracticePage store={store} updateStore={updateStore} set={session} allItems={words} folders={folders} onUpdateRecord={asyncNoop} {...commonClassification} />;
+  }
+  else if (fixture === 'practice-recovery' || fixture === 'practice-repeat') {
+    const session = createFixedWordPracticeSession([questions[0]], '流程測試', {
+      onComplete: fixture === 'practice-recovery' ? async () => {
+        window.__completionAttempts = (window.__completionAttempts || 0) + 1;
+        if (window.__completionAttempts === 1) throw new Error('暫時無法儲存');
+      } : null,
+    });
+    session.policy = { ...session.policy, order: PRACTICE_ORDER_POLICY.FIXED, retry: fixture === 'practice-repeat' ? PRACTICE_RETRY_POLICY.REPEATABLE : PRACTICE_RETRY_POLICY.MISTAKES };
+    content = <PracticePage store={store} updateStore={updateStore} set={session} allItems={words} folders={folders} {...commonClassification} />;
   }
   else if (fixture === 'yt-reader') content = <YoutubeSubtitleReader note={subtitle} allItems={words} folders={folders} onAddRecords={asyncNoop} onBack={noop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} />;
   else if (fixture === 'yt-reader-video') content = <YoutubeSubtitleReader note={{ ...subtitle, videoId: 'subtitle-video' }} allItems={words} folders={folders} onAddRecords={asyncNoop} onBack={noop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} />;
