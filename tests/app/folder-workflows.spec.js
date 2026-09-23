@@ -180,3 +180,33 @@ test('F03 F05 W10 W11: add references, remove membership, and permanently delete
   await expect.poll(async () => (await folderDocByName(page, request, '新水果'))?.fields.wordIds?.arrayValue?.values?.length || 0).toBe(0);
   assertNoProductionRequests();
 });
+
+test('F03: select all chooses every filtered word across folder pages', async ({ page, request }) => {
+  const assertNoProductionRequests = await prepareAppPage(page);
+  await register(page, 'folder-select-all@example.test');
+  const wordIds = [];
+  for (let index = 0; index < 31; index += 1) {
+    const id = `folder-word-${String(index).padStart(2, '0')}`;
+    wordIds.push(id);
+    await seedWord(page, request, id, `단어${index}`, index < 2 ? `共同意思${index}` : `意思${index}`);
+  }
+  await seedDocument(page, request, 'folders', 'select-all-folder', {
+    id: 'select-all-folder', name: '全部選取', tag: '', wordIds,
+    createdAt: '2026-09-20T00:00:00.000Z', updatedAt: '2026-09-21T00:00:00.000Z',
+  });
+  await openFolders(page);
+  await page.locator('.folder-card').filter({ hasText: '全部選取' }).click();
+  await expect(cards(page)).toHaveCount(30);
+  const summary = page.locator('.bulk-selection-summary');
+  await summary.getByRole('button', { name: '選取全部' }).click();
+  await expect(summary).toContainText('已選 31 個');
+  await expect(summary.getByRole('button', { name: '取消全部' })).toBeVisible();
+  await page.getByPlaceholder('搜尋韓文單字或中文意思').fill('共同意思');
+  await expect(cards(page)).toHaveCount(2);
+  await expect(summary).toContainText('已選 2 個');
+  await summary.getByRole('button', { name: '取消全部' }).click();
+  await expect(summary).toContainText('批次選取');
+  await summary.getByRole('button', { name: '選取全部' }).click();
+  await expect(summary).toContainText('已選 2 個');
+  assertNoProductionRequests();
+});

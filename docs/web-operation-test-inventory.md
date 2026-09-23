@@ -73,7 +73,7 @@
 | --- | --- | --- |
 | F01 | 建立、重新命名、標記 tag 的資料夾；同 tag 歸組，無 tag 進無標籤組。 | 通：`tests/app/folder-workflows.spec.js`，`F01 F02 F04: create, rename, tag, pin, collapse and delete preserve words` |
 | F02 | 資料夾釘選／取消、tag 群收合／展開：順序與可見性正確。 | 通：`tests/app/folder-workflows.spec.js`，`F01 F02 F04: create, rename, tag, pin, collapse and delete preserve words` |
-| F03 | 開資料夾、搜尋／切範圍、加入現有單字（搜尋、複選、確認）：回讀後成員正確。 | 通：`tests/app/folder-workflows.spec.js`，`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
+| F03 | 開資料夾、搜尋／切範圍、選取本頁／全部、加入現有單字（搜尋、複選、確認）：跨頁選取與回讀後成員正確。 | 通：`tests/app/folder-workflows.spec.js`，`F03 F05 W10 W11: add references, remove membership, and permanently delete a card`、`F03: select all chooses every filtered word across folder pages` |
 | F04 | 編輯資料夾 tag／名稱、刪除資料夾：系統資料夾限制與一般資料夾刪除語意正確，單字仍保留。 | 通：`tests/app/folder-workflows.spec.js`，`F01 F02 F04: create, rename, tag, pin, collapse and delete preserve words` |
 | F05 | 在資料夾詳情編輯卡片、移出卡片、批次操作與清理失效 reference：只影響指定資料夾或指定卡片。 | 通：`tests/app/folder-workflows.spec.js`，`F05 W11: stale folder references can be removed and single-card deletion clears memberships`、`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
 | E01 | 手動新增：日期、韓文、七種詞性、活用形式、中文意思、句型、成對例句、Markdown 筆記與關聯詞可輸入並保存；必填錯誤阻止寫入。 | 通：`tests/app/word-editor-workflows.spec.js`，`H03 E01 E02 W12: home manual editor saves forms, meanings and variants and rejects incomplete input`、`E02 E03: manual edit changes folder membership and related words without deleting the card` |

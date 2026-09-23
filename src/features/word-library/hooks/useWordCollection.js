@@ -130,5 +130,6 @@ export function useWordCollection({
     isChineseVisible,
     toggleChinese,
     visibleIds: derived.pagedItems.map((item) => item.id),
+    filteredIds: derived.filteredItems.map((item) => item.id),
   };
 }

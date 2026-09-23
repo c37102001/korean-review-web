@@ -737,6 +737,7 @@ export function FolderDetailPage({ folder, folders, store, updateStore, items, q
         onRemoveFromCurrentFolder={onRemoveWords}
         emptyMessage={collection.query ? '找不到符合的單字' : '這個資料夾還沒有單字'}
         showPagination
+        allowSelectAll
       />
     </section>
   );

@@ -39,6 +39,7 @@ export function WordCollectionView({
   emptyMessage = '沒有符合的單字',
   showPagination = false,
   showBulkActions = true,
+  allowSelectAll = false,
 }) {
   const starredSet = starredIds instanceof Set ? starredIds : new Set(starredIds);
   return (
@@ -47,6 +48,8 @@ export function WordCollectionView({
         <BulkWordActions
           selectedIds={collection.selectedIds}
           visibleIds={collection.visibleIds}
+          allIds={collection.filteredIds}
+          allowSelectAll={allowSelectAll}
           folders={folders}
           onSelectionChange={collection.setSelectedIds}
           onAssignFolders={onAssignFolders}

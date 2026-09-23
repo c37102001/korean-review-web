@@ -138,6 +138,8 @@ function FolderAssignmentModal({ folders, wordIds, onAssign, onCreateFolderAndAs
 export function BulkWordActions({
   selectedIds,
   visibleIds,
+  allIds = [],
+  allowSelectAll = false,
   folders,
   onSelectionChange,
   onAssignFolders,
@@ -152,12 +154,21 @@ export function BulkWordActions({
   const [error, setError] = useState('');
   const selectedSet = new Set(selectedIds);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedSet.has(id));
+  const allItemsSelected = allIds.length > 0 && allIds.every((id) => selectedSet.has(id));
   const toggleVisible = () => {
     if (allVisibleSelected) {
       const visibleSet = new Set(visibleIds);
       onSelectionChange(selectedIds.filter((id) => !visibleSet.has(id)));
     } else {
       onSelectionChange([...new Set([...selectedIds, ...visibleIds])]);
+    }
+  };
+  const toggleAll = () => {
+    if (allItemsSelected) {
+      const allSet = new Set(allIds);
+      onSelectionChange(selectedIds.filter((id) => !allSet.has(id)));
+    } else {
+      onSelectionChange([...new Set([...selectedIds, ...allIds])]);
     }
   };
   const runAction = async (action, handler) => {
@@ -188,6 +199,7 @@ export function BulkWordActions({
           <ListChecks size={19} />
           <strong>{selectedIds.length ? `已選 ${selectedIds.length} 個` : '批次選取'}</strong>
           <button type="button" className="text-link" disabled={!visibleIds.length || !!busyAction} onClick={toggleVisible}>{allVisibleSelected ? '取消本頁' : '選取本頁'}</button>
+          {allowSelectAll && <button type="button" className="text-link" disabled={!allIds.length || !!busyAction} onClick={toggleAll}>{allItemsSelected ? '取消全部' : '選取全部'}</button>}
           {!!selectedIds.length && <button type="button" className="text-link muted-link" disabled={!!busyAction} onClick={() => onSelectionChange([])}>清除</button>}
         </div>
         {!!selectedIds.length && <div className="bulk-action-buttons">
