@@ -30,13 +30,13 @@
 | H01 | 今日測驗：只用今天到期單字開始，無題時禁用；完成後火焰／進度更新。 | 通：`tests/app/practice-session-workflows.spec.js`，`H01 H07 P02-P03 P08: daily review records answers, and wrong-review shrinks after retry`；Emulator 回讀進度，日曆火焰與首頁完成度均驗證 |
 | H02 | 查看明日題數：只在點擊時計算，可再點重新計算。 | 通：`tests/app/home-controls.spec.js`，`H02: tomorrow count is calculated on demand and recalculated after data changes` |
 | H03 | 首頁新增單字：進標準編輯器，儲存後單字本可找到。 | 通：`tests/app/word-editor-workflows.spec.js`，`H03 E01 E02 W12: home manual editor saves forms, meanings and variants and rejects incomplete input` |
-| H04 | 新增練習：切換單字、例句聽力、例句閱讀、文法類型；設定題數、方向、文法、搜尋／熟悉度／資料夾條件後建立相應題池。 | 局：題池 domain 測試 |
-| H05 | 自選練習「開始」：未做完可續做；答對暫移出 pool、答錯仍可再抽到；完成後從待練區消失。 | 局：題池 domain 測試 |
-| H06 | 移除自選練習：確認後移除，取消則保留。 | 缺 |
+| H04 | 新增練習：切換單字、例句聽力、例句閱讀、文法類型；設定題數、方向、文法、搜尋／熟悉度／資料夾條件後建立相應題池。 | 通：`optional-practice-workflows.spec.js`「H04: all four practice types create the configured pool and can start」 |
+| H05 | 自選練習「開始」：未做完可續做；答對暫移出 pool、答錯仍可再抽到；完成後從待練區消失。 | 通：`optional-practice-workflows.spec.js`「H05: partial completion survives navigation and reload; correct and wrong answers update the pool」 |
+| H06 | 移除自選練習：確認後移除，取消則保留。 | 通：`optional-practice-workflows.spec.js`「H06 H10: cancel and close create nothing; removal respects confirm and dismiss」 |
 | H07 | 今日錯題「查看」及最不熟悉 30 題「測驗」：開啟正確題組；錯題頁可再選學習／測驗。 | 通：`tests/app/practice-session-workflows.spec.js`，`H01 H07 P02-P03 P08: daily review records answers, and wrong-review shrinks after retry`；`tests/app/session-entry-workflows.spec.js`，`W13 C03 H07: folder, date and weakest entry points pass only eligible scoped words` |
 | H08 | 字體縮小／放大：在界限內變更並持續生效；界限按鈕禁用。 | 通：`tests/app/home-controls.spec.js`，`H08: font size respects both bounds and survives a reload` |
 | H09 | 語音設定：選韓／中文語音、試聽、取消與儲存，重新開啟保留選擇；不支援時正確禁用。 | 通：`tests/app/home-controls.spec.js`，`H09: voice previews use the selected language; cancel discards and save persists`、`H09: unsupported speech disables saving instead of pretending to play` |
-| H10 | 關閉／取消新增練習視窗：不新增待練任務；保存失敗時保留所選條件並顯示錯誤。 | 缺 |
+| H10 | 關閉／取消新增練習視窗：不新增待練任務；保存失敗時保留所選條件並顯示錯誤。 | 通：`optional-practice-workflows.spec.js`「H06 H10: cancel and close create nothing; removal respects confirm and dismiss」「H10: rejected practice creation keeps all selections and succeeds after retry」 |
 | C01 | 日曆上一月／下一月／今天：顯示相應月份並更新選取日期。 | 通：`tests/app/calendar-workflows.spec.js`，`C01: previous/next month and Today update the month and selected date` |
 | C02 | 點日期、雙擊日期及「查看日期」：選取與進入該日內容的語意正確，返回後可繼續瀏覽。 | 通：`tests/app/calendar-workflows.spec.js`，`C02: date selection, View Date and double-click navigate and return to the same date` |
 | C03 | 日期頁新增／學習／測驗：只對當日或目前篩選結果操作。 | 通：`tests/app/date-word-workflows.spec.js`，`C04 W16: date JSON review returns, abandons and confirms only scoped edits; deletion stays scoped`；`tests/app/session-entry-workflows.spec.js`，`W13 C03 H07: folder, date and weakest entry points pass only eligible scoped words`（資料夾篩選後分別開學習與測驗） |
@@ -108,10 +108,10 @@
 
 | ID | 操作與可觀察的預期結果 | 現況 |
 | --- | --- | --- |
-| N01 | 筆記搜尋、文法／單字分類收合，打開／關閉詳情；結果只顯示符合內容。 | 局：解析與靜態 fixture |
-| N02 | 兩類筆記新增、編輯 tagged 文字、改分類、取消／儲存：解析後內容與分類回讀正確，錯誤格式不寫入。 | 局：tagged parser |
-| N03 | 釘選／取消釘選、刪除與確認取消：分類內置頂，回讀後狀態正確。 | 缺 |
-| N04 | 勾選筆記、選取／取消本頁、清除，以及從單篇／多篇開始例句練習：題目只來自選取內容。 | 局：grammar questions model |
+| N01 | 筆記搜尋、文法／單字分類收合，打開／關閉詳情；結果只顯示符合內容。 | 通：`note-workflows.spec.js`「N01 N02: create both note types, search, collapse, inspect, edit category, and reload」「N01 N02: invalid input and rejected saves retain content and can retry」 |
+| N02 | 兩類筆記新增、編輯 tagged 文字、改分類、取消／儲存：解析後內容與分類回讀正確，錯誤格式不寫入。 | 通：`note-workflows.spec.js`「N01 N02: create both note types, search, collapse, inspect, edit category, and reload」「N01 N02: invalid input and rejected saves retain content and can retry」 |
+| N03 | 釘選／取消釘選、刪除與確認取消：分類內置頂，回讀後狀態正確。 | 通：`note-workflows.spec.js`「N03: pin and delete honor persistence, cancel, and tombstones」 |
+| N04 | 勾選筆記、選取／取消本頁、清除，以及從單篇／多篇開始例句練習：題目只來自選取內容。 | 通：`note-workflows.spec.js`「N04: single and selected note practice use exactly the chosen examples」 |
 | Y01 | 字幕列表搜尋、標籤收合、新增／編輯／刪除、已學習及隱藏已學習：重新進入後內容、分類與可見性正確。 | 局：JSON／SRT parser 與靜態 fixture |
 | Y02 | 新增／編輯字幕時切換 JSON／SRT、設定 YouTube URL 與 tag，格式錯誤顯示提示且不寫入。 | 局：parser |
 | Y03 | 讀者頁開外部 YouTube、播放／暫停、點擊或鍵盤 Enter／空白選 SRT 句子跳時間、播放中提示與字幕置中捲動；無影片時有合理 fallback。 | 局：embed URL、時間查找、靜態 fixture；不依賴真實 YouTube 做 CI |

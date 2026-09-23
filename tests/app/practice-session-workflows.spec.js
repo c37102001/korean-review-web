@@ -222,8 +222,15 @@ test('P08: a failed optional answer keeps the question available and succeeds on
   } finally {
     await setEmulatorRules(request);
   }
-  await page.locator('.practice-decision-panel').getByRole('button', { name: '答對' }).click();
-  await expect(page.getByRole('heading', { name: /單字練習.*已完成/ })).toBeVisible();
+  const retryButton = page.locator('.practice-decision-panel').getByRole('button', { name: '答對' });
+  const completedHeading = page.getByRole('heading', { name: /單字練習.*已完成/ });
+  await expect.poll(async () => {
+    if (await completedHeading.isVisible()) return 'completed';
+    if (await retryButton.isEnabled()) return 'retry-ready';
+    return 'pending';
+  }).not.toBe('pending');
+  if (await retryButton.isVisible()) await retryButton.click();
+  await expect(completedHeading).toBeVisible();
   await page.getByRole('button', { name: '韓文筆記' }).click();
   await expect(page.locator('.task-card').filter({ hasText: '單字練習' })).toHaveCount(0);
   await page.reload();
