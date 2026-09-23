@@ -175,6 +175,7 @@ def _hide_terminal_until_toggled(stdscr: curses.window, *, wide: bool) -> None:
 
 def read_terminal_key(stdscr: curses.window, *, wide: bool = False) -> Any:
     key = stdscr.get_wch() if wide else stdscr.getch()
+    stop_korean_speech()
     if _is_character_key(key, "3"):
         _hide_terminal_until_toggled(stdscr, wide=wide)
         return curses.KEY_RESIZE
@@ -202,6 +203,20 @@ def read_terminal_key_with_timeout(
         return None
     finally:
         stdscr.timeout(-1)
+
+
+def read_terminal_key_after_speech(
+    stdscr: curses.window,
+    trailing_delay_ms: int,
+    *,
+    wide: bool = False,
+) -> Any:
+    """Keep accepting cancellation keys while speech plays, then apply the card delay."""
+    while is_korean_speech_playing():
+        key = read_terminal_key_with_timeout(stdscr, 50, wide=wide)
+        if key is not None:
+            return key
+    return read_terminal_key_with_timeout(stdscr, trailing_delay_ms, wide=wide)
 
 
 def auto_audio_control_label() -> str:

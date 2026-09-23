@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib import error, parse, request
 import terminal_offline
-from terminal_app.audio.tts import korean_audio_players, korean_speech_commands
+from terminal_app.audio.tts import InterruptibleSpeechRunner, korean_audio_players, korean_speech_commands
 from terminal_app.audio.youtube import TerminalYoutubeAudioPlayer
 from terminal_app.audio.youtube import download_youtube_audio as _download_youtube_audio
 from terminal_app.audio.youtube import youtube_audio_cache_path as _youtube_audio_cache_path
@@ -120,6 +120,7 @@ def utc_now_iso() -> str:
 
 
 _AUTO_PLAY_AUDIO = True
+_KOREAN_SPEECH_RUNNER = InterruptibleSpeechRunner()
 
 
 def is_auto_audio_enabled() -> bool:
@@ -134,6 +135,14 @@ def set_auto_audio_enabled(enabled: bool) -> bool:
 
 def toggle_auto_audio_enabled() -> bool:
     return set_auto_audio_enabled(not is_auto_audio_enabled())
+
+
+def stop_korean_speech() -> None:
+    _KOREAN_SPEECH_RUNNER.stop()
+
+
+def is_korean_speech_playing() -> bool:
+    return _KOREAN_SPEECH_RUNNER.is_playing()
 
 
 class FirebaseClient:
@@ -1307,26 +1316,70 @@ def play_korean_audio(audio_path: Path) -> bool:
     return False
 
 
-def speak_korean(text: str) -> bool:
-    if not text.strip():
-        return False
-    neural_audio = neural_korean_audio(text)
-    if neural_audio and play_korean_audio(neural_audio):
-        return True
-    for command in korean_speech_commands(text):
+def _interruptible_neural_korean_audio(text: str, generation: int) -> Optional[Path]:
+    edge_tts = shutil.which("edge-tts")
+    if not edge_tts or not korean_audio_players(Path("probe.mp3")):
+        return None
+    cache_root = Path(os.getenv("XDG_CACHE_HOME", Path.home() / ".cache"))
+    cache_dir = cache_root / "korean-review-web" / "tts"
+    cache_key = hashlib.sha256(
+        f"{KOREAN_NEURAL_VOICE}\0{KOREAN_NEURAL_RATE}\0{text}".encode("utf-8")
+    ).hexdigest()
+    audio_path = cache_dir / f"{cache_key}.mp3"
+    if audio_path.exists() and audio_path.stat().st_size > 0:
+        return audio_path
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    temporary_path = cache_dir / f".{cache_key}-{uuid.uuid4().hex}.mp3"
+    try:
+        generated = _KOREAN_SPEECH_RUNNER.run_process(
+            [
+                edge_tts,
+                "--voice", KOREAN_NEURAL_VOICE,
+                f"--rate={KOREAN_NEURAL_RATE}",
+                "--text", text,
+                "--write-media", str(temporary_path),
+            ],
+            generation,
+            30,
+        )
+        if not generated or not temporary_path.exists() or temporary_path.stat().st_size == 0:
+            return None
+        os.replace(temporary_path, audio_path)
+        return audio_path
+    finally:
         try:
-            result = subprocess.run(
-                command,
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=20,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        if result.returncode == 0:
-            return True
-    return False
+            temporary_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _run_korean_speech(text: str, generation: int) -> None:
+    neural_audio = _interruptible_neural_korean_audio(text, generation)
+    if neural_audio and _KOREAN_SPEECH_RUNNER.is_current(generation):
+        for command in korean_audio_players(neural_audio):
+            played = _KOREAN_SPEECH_RUNNER.run_process(command, generation, 20)
+            if played or played is None:
+                return
+    if not _KOREAN_SPEECH_RUNNER.is_current(generation):
+        return
+    for command in korean_speech_commands(text):
+        played = _KOREAN_SPEECH_RUNNER.run_process(command, generation, 20)
+        if played or played is None:
+            return
+
+
+def speak_korean(text: str) -> bool:
+    text = text.strip()
+    if not text:
+        return False
+    if not (
+        (shutil.which("edge-tts") and korean_audio_players(Path("probe.mp3")))
+        or korean_speech_commands(text)
+    ):
+        return False
+    _KOREAN_SPEECH_RUNNER.start(lambda generation: _run_korean_speech(text, generation))
+    return True
 
 
 def youtube_audio_cache_path(subtitle: YoutubeSubtitle) -> Path:

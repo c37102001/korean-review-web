@@ -145,7 +145,11 @@ def run_study(
                     )
             else:
                 message = "這張卡片的反面沒有韓文例句。"
-            key = read_terminal_key_with_timeout(stdscr, 420 if auto_step[2] else 900, wide=True)
+            key = read_terminal_key_after_speech(
+                stdscr,
+                420 if auto_step[2] else 900,
+                wide=True,
+            )
             if key == "\x1b":
                 return
             if key == curses.KEY_UP:

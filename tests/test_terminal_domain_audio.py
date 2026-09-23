@@ -1,11 +1,15 @@
 import curses
 import os
+import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from terminal_app.audio.tts import InterruptibleSpeechRunner
 from terminal_app.audio.youtube import TerminalYoutubeAudioPlayer, download_youtube_audio
 from terminal_app.domain.content import normalize_grammar_notes, normalize_reading_tests, normalize_records, normalize_youtube_subtitles
 from terminal_app.domain.models import YoutubeSubtitle
@@ -86,6 +90,18 @@ class FakeTerminalScreen:
         return None
 
 
+class BlockingSpeechProcess(FakeProcess):
+    def __init__(self):
+        super().__init__()
+        self.wait_started = threading.Event()
+
+    def wait(self, timeout):
+        self.wait_started.set()
+        if self.running:
+            raise subprocess.TimeoutExpired('speech', timeout)
+        return 0
+
+
 class HiddenTerminalScreen:
     def __init__(self, keys):
         self.keys = iter(keys)
@@ -124,6 +140,31 @@ class TerminalDomainAudioTests(unittest.TestCase):
         self.assertFalse(is_auto_audio_enabled())
         self.assertIn('自動語音:關', auto_audio_control_label())
         self.assertTrue(any('自動播放語音：關閉' in line[2] for line in screen.lines))
+
+    def test_any_terminal_key_stops_active_speech_before_it_is_handled(self):
+        screen = FakeTerminalScreen(ord('6'))
+        with patch('terminal_app.ui.curses_helpers.stop_korean_speech') as stop:
+            key = read_terminal_key(screen)
+
+        self.assertEqual(key, ord('6'))
+        stop.assert_called_once_with()
+
+    def test_interruptible_speech_runs_in_background_and_terminates_immediately(self):
+        process = BlockingSpeechProcess()
+        runner = InterruptibleSpeechRunner()
+
+        with patch('terminal_app.audio.tts.subprocess.Popen', return_value=process):
+            started_at = time.monotonic()
+            runner.start(lambda generation: runner.run_process(['player'], generation, 20))
+            self.assertLess(time.monotonic() - started_at, 0.25)
+            self.assertTrue(process.wait_started.wait(timeout=1))
+            runner.stop()
+
+        self.assertTrue(process.terminated)
+        deadline = time.monotonic() + 1
+        while runner.is_playing() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertFalse(runner.is_playing())
 
     def test_three_hides_everything_and_swallows_keys_until_three_is_pressed_again(self):
         screen = HiddenTerminalScreen(['3', '6', 'x', '3'])
