@@ -102,7 +102,7 @@ def run_youtube_subtitle_detail(
                 2,
                 (
                     f"YT字幕 | {subtitle_index + 1}/{len(subtitles)} | {subtitle.title}  "
-                    "Esc=列表 5=中文 4/6=上下篇 7=播放暫停 Enter=跳轉 ↑↓=句 Space=劃線 E=匯出"
+                    "Esc=列表 5=中文 4/6=上下篇 7/Space=播放暫停 Enter=跳轉 ↑↓=句 H=劃線 E=匯出"
                 ),
                 curses.A_BOLD,
             )
@@ -167,7 +167,7 @@ def run_youtube_subtitle_detail(
                 key = "\n"
             if key in ("\x1b", 27):
                 return
-            if key == " ":
+            if isinstance(key, str) and key.lower() == "h":
                 if not entries:
                     message = "這篇字幕沒有可劃線的內容。"
                     continue
@@ -200,7 +200,7 @@ def run_youtube_subtitle_detail(
                 next_entries = next_subtitle.entries
                 next_start = next_entries[0].get("startMs") if next_entries else 0
                 message = prepare_audio(next_subtitle, float(next_start or 0))
-            elif key == "7":
+            elif key in ("7", " "):
                 if audio_player:
                     if audio_player.paused and not audio_player.process and entries and entries[entry_index].get("startMs") is not None:
                         changed = audio_player.play_from(float(entries[entry_index]["startMs"]) / 1000)

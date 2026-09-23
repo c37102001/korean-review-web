@@ -103,7 +103,7 @@ def run_reading_test_detail(
         status = "已學習" if test.learned else "未學習"
         draw_line(stdscr, 0, 2, f"閱讀測驗 | {status}", curses.A_BOLD)
         controls = "↑↓=捲動 ←→=選項 Enter=作答" if not submitted else "↑↓=捲動 R=再做一次"
-        draw_line(stdscr, 1, 2, f"{controls} Space=劃線 E=匯出 L=已學習 Esc=返回", curses.A_DIM)
+        draw_line(stdscr, 1, 2, f"{controls} H=劃線 E=匯出 L=已學習 Esc=返回", curses.A_DIM)
         for row, (line, attr) in enumerate(lines[scroll_offset:scroll_offset + viewport_height], 2):
             draw_line(stdscr, row, 2, line, attr)
         if message:
@@ -117,7 +117,7 @@ def run_reading_test_detail(
         key_text = key.lower() if isinstance(key, str) else ""
         if key in ("\x1b", 27):
             return
-        if key == " ":
+        if key_text == "h":
             entries = _reading_highlight_entries(test)
             def save_highlights(next_highlights):
                 client.set_content_highlights(session, "readingTests", test.id, next_highlights)
