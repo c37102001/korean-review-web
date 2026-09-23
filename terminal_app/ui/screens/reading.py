@@ -126,7 +126,7 @@ def run_reading_test_detail(
             test.highlights = run_highlight_editor(stdscr, entries, test.highlights, save_highlights, 0)
             continue
         if key_text == "e":
-            run_highlight_export(stdscr, test.highlights)
+            run_highlight_export(stdscr, test.highlights, _reading_highlight_entries(test))
             continue
         if key_text == "l":
             previous = test.learned

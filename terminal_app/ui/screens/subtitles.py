@@ -223,7 +223,7 @@ def run_youtube_subtitle_detail(
                 elif subtitle.mode != YT_SUBTITLE_MODE_SRT:
                     message = "JSON 字幕沒有時間戳，無法跳轉音訊。"
             elif key.lower() == "e":
-                run_highlight_export(stdscr, subtitle.highlights)
+                run_highlight_export(stdscr, subtitle.highlights, entries)
     finally:
         if audio_player:
             audio_player.stop()

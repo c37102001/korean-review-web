@@ -178,7 +178,7 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
       />}
       {editingWord && <AddItemsModal title="編輯單字" date={editingWord.date} lockedDate editItem={editingWord} allItems={allItems} folders={folders} onUpdateRecord={onUpdateRecord} onClose={() => setEditingWord(null)} />}
       {!!viewingWords.length && <WordMatchesModal items={viewingWords} allItems={allItems} onSpeak={onSpeak} onOpenItems={setViewingWords} onEdit={(word) => { setViewingWords([]); setEditingWord(word); }} onDelete={onDeleteRecord} onClose={() => setViewingWords([])} />}
-      {exportHighlights && <HighlightExportModal highlights={localHighlights} onClose={() => setExportHighlights(false)} />}
+      {exportHighlights && <HighlightExportModal highlights={localHighlights} entries={entries} onClose={() => setExportHighlights(false)} />}
     </section>
   );
 }

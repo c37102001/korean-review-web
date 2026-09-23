@@ -192,7 +192,8 @@ test('Y03 Y04 Y05: the stubbed player synchronizes SRT and selected text creates
   )?.fields.highlights?.arrayValue.values.length).toBe(1);
   await page.getByRole('button', { name: '匯出劃線' }).click();
   const exportDialog = page.getByRole('dialog', { name: '匯出劃線' });
-  await expect(exportDialog.locator('pre')).toHaveText('첫 문');
+  await expect(exportDialog.locator('.highlight-export-item')).toContainText('첫 문');
+  await expect(exportDialog.locator('.highlight-export-item')).toContainText('첫 문장입니다.');
   await exportDialog.getByRole('button', { name: '複製' }).click();
   await expect(exportDialog.getByRole('button', { name: '已複製' })).toBeVisible();
   await exportDialog.getByRole('button', { name: '關閉' }).click();

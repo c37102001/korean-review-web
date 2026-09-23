@@ -10,6 +10,39 @@ def highlight_lines(highlights: List[Dict[str, Any]]) -> List[str]:
     return [str(item.get("text") or "").strip() for item in highlights if str(item.get("text") or "").strip()]
 
 
+def _sentence_at_offset(source: str, start: int, end: int) -> str:
+    terminators = {".", "?", "!", "。", "？", "！", "\n"}
+    sentence_start = 0
+    for index in range(min(max(0, start), len(source))):
+        if source[index] in terminators:
+            sentence_start = index + 1
+    sentence_end = len(source)
+    for index in range(max(end, sentence_start), len(source)):
+        if source[index] in terminators:
+            sentence_end = index + 1
+            break
+    return source[sentence_start:sentence_end].strip()
+
+
+def highlight_contexts(highlights: List[Dict[str, Any]], entries: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    entry_by_id = {str(entry.get("id") or ""): str(entry.get("ko") or "") for entry in entries}
+    contexts = []
+    for highlight in highlights:
+        text = str(highlight.get("text") or "").strip()
+        source = entry_by_id.get(str(highlight.get("entryId") or ""))
+        start, end = highlight.get("start"), highlight.get("end")
+        if not text or source is None or isinstance(start, bool) or isinstance(end, bool) or not isinstance(start, int) or not isinstance(end, int):
+            continue
+        sentence = _sentence_at_offset(source, start, end)
+        if sentence:
+            contexts.append({"text": text, "sentence": sentence})
+    return contexts
+
+
+def highlight_export_text(highlights: List[Dict[str, Any]], entries: List[Dict[str, str]]) -> str:
+    return "\n\n".join(f"{item['text']}\n{item['sentence']}" for item in highlight_contexts(highlights, entries))
+
+
 def render_highlight_markers(text: str, entry_id: str, highlights: List[Dict[str, Any]]) -> str:
     rendered = str(text)
     ranges = sorted(
@@ -22,13 +55,15 @@ def render_highlight_markers(text: str, entry_id: str, highlights: List[Dict[str
     return rendered
 
 
-def run_highlight_export(stdscr: curses.window, highlights: List[Dict[str, Any]]) -> None:
-    lines = highlight_lines(highlights)
+def run_highlight_export(stdscr: curses.window, highlights: List[Dict[str, Any]], entries: List[Dict[str, str]]) -> None:
+    contexts = highlight_contexts(highlights, entries)
+    lines = [line for index, item in enumerate(contexts) for line in ([item["text"], item["sentence"]] + ([""] if index < len(contexts) - 1 else []))]
+    content = highlight_export_text(highlights, entries)
     offset = 0
     while True:
         stdscr.erase()
         height, _ = stdscr.getmaxyx()
-        draw_line(stdscr, 0, 2, f"匯出劃線 | {len(lines)} 筆", curses.A_BOLD)
+        draw_line(stdscr, 0, 2, f"匯出劃線 | {len(contexts)} 筆", curses.A_BOLD)
         draw_line(stdscr, 1, 2, "↑↓=捲動 C=複製 Esc=返回", curses.A_DIM)
         visible = max(1, height - 4)
         offset = max(0, min(offset, max(0, len(lines) - visible)))
@@ -47,7 +82,7 @@ def run_highlight_export(stdscr: curses.window, highlights: List[Dict[str, Any]]
         elif key == curses.KEY_DOWN:
             offset += 1
         elif isinstance(key, str) and key.lower() == "c":
-            copied = bool(lines) and copy_to_clipboard("\n".join(lines))
+            copied = bool(content) and copy_to_clipboard(content)
             draw_line(stdscr, height - 1, 2, "已複製劃線。" if copied else "無法存取系統剪貼簿。", curses.A_BOLD)
             update_curses_screen(stdscr)
             curses.napms(900)
@@ -145,7 +180,7 @@ def run_highlight_editor(
             else:
                 message = "游標位置沒有劃線。"
         elif isinstance(key, str) and key.lower() == "e":
-            run_highlight_export(stdscr, highlights)
+            run_highlight_export(stdscr, highlights, entries)
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

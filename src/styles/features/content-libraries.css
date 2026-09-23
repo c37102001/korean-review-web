@@ -343,7 +343,23 @@
   color: #26383f;
   font: inherit;
   line-height: 1.8;
-  white-space: pre-wrap;
+}
+
+.highlight-export-item + .highlight-export-item {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #dce8e5;
+}
+
+.highlight-export-item strong,
+.highlight-export-item p {
+  display: block;
+  margin: 0;
+}
+
+.highlight-export-item p {
+  margin-top: 4px;
+  color: #607177;
 }
 
 .reading-passage .reading-translation {

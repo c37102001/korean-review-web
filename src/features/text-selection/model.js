@@ -59,3 +59,39 @@ export function normalizeTextHighlights(highlights = [], entries = []) {
 export function highlightedTextLines(highlights = []) {
   return highlights.map((highlight) => String(highlight?.text || '').trim()).filter(Boolean);
 }
+
+function sentenceAtOffset(source, start, end) {
+  const text = String(source || '');
+  const terminators = new Set(['.', '?', '!', '。', '？', '！', '\n']);
+  let sentenceStart = 0;
+  for (let index = 0; index < start; index += 1) {
+    if (terminators.has(text[index])) sentenceStart = index + 1;
+  }
+  let sentenceEnd = text.length;
+  for (let index = Math.max(end, sentenceStart); index < text.length; index += 1) {
+    if (terminators.has(text[index])) {
+      sentenceEnd = index + 1;
+      break;
+    }
+  }
+  return text.slice(sentenceStart, sentenceEnd).trim();
+}
+
+export function highlightedTextContexts(highlights = [], entries = []) {
+  const entryById = new Map(entries.map((entry) => [String(entry?.id || ''), String(entry?.ko || '')]));
+  return (Array.isArray(highlights) ? highlights : []).flatMap((highlight) => {
+    const text = String(highlight?.text || '').trim();
+    const source = entryById.get(String(highlight?.entryId || ''));
+    const start = Number(highlight?.start);
+    const end = Number(highlight?.end);
+    if (!text || source === undefined || !Number.isSafeInteger(start) || !Number.isSafeInteger(end)) return [];
+    const sentence = sentenceAtOffset(source, start, end);
+    return sentence ? [{ id: String(highlight?.id || `${highlight.entryId}-${start}-${end}`), text, sentence }] : [];
+  });
+}
+
+export function highlightedTextExport(highlights = [], entries = []) {
+  return highlightedTextContexts(highlights, entries)
+    .map(({ text, sentence }) => `${text}\n${sentence}`)
+    .join('\n\n');
+}

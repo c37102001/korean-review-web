@@ -202,7 +202,8 @@ test('R04: selected text opens Naver, highlights persist and export, and saved w
   )?.fields.highlights?.arrayValue.values.length).toBe(1);
   await page.getByRole('button', { name: '匯出劃線' }).click();
   const exportDialog = page.getByRole('dialog', { name: '匯出劃線' });
-  await expect(exportDialog.locator('pre')).toHaveText('요즘');
+  await expect(exportDialog.locator('.highlight-export-item')).toContainText('요즘');
+  await expect(exportDialog.locator('.highlight-export-item')).toContainText('요즘은 물건을 빌려 쓰는 사람이 많아요.');
   await exportDialog.getByRole('button', { name: '複製' }).click();
   await expect(exportDialog.getByRole('button', { name: '已複製' })).toBeVisible();
   await exportDialog.getByRole('button', { name: '關閉' }).click();

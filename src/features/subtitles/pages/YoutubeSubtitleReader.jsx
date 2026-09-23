@@ -303,7 +303,7 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
       />}
       {editingWord && <AddItemsModal title="編輯單字" date={editingWord.date} lockedDate editItem={editingWord} allItems={allItems} folders={folders} onUpdateRecord={onUpdateRecord} onClose={() => setEditingWord(null)} />}
       {!!viewingWords.length && <WordMatchesModal items={viewingWords} allItems={allItems} onSpeak={onSpeak} onOpenItems={setViewingWords} onEdit={(word) => { setViewingWords([]); setEditingWord(word); }} onDelete={onDeleteRecord} onClose={() => setViewingWords([])} />}
-      {exportHighlights && <HighlightExportModal highlights={localHighlights} onClose={() => setExportHighlights(false)} />}
+      {exportHighlights && <HighlightExportModal highlights={localHighlights} entries={note.entries} onClose={() => setExportHighlights(false)} />}
       {editing && <YoutubeSubtitleEditorModal note={editing} onSave={async (nextNote) => { await onSave(nextNote); setEditing(null); }} onClose={() => setEditing(null)} />}
     </section>
   );

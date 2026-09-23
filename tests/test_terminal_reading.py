@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 import terminal_review_practice as terminal
-from terminal_app.ui.screens.highlights import highlight_lines, render_highlight_markers
+from terminal_app.ui.screens.highlights import highlight_contexts, highlight_export_text, highlight_lines, render_highlight_markers
 
 
 def reading_test(learned=False):
@@ -27,6 +27,14 @@ class TerminalReadingTests(unittest.TestCase):
         ]
         self.assertEqual(render_highlight_markers('한국어 글', 'reading-passage', highlights), '⟦한국어⟧ 글')
         self.assertEqual(highlight_lines(highlights), ['한국어', '고르십시오'])
+
+    def test_highlight_export_includes_the_sentence_containing_the_word(self):
+        entries = [{'id': 'passage', 'ko': '첫 문장입니다. 다음 단어가 있는 문장입니다! 마지막입니다.'}]
+        highlights = [{'id': 'word', 'entryId': 'passage', 'text': '단어', 'start': 12, 'end': 14}]
+        self.assertEqual(highlight_contexts(highlights, entries), [
+            {'text': '단어', 'sentence': '다음 단어가 있는 문장입니다!'},
+        ])
+        self.assertEqual(highlight_export_text(highlights, entries), '단어\n다음 단어가 있는 문장입니다!')
 
     def test_chinese_is_revealed_only_after_submitting(self):
         test = reading_test()
