@@ -112,15 +112,15 @@
 | N02 | 兩類筆記新增、編輯 tagged 文字、改分類、取消／儲存：解析後內容與分類回讀正確，錯誤格式不寫入。 | 通：`note-workflows.spec.js`「N01 N02: create both note types, search, collapse, inspect, edit category, and reload」「N01 N02: invalid input and rejected saves retain content and can retry」 |
 | N03 | 釘選／取消釘選、刪除與確認取消：分類內置頂，回讀後狀態正確。 | 通：`note-workflows.spec.js`「N03: pin and delete honor persistence, cancel, and tombstones」 |
 | N04 | 勾選筆記、選取／取消本頁、清除，以及從單篇／多篇開始例句練習：題目只來自選取內容。 | 通：`note-workflows.spec.js`「N04: single and selected note practice use exactly the chosen examples」 |
-| Y01 | 字幕列表搜尋、標籤收合、新增／編輯／刪除、已學習及隱藏已學習：重新進入後內容、分類與可見性正確。 | 局：JSON／SRT parser 與靜態 fixture |
-| Y02 | 新增／編輯字幕時切換 JSON／SRT、設定 YouTube URL 與 tag，格式錯誤顯示提示且不寫入。 | 局：parser |
-| Y03 | 讀者頁開外部 YouTube、播放／暫停、點擊或鍵盤 Enter／空白選 SRT 句子跳時間、播放中提示與字幕置中捲動；無影片時有合理 fallback。 | 局：embed URL、時間查找、靜態 fixture；不依賴真實 YouTube 做 CI |
-| Y04 | 字幕的中文顯示／隱藏、資料夾泡泡、編輯／刪除字幕、全句「+」：各自執行預期操作，隱藏中文不改卡片高度。 | 局：中文切換 fixture |
-| Y05 | 滑鼠與觸控反白韓文（包含句首及調整選取範圍）後新增單字／開 Naver 字典；已新增單字 highlight、點字看意思／開詳情；選字時影片暫停。 | 局：選字／highlight model，無完整 UI 流程 |
-| R01 | 閱讀題列表搜尋、tag 收合、複製 JSON 格式、批次匯入／編輯／刪除：題目數量、內容與 tag 回讀正確。 | 局：reading JSON model |
-| R02 | 閱讀文章選項單選、確認答案、逐段中譯揭示與再做一次：答對／答錯狀態正確；提交後不可更改選項。 | 局：一次作答 fixture |
-| R03 | 閱讀題已學習切換、文章編輯／刪除、開閱讀測驗資料夾：重新進入後狀態正確。 | 缺 |
-| R04 | 文章／題目／選項反白新增單字與查字典、臨時畫線／取消、已建單字點擊看意思／編輯／刪除：只對正確文字和卡片生效；臨時畫線不冒充已持久化。 | 局：選字與匹配 model |
+| Y01 | 字幕列表搜尋、標籤收合、新增／編輯／刪除、已學習及隱藏已學習：重新進入後內容、分類與可見性正確。 | 通：`tests/app/subtitle-workflows.spec.js`，`Y01 Y02: JSON and SRT subtitles persist tags, learned visibility, search, editing, validation, and deletion` |
+| Y02 | 新增／編輯字幕時切換 JSON／SRT、設定 YouTube URL 與 tag，格式錯誤顯示提示且不寫入。 | 通：`tests/app/subtitle-workflows.spec.js`，`Y01 Y02: JSON and SRT subtitles persist tags, learned visibility, search, editing, validation, and deletion` |
+| Y03 | 讀者頁開外部 YouTube、播放／暫停、點擊或鍵盤 Enter／空白選 SRT 句子跳時間、播放中提示與字幕置中捲動；無影片時有合理 fallback。 | 通：`tests/app/subtitle-workflows.spec.js`，`Y03 Y04 Y05: the stubbed player synchronizes SRT and selected text creates a highlighted word`、`Y03: a subtitle without a video shows its fallback and keeps sentence cards non-seekable`、`Y03: a YouTube iframe API failure is reported without blanking the reader` |
+| Y04 | 字幕的中文顯示／隱藏、資料夾泡泡、編輯／刪除字幕、全句「+」：各自執行預期操作，隱藏中文不改卡片高度。 | 通：`tests/app/subtitle-workflows.spec.js`，`Y01 Y02: JSON and SRT subtitles persist tags, learned visibility, search, editing, validation, and deletion`、`Y03 Y04 Y05: the stubbed player synchronizes SRT and selected text creates a highlighted word` |
+| Y05 | 滑鼠與觸控反白韓文（包含句首及調整選取範圍）後新增單字／開 Naver 字典；已新增單字 highlight、點字看意思／開詳情；選字時影片暫停。 | 通：`tests/app/subtitle-workflows.spec.js`，`Y03 Y04 Y05: the stubbed player synchronizes SRT and selected text creates a highlighted word` |
+| R01 | 閱讀題列表搜尋、tag 收合、複製 JSON 格式、批次匯入／編輯／刪除：題目數量、內容與 tag 回讀正確。 | 通：`tests/app/reading-workflows.spec.js`，`R01: copy, batch import, search, collapse, edit, validation, delete, and reload preserve reading data` |
+| R02 | 閱讀文章選項單選、確認答案、逐段中譯揭示與再做一次：答對／答錯狀態正確；提交後不可更改選項。 | 通：`tests/app/reading-workflows.spec.js`，`R02: wrong and correct submissions reveal translations, lock choices, and reset cleanly` |
+| R03 | 閱讀題已學習切換、文章編輯／刪除、開閱讀測驗資料夾：重新進入後狀態正確。 | 通：`tests/app/reading-workflows.spec.js`，`R03: learned state, editing, folder navigation, delete cancellation, and confirmed deletion persist` |
+| R04 | 文章／題目／選項反白新增單字與查字典、臨時畫線／取消、已建單字點擊看意思／編輯／刪除：只對正確文字和卡片生效；臨時畫線不冒充已持久化。 | 通：`tests/app/reading-workflows.spec.js`，`R04: selected text opens Naver, temporary highlights toggle, and persisted words expose details`；同時回歸 pending tombstone 不會使頁面白屏 |
 
 ## 離線、錯誤與測試資料邊界
 
