@@ -2,6 +2,7 @@ import {
   arrayRemove,
   arrayUnion,
   doc,
+  runTransaction,
   serverTimestamp,
   setDoc,
   writeBatch,
@@ -21,6 +22,17 @@ export const folderRepository = {
   subscribe: contentRepository.subscribe,
   async save(uid, folder) {
     await contentRepository.save(uid, folder.id, folder);
+  },
+  async ensure(uid, folder) {
+    await retryFirestoreWrite(() => runTransaction(db, async (transaction) => {
+      const reference = doc(db, 'users', uid, 'folders', folder.id);
+      const snapshot = await transaction.get(reference);
+      if (snapshot.exists() && !snapshot.data()?.deletedAt) return;
+      transaction.set(reference, {
+        ...folder,
+        updatedAt: serverTimestamp(),
+      });
+    }));
   },
   async remove(uid, folderId) {
     await retryFirestoreWrite(() => setDoc(

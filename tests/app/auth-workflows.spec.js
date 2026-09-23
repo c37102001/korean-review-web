@@ -52,6 +52,8 @@ test('G03: logout and reload keep two accounts and their cached folders isolated
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'owner@example.test');
   await seedFolder(page, request, '帳號A專屬資料夾');
+  await page.getByRole('button', { name: '資料夾', exact: true }).click();
+  await expect(page.getByText('帳號A專屬資料夾')).toBeVisible();
   await page.reload();
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
   await expect(page.getByText('帳號A專屬資料夾')).toBeVisible();

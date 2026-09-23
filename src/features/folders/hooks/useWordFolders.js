@@ -43,7 +43,7 @@ export function useWordFolders(user, enabled = true) {
         if (missingSystemFolders.length) {
           folders = sortFolders([...missingSystemFolders, ...folders]);
           missingSystemFolders.forEach((folder) => {
-            folderRepository.save(user.uid, folder)
+            folderRepository.ensure(user.uid, folder)
               .catch((error) => setState((current) => ({
                 ...current,
                 error: `建立${folder.name}資料夾失敗：${error.message}`,

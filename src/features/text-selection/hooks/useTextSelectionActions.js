@@ -8,6 +8,7 @@ function selectionElement(node) {
 
 export function useTextSelectionActions({ entries = [], trackOffsets = false, onValidSelection } = {}) {
   const [selectionAction, setSelectionAction] = useState(null);
+  const selectionActionRef = useRef(null);
   const updateFrameRef = useRef(null);
   const clearTimerRef = useRef(null);
   const entriesRef = useRef(entries);
@@ -18,6 +19,7 @@ export function useTextSelectionActions({ entries = [], trackOffsets = false, on
   const clearSelectionAction = useCallback(({ removeRanges = false } = {}) => {
     if (clearTimerRef.current !== null) window.clearTimeout(clearTimerRef.current);
     clearTimerRef.current = null;
+    selectionActionRef.current = null;
     setSelectionAction(null);
     if (removeRanges) window.getSelection()?.removeAllRanges();
   }, []);
@@ -25,6 +27,7 @@ export function useTextSelectionActions({ entries = [], trackOffsets = false, on
   const showSelectionAction = useCallback((next) => {
     if (clearTimerRef.current !== null) window.clearTimeout(clearTimerRef.current);
     clearTimerRef.current = null;
+    selectionActionRef.current = next;
     setSelectionAction(next);
   }, []);
 
@@ -32,6 +35,7 @@ export function useTextSelectionActions({ entries = [], trackOffsets = false, on
     if (clearTimerRef.current !== null) window.clearTimeout(clearTimerRef.current);
     clearTimerRef.current = window.setTimeout(() => {
       clearTimerRef.current = null;
+      selectionActionRef.current = null;
       setSelectionAction(null);
     }, 120);
   }, []);
@@ -42,6 +46,7 @@ export function useTextSelectionActions({ entries = [], trackOffsets = false, on
       updateFrameRef.current = null;
       const selection = window.getSelection();
       if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) {
+        if (selectionActionRef.current?.highlight) return;
         scheduleClear();
         return;
       }

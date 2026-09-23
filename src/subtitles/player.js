@@ -6,26 +6,33 @@ export function loadYoutubeIframeApi() {
   }
   if (window.YT?.Player) return Promise.resolve(window.YT);
   if (youtubeIframeApiPromise) return youtubeIframeApiPromise;
-  youtubeIframeApiPromise = new Promise((resolve, reject) => {
+  const promise = new Promise((resolve, reject) => {
     const previousReady = window.onYouTubeIframeAPIReady;
-    window.onYouTubeIframeAPIReady = () => {
+    const handleReady = () => {
+      if (window.onYouTubeIframeAPIReady === handleReady) window.onYouTubeIframeAPIReady = previousReady;
       previousReady?.();
       if (window.YT?.Player) resolve(window.YT);
       else reject(new Error('YouTube 播放器初始化失敗'));
     };
+    window.onYouTubeIframeAPIReady = handleReady;
     let script = document.querySelector('script[data-youtube-iframe-api]');
+    let shouldAppend = false;
     if (!script) {
       script = document.createElement('script');
       script.src = 'https://www.youtube.com/iframe_api';
       script.async = true;
       script.dataset.youtubeIframeApi = 'true';
-      document.head.appendChild(script);
+      shouldAppend = true;
     }
     script.addEventListener('error', () => {
-      youtubeIframeApiPromise = null;
+      if (youtubeIframeApiPromise === promise) youtubeIframeApiPromise = null;
+      if (window.onYouTubeIframeAPIReady === handleReady) window.onYouTubeIframeAPIReady = previousReady;
+      script.remove();
       reject(new Error('YouTube 播放器載入失敗'));
     }, { once: true });
+    if (shouldAppend) document.head.appendChild(script);
   });
+  youtubeIframeApiPromise = promise;
   return youtubeIframeApiPromise;
 }
 

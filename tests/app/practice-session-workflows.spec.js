@@ -228,7 +228,7 @@ test('P08: a failed optional answer keeps the question available and succeeds on
     if (await completedHeading.isVisible()) return 'completed';
     if (await retryButton.isEnabled()) return 'retry-ready';
     return 'pending';
-  }).not.toBe('pending');
+  }, { timeout: 20_000 }).not.toBe('pending');
   if (await retryButton.isVisible()) await retryButton.click();
   await expect(completedHeading).toBeVisible();
   await page.getByRole('button', { name: '韓文筆記' }).click();

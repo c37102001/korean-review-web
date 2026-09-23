@@ -84,8 +84,12 @@ test('R01: copy, batch import, search, collapse, edit, validation, delete, and r
   await dialog.getByRole('button', { name: '儲存修改' }).click();
   await expect(page.locator('.folder-tag-group').filter({ hasText: '生活' })).toBeVisible();
 
+  await expect.poll(async () => (
+    (await listDocuments(page, request, 'readingTests'))
+      .find((doc) => doc.fields.tag?.stringValue === '生活')
+      ?.fields.passage.mapValue.fields.zh.stringValue
+  )).toBe('最近有很多人借物品。');
   const edited = (await listDocuments(page, request, 'readingTests')).find((doc) => doc.fields.tag?.stringValue === '生活');
-  expect(edited.fields.passage.mapValue.fields.zh.stringValue).toBe('最近有很多人借物品。');
   page.once('dialog', (confirmation) => confirmation.dismiss());
   await readingCard(page, '요즘은').getByRole('button', { name: '刪除閱讀題' }).click();
   await expect(readingCard(page, '요즘은')).toBeVisible();

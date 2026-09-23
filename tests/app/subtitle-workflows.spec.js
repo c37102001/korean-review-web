@@ -255,9 +255,8 @@ test('Y03: a YouTube iframe API failure is reported without blanking the reader'
   });
   await openSubtitles(page);
   await subtitleCard(page, '播放器錯誤').click();
-  await expect.poll(() => page.locator('script[data-youtube-iframe-api]').count()).toBe(1);
-  await page.locator('script[data-youtube-iframe-api]').evaluate((script) => script.dispatchEvent(new Event('error')));
   await expect(page.locator('.form-error')).toContainText('YouTube 播放器載入失敗');
+  await expect(page.locator('script[data-youtube-iframe-api]')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: '播放器錯誤' })).toBeVisible();
   await expect(page.locator('.yt-subtitle-entry')).toHaveCount(1);
   assertNoProductionRequests();
