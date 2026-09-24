@@ -108,6 +108,15 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
     saveHighlights(localHighlights.filter((highlight) => highlight.id !== selectionAction.highlight.id), previousHighlights);
     setSelectionAction(null);
   };
+  const clearHighlights = () => saveHighlights([], localHighlights);
+  const finishQuickAdd = () => {
+    const sourceHighlightId = quickAdd?.highlight?.id;
+    setQuickAdd(null);
+    if (sourceHighlightId) {
+      const previousHighlights = localHighlights;
+      saveHighlights(localHighlights.filter((highlight) => highlight.id !== sourceHighlightId), previousHighlights);
+    }
+  };
   const deleteWord = async (word) => {
     if (!window.confirm(`確定要刪除「${word.ko}」嗎？`)) return;
     setError('');
@@ -174,11 +183,12 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
         onUpdateRecord={onUpdateRecord}
         onWriteRecords={onWriteRecords}
         onEditExisting={(item) => { setQuickAdd(null); setEditingWord(item); }}
+        onSaved={finishQuickAdd}
         onClose={() => setQuickAdd(null)}
       />}
       {editingWord && <AddItemsModal title="編輯單字" date={editingWord.date} lockedDate editItem={editingWord} allItems={allItems} folders={folders} onUpdateRecord={onUpdateRecord} onClose={() => setEditingWord(null)} />}
       {!!viewingWords.length && <WordMatchesModal items={viewingWords} allItems={allItems} onSpeak={onSpeak} onOpenItems={setViewingWords} onEdit={(word) => { setViewingWords([]); setEditingWord(word); }} onDelete={onDeleteRecord} onClose={() => setViewingWords([])} />}
-      {exportHighlights && <HighlightExportModal highlights={localHighlights} entries={entries} onClose={() => setExportHighlights(false)} />}
+      {exportHighlights && <HighlightExportModal highlights={localHighlights} entries={entries} onClear={clearHighlights} onClose={() => setExportHighlights(false)} />}
     </section>
   );
 }

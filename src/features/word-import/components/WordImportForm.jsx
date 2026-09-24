@@ -32,7 +32,7 @@ function describeImportError(error) {
   return { code: code || error?.name || 'error', message };
 }
 
-export function AddItemsModal({ title, date, lockedDate = false, initialKo = '', initialVariants = [], onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], folders = [], initialFolderIds = [], requiredFolderIds = [], onClose }) {
+export function AddItemsModal({ title, date, lockedDate = false, initialKo = '', initialVariants = [], onAddRecords, onUpdateRecord, onWriteRecords, onEditExisting, editItem, allItems = [], folders = [], initialFolderIds = [], requiredFolderIds = [], onSaved, onClose }) {
   const [busy, setBusy] = useState(false);
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
@@ -54,7 +54,10 @@ export function AddItemsModal({ title, date, lockedDate = false, initialKo = '',
           initialFolderIds={initialFolderIds}
           requiredFolderIds={requiredFolderIds}
           onBusyChange={setBusy}
-          onSaved={onClose}
+          onSaved={() => {
+            onSaved?.();
+            onClose();
+          }}
           compactPanel
         />
       </div>

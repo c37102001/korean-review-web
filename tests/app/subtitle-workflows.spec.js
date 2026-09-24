@@ -196,18 +196,23 @@ test('Y03 Y04 Y05: the stubbed player synchronizes SRT and selected text creates
   await expect(exportDialog.locator('.highlight-export-item')).toContainText('첫 문장입니다.');
   await exportDialog.getByRole('button', { name: '複製' }).click();
   await expect(exportDialog.getByRole('button', { name: '已複製' })).toBeVisible();
+  await exportDialog.getByRole('button', { name: '刪除所有劃線' }).click();
+  await expect(exportDialog.locator('.highlight-export-item')).toHaveCount(0);
+  await expect.poll(async () => (
+    await readDocument(page, request, 'ytSubtitles', 'player-note')
+  )?.fields.highlights?.arrayValue.values?.length || 0).toBe(0);
   await exportDialog.getByRole('button', { name: '關閉' }).click();
+  await selectText(page, korean, 0, 3);
+  await page.getByRole('button', { name: /畫線標記/ }).click();
+  await expect.poll(async () => (
+    await readDocument(page, request, 'ytSubtitles', 'player-note')
+  )?.fields.highlights?.arrayValue.values?.length || 0).toBe(1);
   await page.reload();
   await openSubtitles(page);
   await subtitleCard(page, '播放同步').click();
   highlight = korean.locator('.reading-text-highlight');
   await expect(highlight).toHaveText('첫 문');
   await highlight.click();
-  await page.getByRole('button', { name: /刪除.*畫線/ }).click();
-  await expect.poll(async () => (
-    await readDocument(page, request, 'ytSubtitles', 'player-note')
-  )?.fields.highlights?.arrayValue.values?.length || 0).toBe(0);
-  await selectText(page, korean, 0, 3);
   await page.getByRole('button', { name: '將選取的韓文新增為單字' }).click();
   let addDialog = page.getByRole('dialog');
   await expect(addDialog.getByLabel('韓文 *')).toHaveValue('첫 문');
@@ -215,6 +220,10 @@ test('Y03 Y04 Y05: the stubbed player synchronizes SRT and selected text creates
   await addDialog.locator('.meaning-editor-card').getByLabel('中文 *').fill('第一句的開頭');
   await addDialog.getByRole('button', { name: '新增到單字庫' }).click();
   await expect(addDialog).toHaveCount(0);
+  await expect(highlight).toHaveCount(0);
+  await expect.poll(async () => (
+    await readDocument(page, request, 'ytSubtitles', 'player-note')
+  )?.fields.highlights?.arrayValue.values?.length || 0).toBe(0);
   const known = korean.locator('.subtitle-known-word').filter({ hasText: '첫 문' });
   await expect(known).toBeVisible();
   await known.click();

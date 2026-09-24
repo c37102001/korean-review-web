@@ -215,6 +215,15 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
     saveHighlights(localHighlights.filter((highlight) => highlight.id !== selectionAction.highlight.id), previousHighlights);
     setSelectionAction(null);
   };
+  const clearHighlights = () => saveHighlights([], localHighlights);
+  const finishQuickAdd = () => {
+    const sourceHighlightId = quickAdd?.highlight?.id;
+    setQuickAdd(null);
+    if (sourceHighlightId) {
+      const previousHighlights = localHighlights;
+      saveHighlights(localHighlights.filter((highlight) => highlight.id !== sourceHighlightId), previousHighlights);
+    }
+  };
 
   return (
     <section className="page yt-reader-page">
@@ -299,11 +308,12 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
         onUpdateRecord={onUpdateRecord}
         onWriteRecords={onWriteRecords}
         onEditExisting={(item) => { setQuickAdd(null); setEditingWord(item); }}
+        onSaved={finishQuickAdd}
         onClose={() => setQuickAdd(null)}
       />}
       {editingWord && <AddItemsModal title="編輯單字" date={editingWord.date} lockedDate editItem={editingWord} allItems={allItems} folders={folders} onUpdateRecord={onUpdateRecord} onClose={() => setEditingWord(null)} />}
       {!!viewingWords.length && <WordMatchesModal items={viewingWords} allItems={allItems} onSpeak={onSpeak} onOpenItems={setViewingWords} onEdit={(word) => { setViewingWords([]); setEditingWord(word); }} onDelete={onDeleteRecord} onClose={() => setViewingWords([])} />}
-      {exportHighlights && <HighlightExportModal highlights={localHighlights} entries={note.entries} onClose={() => setExportHighlights(false)} />}
+      {exportHighlights && <HighlightExportModal highlights={localHighlights} entries={note.entries} onClear={clearHighlights} onClose={() => setExportHighlights(false)} />}
       {editing && <YoutubeSubtitleEditorModal note={editing} onSave={async (nextNote) => { await onSave(nextNote); setEditing(null); }} onClose={() => setEditing(null)} />}
     </section>
   );

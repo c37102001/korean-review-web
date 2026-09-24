@@ -210,7 +210,17 @@ test('R04: selected text opens Naver, highlights persist and export, and saved w
   await expect(exportDialog.locator('.highlight-export-item')).toContainText('요즘은 물건을 빌려 쓰는 사람이 많아요.');
   await exportDialog.getByRole('button', { name: '複製' }).click();
   await expect(exportDialog.getByRole('button', { name: '已複製' })).toBeVisible();
+  await exportDialog.getByRole('button', { name: '刪除所有劃線' }).click();
+  await expect(exportDialog.locator('.highlight-export-item')).toHaveCount(0);
+  await expect.poll(async () => (
+    await readDocument(page, request, 'readingTests', 'selection-test')
+  )?.fields.highlights?.arrayValue.values?.length || 0).toBe(0);
   await exportDialog.getByRole('button', { name: '關閉' }).click();
+  await selectText(page, passage, 0, 2);
+  await page.getByRole('button', { name: /畫線標記/ }).click();
+  await expect.poll(async () => (
+    await readDocument(page, request, 'readingTests', 'selection-test')
+  )?.fields.highlights?.arrayValue.values?.length || 0).toBe(1);
   await page.reload();
   await openReading(page);
   await page.locator('.reading-test-card').click();
@@ -218,13 +228,6 @@ test('R04: selected text opens Naver, highlights persist and export, and saved w
   highlight = reloadedPassage.locator('.reading-text-highlight');
   await expect(highlight).toHaveText('요즘');
   await highlight.click();
-  await page.getByRole('button', { name: /刪除.*畫線/ }).click();
-  await expect(highlight).toHaveCount(0);
-  await expect.poll(async () => (
-    await readDocument(page, request, 'readingTests', 'selection-test')
-  )?.fields.highlights?.arrayValue.values?.length || 0).toBe(0);
-
-  await selectText(page, reloadedPassage, 0, 2);
   await page.getByRole('button', { name: '將選取的韓文新增為單字' }).click();
   const addDialog = page.getByRole('dialog');
   await expect(addDialog.getByLabel('韓文 *')).toHaveValue('요즘');
@@ -232,6 +235,10 @@ test('R04: selected text opens Naver, highlights persist and export, and saved w
   await addDialog.locator('.meaning-editor-card').getByLabel('中文 *').fill('最近');
   await addDialog.getByRole('button', { name: '新增到單字庫' }).click();
   await expect(addDialog).toHaveCount(0);
+  await expect(highlight).toHaveCount(0);
+  await expect.poll(async () => (
+    await readDocument(page, request, 'readingTests', 'selection-test')
+  )?.fields.highlights?.arrayValue.values?.length || 0).toBe(0);
   await expect.poll(async () => (
     (await listDocuments(page, request, 'records')).filter((doc) => !doc.fields.deletedAt).length
   )).toBe(1);

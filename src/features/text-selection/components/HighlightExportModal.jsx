@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { Check, Copy, X } from 'lucide-react';
+import { Check, Copy, Trash2, X } from 'lucide-react';
 
 import { copyText } from '../../../shared/clipboard.js';
 import { highlightedTextContexts, highlightedTextExport } from '../model.js';
 
-export function HighlightExportModal({ highlights = [], entries = [], onClose }) {
+export function HighlightExportModal({ highlights = [], entries = [], onClear, onClose }) {
   const [copied, setCopied] = useState(false);
   const items = highlightedTextContexts(highlights, entries);
   const content = highlightedTextExport(highlights, entries);
@@ -21,6 +21,7 @@ export function HighlightExportModal({ highlights = [], entries = [], onClose })
         <h2>匯出劃線</h2>
         {items.length ? <div className="highlight-export-content">{items.map((item) => <div className="highlight-export-item" key={item.id}><strong>{item.text}</strong><p>{item.sentence}</p></div>)}</div> : <div className="empty small-empty">目前沒有劃線內容。</div>}
         <div className="form-actions">
+          <button type="button" className="danger-soft" disabled={!items.length} onClick={onClear}><Trash2 size={17} />刪除所有劃線</button>
           <button type="button" className="primary" disabled={!items.length} onClick={copy}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? '已複製' : '複製'}</button>
         </div>
       </div>
