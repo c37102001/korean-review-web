@@ -1242,7 +1242,7 @@ test('daily grammar review stays completed for the day and skips incomplete exam
   assert.deepEqual(completed.questions, []);
 });
 
-test('reading test JSON imports multiple bilingual questions and preserves their order', () => {
+test('reading test JSON imports multiple bilingual articles and preserves their order', () => {
   const parsed = helpers.parseReadingTestsJson(JSON.stringify({
     schemaVersion: 1,
     data: [
@@ -1270,9 +1270,36 @@ test('reading test JSON imports multiple bilingual questions and preserves their
 
   assert.equal(parsed.length, 2);
   assert.deepEqual(parsed.map((test) => test.order), [0, 1]);
-  assert.equal(parsed[0].answer, '2');
+  assert.equal(parsed[0].questions[0].answer, '2');
   assert.equal(parsed[1].learned, true);
   assert.notEqual(parsed[0].id, parsed[1].id);
+});
+
+test('one reading article accepts one to three independently answered questions', () => {
+  const questions = ['內容', '主旨', '態度'].map((label, index) => ({
+    id: String(index + 1),
+    question: { ko: `${label} 질문`, zh: `${label}問題` },
+    options: [
+      { id: '1', ko: `${label} 하나`, zh: `${label}一` },
+      { id: '2', ko: `${label} 둘`, zh: `${label}二` },
+    ],
+    answer: index % 2 ? '2' : '1',
+  }));
+  const [parsed] = helpers.parseReadingTestsJson(JSON.stringify({
+    schemaVersion: 2,
+    data: [{ passage: { ko: '하나의 글', zh: '同一篇文章' }, questions }],
+  }));
+
+  assert.equal(parsed.questions.length, 3);
+  assert.deepEqual(parsed.questions.map((question) => question.answer), ['1', '2', '1']);
+  const exported = JSON.parse(helpers.formatReadingTestsJson([parsed]));
+  assert.equal(exported.schemaVersion, 2);
+  assert.deepEqual(exported.data[0].questions, questions);
+
+  assert.throws(() => helpers.parseReadingTestsJson(JSON.stringify({
+    schemaVersion: 2,
+    data: [{ passage: { ko: '글', zh: '文章' }, questions: [...questions, questions[0]] }],
+  })), /questions 必須包含 1 至 3 題/);
 });
 
 test('reading test JSON rejects an answer that is not one of the option ids', () => {

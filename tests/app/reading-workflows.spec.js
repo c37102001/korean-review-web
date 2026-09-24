@@ -126,6 +126,45 @@ test('R02: wrong and correct submissions reveal translations, lock choices, and 
   assertNoProductionRequests();
 });
 
+test('R02: one passage supports multiple questions with independent options and answers', async ({ page, request }) => {
+  const assertNoProductionRequests = await prepareAppPage(page);
+  await register(page, 'reading-multiple@example.test');
+  await seedReading(page, request, 'multiple-test', {
+    questions: [
+      {
+        id: 'content',
+        question: { ko: '글의 내용은 무엇입니까?', zh: '文章內容是什麼？' },
+        options: [{ id: '1', ko: '물건을 빌립니다.', zh: '租借物品。' }, { id: '2', ko: '물건을 버립니다.', zh: '丟棄物品。' }],
+        answer: '1',
+      },
+      {
+        id: 'benefit',
+        question: { ko: '어떤 점이 좋습니까?', zh: '有什麼優點？' },
+        options: [{ id: '1', ko: '비용이 늘어납니다.', zh: '費用增加。' }, { id: '2', ko: '자원을 아낍니다.', zh: '節省資源。' }],
+        answer: '2',
+      },
+    ],
+  });
+  await openReading(page);
+  await page.locator('.reading-test-card').click();
+
+  const groups = page.getByRole('radiogroup');
+  await expect(groups).toHaveCount(2);
+  const submit = page.getByRole('button', { name: '確認答案' });
+  await groups.nth(0).getByRole('radio').nth(0).check();
+  await expect(submit).toBeDisabled();
+  await groups.nth(1).getByRole('radio').nth(0).check();
+  await expect(submit).toBeEnabled();
+  await submit.click();
+
+  await expect(page.locator('.reading-result')).toContainText('答對 1 / 2 題');
+  await expect(page.locator('.reading-question').nth(0)).toContainText('文章內容是什麼？');
+  await expect(page.locator('.reading-question').nth(1)).toContainText('有什麼優點？');
+  await expect(page.locator('.reading-option.correct')).toHaveCount(2);
+  await expect(page.locator('.reading-option.incorrect')).toHaveCount(1);
+  assertNoProductionRequests();
+});
+
 test('R03: learned state, editing, folder navigation, delete cancellation, and confirmed deletion persist', async ({ page, request }) => {
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'reading-state@example.test');

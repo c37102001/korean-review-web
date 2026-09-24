@@ -170,35 +170,56 @@ def normalize_reading_tests(records: List[Dict[str, Any]]) -> List[ReadingTest]:
     for record in records:
         test_id = str(record.get("id") or record.get("_docId") or "")
         passage = record.get("passage") if isinstance(record.get("passage"), dict) else {}
-        question = record.get("question") if isinstance(record.get("question"), dict) else {}
-        options = []
-        for index, option in enumerate(record.get("options") or []):
-            if not isinstance(option, dict):
+        raw_questions = record.get("questions") if isinstance(record.get("questions"), list) else [{
+            "id": "1", "question": record.get("question"), "options": record.get("options"), "answer": record.get("answer"),
+        }]
+        questions = []
+        for question_index, raw_question in enumerate(raw_questions):
+            if not isinstance(raw_question, dict):
                 continue
-            option_id = str(option.get("id") or index + 1)
-            ko = str(option.get("ko") or "").strip()
-            zh = str(option.get("zh") or "").strip()
-            if ko and zh:
-                options.append({"id": option_id, "ko": ko, "zh": zh})
-        answer = str(record.get("answer") or "").strip()
+            question = raw_question.get("question") if isinstance(raw_question.get("question"), dict) else {}
+            options = []
+            for option_index, option in enumerate(raw_question.get("options") or []):
+                if not isinstance(option, dict):
+                    continue
+                option_id = str(option.get("id") or option_index + 1)
+                ko = str(option.get("ko") or "").strip()
+                zh = str(option.get("zh") or "").strip()
+                if ko and zh:
+                    options.append({"id": option_id, "ko": ko, "zh": zh})
+            answer = str(raw_question.get("answer") or "").strip()
+            if str(question.get("ko") or "").strip() and str(question.get("zh") or "").strip() and answer in {option["id"] for option in options}:
+                questions.append({
+                    "id": str(raw_question.get("id") or question_index + 1),
+                    "question": {"ko": str(question.get("ko") or "").strip(), "zh": str(question.get("zh") or "").strip()},
+                    "options": options,
+                    "answer": answer,
+                })
+        first_question = questions[0] if questions else {"question": {}, "options": [], "answer": ""}
         if (
             not test_id
             or not str(passage.get("ko") or "").strip()
-            or not str(question.get("ko") or "").strip()
-            or answer not in {option["id"] for option in options}
+            or not questions
+            or len(questions) > 3
         ):
             continue
         reading_entries = [
             {"id": f"{test_id}-passage", "ko": str(passage.get("ko") or "").strip()},
-            {"id": f"{test_id}-question", "ko": str(question.get("ko") or "").strip()},
-            *({"id": f"{test_id}-option-{option['id']}", "ko": option["ko"]} for option in options),
         ]
+        for question_index, normalized_question in enumerate(questions):
+            question_prefix = f"{test_id}-question" if question_index == 0 else f"{test_id}-question-{normalized_question['id']}"
+            reading_entries.append({"id": question_prefix, "ko": normalized_question["question"]["ko"]})
+            reading_entries.extend({
+                "id": f"{test_id}-option-{option['id']}" if question_index == 0 else f"{question_prefix}-option-{option['id']}",
+                "ko": option["ko"],
+            } for option in normalized_question["options"])
         tests.append(ReadingTest(
             id=test_id,
             passage={"ko": str(passage.get("ko") or "").strip(), "zh": str(passage.get("zh") or "").strip()},
-            question={"ko": str(question.get("ko") or "").strip(), "zh": str(question.get("zh") or "").strip()},
-            options=options,
-            answer=answer,
+            question=first_question["question"],
+            options=first_question["options"],
+            answer=first_question["answer"],
+            questions=questions,
             highlights=normalize_text_highlights(record.get("highlights"), reading_entries),
             learned=record.get("learned") is True,
             order=int(record.get("order")) if isinstance(record.get("order"), int) else 0,

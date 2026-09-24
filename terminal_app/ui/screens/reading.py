@@ -5,20 +5,32 @@ from terminal_app.ui.screens.highlights import render_highlight_markers, run_hig
 
 
 def _reading_highlight_entries(test: ReadingTest) -> List[Dict[str, str]]:
-    return [
-        {"id": f"{test.id}-passage", "ko": test.passage["ko"]},
-        {"id": f"{test.id}-question", "ko": test.question["ko"]},
-        *({"id": f"{test.id}-option-{option['id']}", "ko": option["ko"]} for option in test.options),
-    ]
+    entries = [{"id": f"{test.id}-passage", "ko": test.passage["ko"]}]
+    for question_index, question in enumerate(_reading_questions(test)):
+        prefix = f"{test.id}-question" if question_index == 0 else f"{test.id}-question-{question['id']}"
+        entries.append({"id": prefix, "ko": question["question"]["ko"]})
+        entries.extend({
+            "id": f"{test.id}-option-{option['id']}" if question_index == 0 else f"{prefix}-option-{option['id']}",
+            "ko": option["ko"],
+        } for option in question["options"])
+    return entries
+
+
+def _reading_questions(test: ReadingTest) -> List[Dict[str, Any]]:
+    return test.questions or [{
+        "id": "1", "question": test.question, "options": test.options, "answer": test.answer,
+    }]
 
 def _reading_content_lines(
     test: ReadingTest,
     width: int,
-    selected_id: str,
+    selected_ids: Any,
     submitted: bool,
 ) -> Tuple[List[Tuple[str, int]], Dict[str, int]]:
     lines: List[Tuple[str, int]] = []
-    option_rows: Dict[str, int] = {}
+    option_rows: Dict[Tuple[str, str], int] = {}
+    questions = _reading_questions(test)
+    selected_by_question = selected_ids if isinstance(selected_ids, dict) else {questions[0]["id"]: selected_ids}
 
     def append(text: str = "", attr: int = 0, indent: str = "") -> None:
         wrapped = _split_by_cell_width(text, max(1, width - _text_cell_width(indent)))
@@ -28,27 +40,34 @@ def _reading_content_lines(
     if submitted and test.passage.get("zh"):
         append(test.passage["zh"], curses.A_DIM)
     append()
-    append(render_highlight_markers(test.question["ko"], f"{test.id}-question", test.highlights), curses.A_BOLD)
-    if submitted and test.question.get("zh"):
-        append(test.question["zh"], curses.A_DIM)
-    append()
-    for index, option in enumerate(test.options):
-        option_rows[option["id"]] = len(lines)
-        marker = "●" if option["id"] == selected_id else "○"
-        if submitted:
-            if option["id"] == test.answer:
-                marker = "✓"
-            elif option["id"] == selected_id:
-                marker = "✗"
-        attr = curses.A_BOLD if option["id"] in (selected_id, test.answer if submitted else "") else 0
-        option_text = render_highlight_markers(option["ko"], f"{test.id}-option-{option['id']}", test.highlights)
-        append(f"{marker} {index + 1}. {option_text}", attr)
-        if submitted and option.get("zh"):
-            append(option["zh"], curses.A_DIM, "    ")
+    for question_index, question in enumerate(questions):
+        selected_id = selected_by_question.get(question["id"], "")
+        prefix = f"{test.id}-question" if question_index == 0 else f"{test.id}-question-{question['id']}"
+        if len(questions) > 1:
+            append(f"第 {question_index + 1} 題", curses.A_BOLD)
+        append(render_highlight_markers(question["question"]["ko"], prefix, test.highlights), curses.A_BOLD)
+        if submitted and question["question"].get("zh"):
+            append(question["question"]["zh"], curses.A_DIM)
         append()
-    if submitted:
-        correct = selected_id == test.answer
-        append("答對" if correct else f"答錯，正確答案是 {test.answer}", curses.A_BOLD)
+        for option_index, option in enumerate(question["options"]):
+            option_rows[(question["id"], option["id"])] = len(lines)
+            marker = "●" if option["id"] == selected_id else "○"
+            if submitted:
+                if option["id"] == question["answer"]:
+                    marker = "✓"
+                elif option["id"] == selected_id:
+                    marker = "✗"
+            attr = curses.A_BOLD if option["id"] in (selected_id, question["answer"] if submitted else "") else 0
+            option_entry_id = f"{test.id}-option-{option['id']}" if question_index == 0 else f"{prefix}-option-{option['id']}"
+            option_text = render_highlight_markers(option["ko"], option_entry_id, test.highlights)
+            append(f"{marker} {option_index + 1}. {option_text}", attr)
+            if submitted and option.get("zh"):
+                append(option["zh"], curses.A_DIM, "    ")
+            append()
+        if submitted:
+            correct = selected_id == question["answer"]
+            append("答對" if correct else f"答錯，正確答案是 {question['answer']}", curses.A_BOLD)
+            append()
     return lines, option_rows
 
 
@@ -86,8 +105,10 @@ def run_reading_test_detail(
     client: FirebaseClient,
     session: AuthSession,
 ) -> None:
-    selected_index = 0
-    selected_id = test.options[0]["id"]
+    questions = _reading_questions(test)
+    active_question_index = 0
+    selected_indices = {question["id"]: 0 for question in questions}
+    selected_ids = {question["id"]: question["options"][0]["id"] for question in questions}
     submitted = False
     scroll_offset = 0
     message = ""
@@ -97,12 +118,12 @@ def run_reading_test_detail(
         stdscr.erase()
         height, width = stdscr.getmaxyx()
         content_width = max(10, width - 4)
-        lines, option_rows = _reading_content_lines(test, content_width, selected_id, submitted)
+        lines, option_rows = _reading_content_lines(test, content_width, selected_ids, submitted)
         viewport_height = max(1, height - 5)
         scroll_offset = max(0, min(scroll_offset, max(0, len(lines) - viewport_height)))
         status = "已學習" if test.learned else "未學習"
         draw_line(stdscr, 0, 2, f"閱讀測驗 | {status}", curses.A_BOLD)
-        controls = "↑↓=捲動 ←→=選項 Enter=作答" if not submitted else "↑↓=捲動 R=再做一次"
+        controls = "↑↓=捲動 P/N=切題 ←→=選項 Enter=作答" if not submitted and len(questions) > 1 else "↑↓=捲動 ←→=選項 Enter=作答" if not submitted else "↑↓=捲動 R=再做一次"
         draw_line(stdscr, 1, 2, f"{controls} H=劃線 E=匯出 L=已學習 Esc=返回", curses.A_DIM)
         for row, (line, attr) in enumerate(lines[scroll_offset:scroll_offset + viewport_height], 2):
             draw_line(stdscr, row, 2, line, attr)
@@ -153,30 +174,37 @@ def run_reading_test_detail(
                 scroll_offset += viewport_height
             elif key_text == "r":
                 submitted = False
-                selected_id = test.options[0]["id"]
-                selected_index = 0
+                active_question_index = 0
+                selected_indices = {question["id"]: 0 for question in questions}
+                selected_ids = {question["id"]: question["options"][0]["id"] for question in questions}
                 scroll_offset = 0
                 message = ""
             continue
+        active_question = questions[active_question_index]
         if key == curses.KEY_UP:
             scroll_offset -= 1
         elif key == curses.KEY_DOWN:
             scroll_offset += 1
+        elif key_text == "p" and len(questions) > 1:
+            active_question_index = (active_question_index - 1) % len(questions)
+        elif key_text == "n" and len(questions) > 1:
+            active_question_index = (active_question_index + 1) % len(questions)
         elif key == curses.KEY_LEFT:
-            selected_index = (selected_index - 1) % len(test.options)
-            selected_id = test.options[selected_index]["id"]
+            selected_indices[active_question["id"]] = (selected_indices[active_question["id"]] - 1) % len(active_question["options"])
+            selected_ids[active_question["id"]] = active_question["options"][selected_indices[active_question["id"]]]["id"]
         elif key == curses.KEY_RIGHT:
-            selected_index = (selected_index + 1) % len(test.options)
-            selected_id = test.options[selected_index]["id"]
-        elif isinstance(key, str) and key.isdigit() and 1 <= int(key) <= len(test.options):
-            selected_index = int(key) - 1
-            selected_id = test.options[selected_index]["id"]
-            submitted = True
+            selected_indices[active_question["id"]] = (selected_indices[active_question["id"]] + 1) % len(active_question["options"])
+            selected_ids[active_question["id"]] = active_question["options"][selected_indices[active_question["id"]]]["id"]
+        elif isinstance(key, str) and key.isdigit() and 1 <= int(key) <= len(active_question["options"]):
+            selected_indices[active_question["id"]] = int(key) - 1
+            selected_ids[active_question["id"]] = active_question["options"][selected_indices[active_question["id"]]]["id"]
+            if len(questions) == 1:
+                submitted = True
         elif key in ("\n", "\r", curses.KEY_ENTER, 10, 13):
-            selected_id = test.options[selected_index]["id"]
             submitted = True
-        if key in (curses.KEY_LEFT, curses.KEY_RIGHT):
-            target_row = option_rows.get(selected_id, 0)
+        if key in (curses.KEY_LEFT, curses.KEY_RIGHT) or key_text in ("p", "n"):
+            current_question = questions[active_question_index]
+            target_row = option_rows.get((current_question["id"], selected_ids[current_question["id"]]), 0)
             if target_row < scroll_offset:
                 scroll_offset = target_row
             elif target_row >= scroll_offset + viewport_height:

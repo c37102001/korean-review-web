@@ -378,6 +378,20 @@
   border-left: 5px solid #2fb9a3;
 }
 
+.reading-question-block + .reading-question-block {
+  margin-top: 28px;
+  padding-top: 10px;
+  border-top: 1px solid #dfe8e5;
+}
+
+.reading-question-number {
+  display: block;
+  margin-bottom: 6px;
+  color: #168875;
+  font-size: calc(13px * var(--user-font-scale, 1));
+  font-weight: 800;
+}
+
 .reading-question h2,
 .reading-question p {
   margin: 0;

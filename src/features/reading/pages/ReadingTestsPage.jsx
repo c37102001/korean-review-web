@@ -15,10 +15,11 @@ import { copyText } from '../../../shared/clipboard.js';
 import { formatContentTimestamp } from '../../../shared/dateTime.js';
 
 function ReadingTestCard({ test, index, onOpen, onEdit, onDelete }) {
+  const questionCount = test.questions.length;
   return (
     <EntityCardShell className="reading-test-card" onOpen={() => onOpen(test.id)}>
       <div className="card-head">
-        <div><span className="eyebrow">Reading · {test.options.length} choices</span><h2>閱讀題 {index + 1}</h2></div>
+        <div><span className="eyebrow">Reading · {questionCount} questions</span><h2>閱讀題 {index + 1}</h2></div>
         <div className="card-actions">
           <EditIconButton label="編輯閱讀題" onClick={() => onEdit(test)} />
           <button type="button" className="edit-icon-button delete-icon-button" title="刪除閱讀題" aria-label="刪除閱讀題" onClick={(event) => { event.stopPropagation(); onDelete(test); }}><Trash2 size={15} /></button>
@@ -28,7 +29,7 @@ function ReadingTestCard({ test, index, onOpen, onEdit, onDelete }) {
       <div className="yt-subtitle-note-meta">
         <span className="yt-subtitle-tag-chip">{readingTestTagLabel(test)}</span>
         {test.learned && <span className="yt-subtitle-learned-chip"><Check size={13} /> 已學習</span>}
-        <span>{test.options.length} 個選項</span>
+        <span>{questionCount} 題</span>
         <span>{formatContentTimestamp(test.updatedAt || test.createdAt)}</span>
       </div>
     </EntityCardShell>
@@ -67,7 +68,7 @@ export function ReadingTestsEditorModal({ test, existingTests, tagSuggestions = 
         <label className="grammar-field tagged-note-field">
           <span>JSON 內容</span>
           <textarea className="yt-subtitle-source" value={source} onChange={(event) => setSource(event.target.value)} rows={24} spellCheck={false} />
-          <small>`data` 可放多題；每題可填選用的 `tag`；`passage` 是文章、`question` 是提問、`options` 是中韓選項，`answer` 必須填正確選項的 id，`learned` 預設 false。</small>
+          <small>`data` 可放多篇文章；每篇可填選用的 `tag`，並在 `questions` 放入 1 至 3 題。每題都有自己的 `question`、`options` 與 `answer`，其中 `answer` 必須是該題正確選項的 id；`learned` 預設 false。</small>
           <small className={preview.error ? 'subtitle-parse-error' : 'subtitle-parse-success'}>{preview.error || `格式正確，可儲存 ${preview.tests.length} 題`}</small>
         </label>
         {error && <div className="json-edit-error">{error}</div>}
@@ -86,8 +87,12 @@ export default function ReadingTestsPage({ tests, error, onSave, onSaveMany, onD
   const filtered = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase('zh-TW');
     return tests.filter((test) => !keyword || [
-      test.tag, test.passage.ko, test.passage.zh, test.question.ko, test.question.zh,
-      ...test.options.flatMap((option) => [option.ko, option.zh]),
+      test.tag, test.passage.ko, test.passage.zh,
+      ...test.questions.flatMap((question) => [
+        question.question.ko,
+        question.question.zh,
+        ...question.options.flatMap((option) => [option.ko, option.zh]),
+      ]),
     ].filter(Boolean).join(' ').toLocaleLowerCase('zh-TW').includes(keyword));
   }, [query, tests]);
   const groups = useMemo(() => groupReadingTestsByTag(filtered), [filtered]);

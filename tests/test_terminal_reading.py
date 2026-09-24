@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 import terminal_review_practice as terminal
+from terminal_app.domain.content import normalize_reading_tests
 from terminal_app.ui.screens.highlights import highlight_contexts, highlight_export_text, highlight_lines, render_highlight_markers
 
 
@@ -20,6 +21,32 @@ def reading_test(learned=False):
 
 
 class TerminalReadingTests(unittest.TestCase):
+    def test_multiple_questions_normalize_and_reveal_independent_answers(self):
+        tests = normalize_reading_tests([{
+            'id': 'multi',
+            'passage': {'ko': '한국어 글', 'zh': '韓文文章'},
+            'questions': [
+                {
+                    'id': 'content', 'question': {'ko': '내용?', 'zh': '內容？'},
+                    'options': [{'id': '1', 'ko': '하나', 'zh': '一'}, {'id': '2', 'ko': '둘', 'zh': '二'}], 'answer': '1',
+                },
+                {
+                    'id': 'purpose', 'question': {'ko': '목적?', 'zh': '目的？'},
+                    'options': [{'id': '1', 'ko': '첫째', 'zh': '第一'}, {'id': '2', 'ko': '둘째', 'zh': '第二'}], 'answer': '2',
+                },
+            ],
+        }])
+
+        self.assertEqual(len(tests[0].questions), 2)
+        lines, option_rows = terminal._reading_content_lines(tests[0], 80, {'content': '1', 'purpose': '1'}, True)
+        text = '\n'.join(line for line, _ in lines)
+        self.assertIn('第 1 題', text)
+        self.assertIn('第 2 題', text)
+        self.assertIn('內容？', text)
+        self.assertIn('目的？', text)
+        self.assertIn('答錯，正確答案是 2', text)
+        self.assertIn(('purpose', '2'), option_rows)
+
     def test_highlights_are_rendered_and_exported_one_per_line(self):
         highlights = [
             {'id': 'one', 'entryId': 'reading-passage', 'text': '한국어', 'start': 0, 'end': 3},

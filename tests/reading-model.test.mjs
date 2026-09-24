@@ -24,7 +24,10 @@ const readingTest = (id, tag, learned = false) => ({
 });
 
 test('reading test tags normalize and round-trip through JSON', () => {
-  assert.equal(normalizeReadingTest(readingTest('old')).tag, '');
+  const legacy = normalizeReadingTest(readingTest('old'));
+  assert.equal(legacy.tag, '');
+  assert.equal(legacy.questions.length, 1);
+  assert.equal(legacy.questions[0].answer, '1');
   assert.equal(normalizeReadingTest(readingTest('tagged', '  TOPIK  ')).tag, 'TOPIK');
   assert.equal(readingTestTagLabel(readingTest('old')), UNTAGGED_READING_TEST_LABEL);
 

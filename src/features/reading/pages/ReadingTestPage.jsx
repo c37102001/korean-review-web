@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { BookOpen, Check, FolderOpen, Highlighter, Pencil, Trash2, X } from 'lucide-react';
 
 import { isSystemFolder, READING_SOURCE_FOLDER_NAME } from '../../../folders/model.js';
+import { normalizeReadingTest, readingTestTextEntries } from '../../../reading/model.js';
 import { todayString } from '../../../shared/date.js';
 import { createId } from '../../../shared/id.js';
 import { WordMatchesModal } from '../../word-library/components/WordPresentation.jsx';
@@ -12,8 +13,9 @@ import { HighlightExportModal } from '../../text-selection/components/HighlightE
 import { useDismissibleWordDefinition, useTextSelectionActions } from '../../text-selection/hooks/useTextSelectionActions.js';
 import { ReadingTestsEditorModal } from './ReadingTestsPage.jsx';
 
-export function ReadingTestPage({ test, allTests = [], allItems = [], folders = [], onSpeak, onAddRecords, onUpdateRecord, onWriteRecords, onDeleteRecord, onOpenFolder, onSave, onDelete, onBack }) {
-  const [selected, setSelected] = useState('');
+export function ReadingTestPage({ test: sourceTest, allTests = [], allItems = [], folders = [], onSpeak, onAddRecords, onUpdateRecord, onWriteRecords, onDeleteRecord, onOpenFolder, onSave, onDelete, onBack }) {
+  const test = useMemo(() => sourceTest ? normalizeReadingTest(sourceTest, sourceTest.id) : null, [sourceTest]);
+  const [selected, setSelected] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState(false);
@@ -23,16 +25,21 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
   const [localHighlights, setLocalHighlights] = useState(test?.highlights || []);
   const [exportHighlights, setExportHighlights] = useState(false);
   useEffect(() => {
-    setSelected('');
+    setSelected({});
     setSubmitted(false);
     setError('');
     setLocalHighlights(test?.highlights || []);
   }, [test?.id, test?.highlights]);
-  const entries = useMemo(() => test ? [
-    { id: `${test.id}-passage`, ko: test.passage.ko, zh: test.passage.zh },
-    { id: `${test.id}-question`, ko: test.question.ko, zh: test.question.zh },
-    ...test.options.map((option) => ({ id: `${test.id}-option-${option.id}`, ko: option.ko, zh: option.zh })),
-  ] : [], [test]);
+  const entries = useMemo(() => readingTestTextEntries(test), [test]);
+  const questionEntries = useMemo(() => {
+    let entryIndex = 1;
+    return (test?.questions || []).map((question) => {
+      const questionEntry = entries[entryIndex];
+      const optionEntries = entries.slice(entryIndex + 1, entryIndex + 1 + question.options.length);
+      entryIndex += question.options.length + 1;
+      return { questionEntry, optionEntries };
+    });
+  }, [entries, test?.questions]);
   const { selectionAction, setSelectionAction, clearSelectionAction } = useTextSelectionActions({ entries, trackOffsets: true });
   const [definitionBubble, setDefinitionBubble] = useDismissibleWordDefinition();
   const readingFolder = useMemo(() => folders.find((folder) => (
@@ -43,7 +50,9 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
     return allItems.filter((item) => wordIds.has(item.id));
   }, [allItems, readingFolder]);
   if (!test) return <section className="page"><div className="empty">找不到這題閱讀測驗。<button onClick={onBack}>返回上一層</button></div></section>;
-  const selectedCorrectly = selected === test.answer;
+  const answeredCount = test.questions.filter((question) => selected[question.id]).length;
+  const correctCount = test.questions.filter((question) => selected[question.id] === question.answer).length;
+  const selectedCorrectly = correctCount === test.questions.length;
   const toggleLearned = async () => {
     setError('');
     try { await onSave({ ...test, learned: !test.learned }); } catch (saveError) { setError(saveError.message || '更新已學習狀態失敗'); }
@@ -155,22 +164,32 @@ export function ReadingTestPage({ test, allTests = [], allItems = [], folders = 
         <p>{selectableKorean(entries[0])}</p>
         {submitted && <p className="reading-translation">{test.passage.zh}</p>}
       </article>
-      <div className="reading-question"><h2>{selectableKorean(entries[1])}</h2>{submitted && <p>{test.question.zh}</p>}</div>
-      <div className="reading-options" role="radiogroup" aria-label="閱讀題選項">
-        {test.options.map((option, index) => {
-          const correct = submitted && option.id === test.answer;
-          const incorrect = submitted && option.id === selected && !correct;
-          return <label className={`reading-option ${selected === option.id ? 'selected' : ''} ${correct ? 'correct' : ''} ${incorrect ? 'incorrect' : ''}`} key={option.id}>
-            <input type="radio" name="reading-answer" value={option.id} checked={selected === option.id} disabled={submitted} onChange={() => setSelected(option.id)} />
-            <span className="reading-option-number">{['①', '②', '③', '④', '⑤', '⑥'][index] || option.id}</span>
-            <span><strong>{selectableKorean(entries[index + 2])}</strong>{submitted && <small>{option.zh}</small>}</span>
-            {correct && <Check size={20} />}
-            {incorrect && <X size={20} />}
-          </label>;
-        })}
-      </div>
-      {!submitted ? <button type="button" className="primary reading-submit" disabled={!selected} onClick={() => setSubmitted(true)}><Check size={18} /> 確認答案</button>
-        : <div className={`reading-result ${selectedCorrectly ? 'correct' : 'incorrect'}`}><strong>{selectedCorrectly ? '答對了' : '答錯了'}</strong><span>正確答案是選項 {test.answer}</span><button type="button" onClick={() => { setSelected(''); setSubmitted(false); }}>再做一次</button></div>}
+      {test.questions.map((question, questionIndex) => {
+        const answer = selected[question.id] || '';
+        const entryGroup = questionEntries[questionIndex];
+        return <section className="reading-question-block" key={question.id}>
+          <div className="reading-question">
+            {test.questions.length > 1 && <span className="reading-question-number">第 {questionIndex + 1} 題</span>}
+            <h2>{selectableKorean(entryGroup.questionEntry)}</h2>
+            {submitted && <p>{question.question.zh}</p>}
+          </div>
+          <div className="reading-options" role="radiogroup" aria-label={test.questions.length === 1 ? '閱讀題選項' : `閱讀題第 ${questionIndex + 1} 題選項`}>
+            {question.options.map((option, optionIndex) => {
+              const correct = submitted && option.id === question.answer;
+              const incorrect = submitted && option.id === answer && !correct;
+              return <label className={`reading-option ${answer === option.id ? 'selected' : ''} ${correct ? 'correct' : ''} ${incorrect ? 'incorrect' : ''}`} key={option.id}>
+                <input type="radio" name={`reading-answer-${question.id}`} value={option.id} checked={answer === option.id} disabled={submitted} onChange={() => setSelected((current) => ({ ...current, [question.id]: option.id }))} />
+                <span className="reading-option-number">{['①', '②', '③', '④', '⑤', '⑥'][optionIndex] || option.id}</span>
+                <span><strong>{selectableKorean(entryGroup.optionEntries[optionIndex])}</strong>{submitted && <small>{option.zh}</small>}</span>
+                {correct && <Check size={20} />}
+                {incorrect && <X size={20} />}
+              </label>;
+            })}
+          </div>
+        </section>;
+      })}
+      {!submitted ? <button type="button" className="primary reading-submit" disabled={answeredCount !== test.questions.length} onClick={() => setSubmitted(true)}><Check size={18} /> 確認答案</button>
+        : <div className={`reading-result ${selectedCorrectly ? 'correct' : 'incorrect'}`}><strong>{test.questions.length === 1 ? (selectedCorrectly ? '答對了' : '答錯了') : (selectedCorrectly ? '全部答對' : `答對 ${correctCount} / ${test.questions.length} 題`)}</strong><span>{test.questions.length === 1 ? `正確答案是選項 ${test.questions[0].answer}` : test.questions.map((question, index) => `第 ${index + 1} 題：${question.answer}`).join('；')}</span><button type="button" onClick={() => { setSelected({}); setSubmitted(false); }}>再做一次</button></div>}
       {editing && <ReadingTestsEditorModal test={test} existingTests={allTests} tagSuggestions={[...new Set(allTests.map((entry) => entry.tag).filter(Boolean))]} onSave={async (tests) => { await onSave(tests[0]); setEditing(false); }} onClose={() => setEditing(false)} />}
       {quickAdd && <AddItemsModal
         title="新增單字"

@@ -68,6 +68,7 @@ class ReadingTest:
     question: Dict[str, str]
     options: List[Dict[str, str]]
     answer: str
+    questions: List[Dict[str, Any]] = field(default_factory=list)
     highlights: List[Dict[str, Any]] = field(default_factory=list)
     learned: bool = False
     order: int = 0
