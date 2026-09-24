@@ -47,6 +47,7 @@ def run_notebook(
         "search_scope": "all",
         "levels": set(),
         "folder_ids": set(),
+        "pos": "",
         "show_learned": False,
         "sort": "latest",
     }
@@ -77,6 +78,7 @@ def run_notebook(
             f"搜尋範圍: {'全部內容' if config['search_scope'] == 'all' else '單字本身'}",
             f"熟悉度: {level_summary}",
             f"資料夾: {folder_summary}",
+            f"詞性: {config['pos'] or '全部'}",
             f"已學習: {'顯示' if config['show_learned'] else '隱藏'}",
             f"排序: {sort_label}",
             f"開始學習篩選結果 · {len(active_cards)} 張卡",
@@ -91,7 +93,7 @@ def run_notebook(
         draw_line(stdscr, 2, 2, "↑↓=項目 ←→=切換 Enter=設定/開始 R=重設 Esc=返回", curses.A_DIM)
         for screen_row, label in enumerate(visible_rows, 3):
             index = start + screen_row - 3
-            attr = curses.A_BOLD if index == row or index >= 6 else 0
+            attr = curses.A_BOLD if index == row or index >= 7 else 0
             draw_line(stdscr, screen_row, 2, ("» " if index == row else "  ") + label, attr)
         if len(rows) > visible_count:
             draw_line(stdscr, height - 1, 2, f"{row + 1}/{len(rows)} · 繼續按 ↓ 可看到開始選項", curses.A_DIM)
@@ -106,7 +108,7 @@ def run_notebook(
             row = (row + 1) % len(rows)
             continue
         if isinstance(key, str) and key.lower() == "r":
-            config.update({"query": "", "search_scope": "all", "levels": set(), "folder_ids": set(), "show_learned": False, "sort": "latest"})
+            config.update({"query": "", "search_scope": "all", "levels": set(), "folder_ids": set(), "pos": "", "show_learned": False, "sort": "latest"})
             continue
         activate = key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13)
         cycle = key in (curses.KEY_LEFT, curses.KEY_RIGHT)
@@ -127,19 +129,33 @@ def run_notebook(
             if selected is not None:
                 config["folder_ids"] = selected
         elif row == 4:
-            config["show_learned"] = not config["show_learned"]
+            pos_options = ["", *WORD_POS_OPTIONS]
+            if activate:
+                selected = menu(
+                    stdscr,
+                    "詞性篩選",
+                    [(pos, "全部" if not pos else pos) for pos in pos_options],
+                )
+                if selected is not None:
+                    config["pos"] = selected
+            else:
+                current_index = pos_options.index(config["pos"])
+                direction = -1 if key == curses.KEY_LEFT else 1
+                config["pos"] = pos_options[(current_index + direction) % len(pos_options)]
         elif row == 5:
+            config["show_learned"] = not config["show_learned"]
+        elif row == 6:
             current_index = sort_modes.index(config["sort"])
             direction = -1 if key == curses.KEY_LEFT else 1
             config["sort"] = sort_modes[(current_index + direction) % len(sort_modes)]
-        elif row in (6, 7) and activate:
+        elif row in (7, 8) and activate:
             if not active_cards:
                 wait_message(stdscr, "單字本", "目前篩選條件下沒有單字。")
                 continue
             active_ids = {card.id for card in active_cards}
             active_questions = [question for question in questions if question.item_id in active_ids]
             title = f"單字本篩選結果 ({len(active_cards)} 張)"
-            if row == 6:
+            if row == 7:
                 while True:
                     starred = menu(stdscr, f"{title} | 學習篩選", [("all", "全部卡片"), ("starred", "有星號")])
                     if not starred:

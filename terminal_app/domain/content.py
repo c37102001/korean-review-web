@@ -4,6 +4,9 @@ from typing import Any, Dict, Iterable, List, Tuple
 from .models import Card, GrammarNote, Question, ReadingTest, YoutubeSubtitle
 
 
+WORD_POS_OPTIONS = ("名詞", "動詞", "形容詞", "副詞", "片語", "固定表達", "其他")
+
+
 def normalize_text_highlights(highlights: Any, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     entry_by_id = {str(entry.get("id") or ""): str(entry.get("ko") or "") for entry in entries}
     normalized: List[Dict[str, Any]] = []

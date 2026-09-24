@@ -52,7 +52,7 @@ from terminal_app.api.firestore_codec import parse_value as _parse_firestore_val
 from terminal_app.api.firestore_codec import to_value as _to_firestore_value
 from terminal_app.api.transport import JsonHttpTransport
 from terminal_app.domain.models import AuthSession, Card, GrammarNote, PartialCheckResult, Question, ReadingTest, YoutubeSubtitle
-from terminal_app.domain.content import card_korean_speech, item_zh, normalize_grammar_notes, normalize_reading_tests, normalize_records, normalize_youtube_subtitles, order_questions, record_order
+from terminal_app.domain.content import WORD_POS_OPTIONS, card_korean_speech, item_zh, normalize_grammar_notes, normalize_reading_tests, normalize_records, normalize_youtube_subtitles, order_questions, record_order
 from terminal_app.domain.practice import (
     add_optional_practice_task,
     answer_optional_practice_task,
@@ -1210,6 +1210,7 @@ def filtered_notebook_cards(
     scope = str(config.get("search_scope") or "all")
     levels = set(config.get("levels") or [])
     selected_folder_ids = set(config.get("folder_ids") or [])
+    selected_pos = str(config.get("pos") or "")
     learned_ids = set(state.get("learnedWordIds") or [])
     folder_word_ids: Optional[set[str]] = None
     if selected_folder_ids:
@@ -1226,6 +1227,8 @@ def filtered_notebook_cards(
         if not config.get("show_learned") and card.id in learned_ids:
             continue
         if folder_word_ids is not None and card.id not in folder_word_ids:
+            continue
+        if selected_pos and card.pos != selected_pos:
             continue
         score, level = card_familiarity(state, questions, card.id)
         if levels and familiarity_filter_value(level, score) not in levels and level not in levels:
