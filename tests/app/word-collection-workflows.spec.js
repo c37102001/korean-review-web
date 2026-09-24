@@ -199,6 +199,8 @@ test('W15: export copy and download contain parseable source data', async ({ pag
   await register(page, 'export-word@example.test');
   await seedWord(page, request, 'exported', '책', '書');
   await openNotebook(page);
+  await expect(cards(page)).toHaveCount(1);
+  await expect(cards(page)).toContainText('책');
   await page.locator('.notebook-actions .action-menu summary').click();
   await page.getByRole('button', { name: '匯出 JSON' }).click();
   const dialog = page.getByRole('dialog');

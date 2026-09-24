@@ -195,9 +195,7 @@ test('G08: delayed and failed synchronization stays visible and Check Sync recov
     await trackOfflineWrite(window.__delayedOfflineWrite, '延遲同步測試');
   });
   await expect(page.getByRole('status')).toContainText('正在同步 1 筆');
-  await page.waitForTimeout(100);
-  await page.clock.fastForward(15_100);
-  await expect(page.getByRole('status')).toContainText('尚未收到 Firebase 確認');
+  await expect(page.getByRole('status')).toContainText('尚未收到 Firebase 確認', { timeout: 20_000 });
   await page.getByRole('button', { name: '檢查同步' }).click();
   await expect(page.getByRole('status')).toHaveCount(0);
 
