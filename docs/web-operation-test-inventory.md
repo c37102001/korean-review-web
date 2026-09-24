@@ -6,7 +6,7 @@
 
 - 範圍：本網站提供的按鈕、連結、表單、選單、鍵盤快捷鍵、觸控手勢及可點擊卡片。相同共用元件在多筆資料上重複出現，按**行為契約**列一次，另測不同入口的接線與特殊語意。瀏覽器工具列、YouTube 自身介面及作業系統 TTS 不在本清冊；本站對它們的操作／失敗提示仍在範圍內。
 - 每個 ID 最終至少要有一項**執行該操作並斷言結果**的測試，及可追蹤的測試名稱／檔案。若同一列列出多個選項或相反操作，每個選項／方向都要有斷言，可用同一測試的參數案例。新增、修改、刪除、作答、同步必須驗證重新讀取後的結果；僅有純函式、SSR、原始碼字串比對或快照都不算完成。
-- 狀態 `缺`：未找到會執行這個 UI 操作的測試；`局`：已有純邏輯、fixture 或部分 UI 驗證，但未達上述標準；`通`：有真實 app 入口及必要的保存回讀測試。下表目前**沒有**可標為 `通` 的完整流程。實作後將狀態改為 `通`，並填入測試檔與 test 名稱，不得僅勾核方框。
+- 狀態 `缺`：未找到會執行這個 UI 操作的測試；`局`：已有純邏輯、fixture 或部分 UI 驗證，但未達上述標準；`通`：有真實 app 入口及必要的保存回讀測試。八階段完成後，下表每項均記錄實際測試檔與 test 名稱；後續功能異動仍須同步更新，不能只保留過時的 `通` 標記。
 - `單元`、`瀏覽器 fixture`、`Emulator` 各有用途。新的 app-flow 測試應使用測試登入與可控 repository／Emulator，不得連正式 Firestore。每個操作至少測正常路徑；高風險保存操作再測一個失敗或離線路徑，不做所有裝置與資料組合的笛卡兒乘積。
 - 同一個測試可以覆蓋多個 ID，但要在各 ID 記錄該測試。共用元件的測試之外，首頁／資料夾／日期等入口至少各有一條 smoke flow 證明接線正確。未實作的新功能不預先列入；新增互動時必須更新本清冊。
 
@@ -20,8 +20,8 @@
 | G04 | 頂部／側邊主功能標籤：首頁、日曆、單字本、資料夾、筆記、YT 字幕、閱讀測驗均可進入且載入對應資料。 | 通：`tests/app/navigation-home.spec.js`，`G04: every main tab opens its real page and loads its own data`、`G04: mobile navigation can open and leave a feature page` |
 | G05 | 全域右下返回及頁內返回：每次只退一層，保留合理的來源頁狀態。 | 通：`tests/app/navigation-home.spec.js`，`G05: global back returns one level through subtitle and folder details`；`tests/app/calendar-workflows.spec.js`，`C02: date selection, View Date and double-click navigate and return to the same date` |
 | G06 | 更多／設定選單：開關、點外部及 Esc 關閉；選擇功能後不誤觸其他命令。 | 通：`tests/app/navigation-home.spec.js`，`G06: settings menu closes on Escape/outside and commands stay distinct` |
-| G07 | 錯誤邊界：實際頁面渲染失敗後可展開錯誤資訊、返回或重載，不停留空白頁。 | 局：合成錯誤 fixture |
-| G08 | 同步／載入錯誤與「檢查同步」：錯誤可見、重試有結果，不假報成功。 | 局：狀態文字單元測試 |
+| G07 | 錯誤邊界：實際頁面渲染失敗後可展開錯誤資訊、返回或重載，不停留空白頁。 | 通：`tests/app/recovery-workflows.spec.js`，`G07: a real page render failure exposes details and supports back and reload recovery`；在真實單字本渲染流程注入可重現錯誤，分別驗證資訊展開、返回及重載後資料仍可用 |
+| G08 | 同步／載入錯誤與「檢查同步」：錯誤可見、重試有結果，不假報成功。 | 通：`tests/app/offline-workflows.spec.js`，`G08: delayed and failed synchronization stays visible and Check Sync recovers the status`；`tests/app/word-editor-workflows.spec.js`，`E07: a rejected write keeps the edited word and allows retry` |
 
 ## 首頁、日曆與自選練習
 
@@ -126,16 +126,16 @@
 
 | ID | 操作與可觀察的預期結果 | 現況 |
 | --- | --- | --- |
-| O01 | 主動離線開／關：開啟後只讀本機、操作可排隊；關閉後同步並清除 pending，離線資料不跨帳號。 | 局：offline support 單元測試 |
-| O02 | 下載／更新離線資料與完整重新下載：可回報進度，缺漏集合補齊；完整重建不丟未同步修改。 | 局：快取／coverage 單元測試 |
-| O03 | 離線新增、編輯、刪除與每日答題，恢復連線後回讀：每筆只套用一次，錯誤顯示且可重試。 | 局：queue／Emulator 各自測，無整段 UI 流程 |
-| O04 | 寫入拒絕、429、權限錯誤、網路中斷：保存頁保留輸入並可重試，不能顯示虛假的成功或永久載入。 | 局：部分狀態文字與錯誤邊界測試 |
+| O01 | 主動離線開／關：開啟後只讀本機、操作可排隊；關閉後同步並清除 pending，離線資料不跨帳號。 | 通：`tests/app/offline-workflows.spec.js`，`O01 O03: manual offline CRUD stays local, queues writes and synchronizes exactly once when re-enabled`、`O02: download, incremental update and full rebuild preserve readiness and pending operations` |
+| O02 | 下載／更新離線資料與完整重新下載：可回報進度，缺漏集合補齊；完整重建不丟未同步修改。 | 通：`tests/app/offline-workflows.spec.js`，`O02: download, incremental update and full rebuild preserve readiness and pending operations`；檢查 readiness、增量完成時間、完整重建標記、pending 保留及帳號隔離 |
+| O03 | 離線新增、編輯、刪除與每日答題，恢復連線後回讀：每筆只套用一次，錯誤顯示且可重試。 | 通：`tests/app/offline-workflows.spec.js`，`O01 O03: manual offline CRUD stays local, queues writes and synchronizes exactly once when re-enabled`、`O03: a daily answer completed offline is synchronized once after manual offline mode ends`、`O03 O04: a browser network interruption queues a write and reconnecting clears it without false success`；以 Emulator 回讀 tombstone、內容、單一文件與熟悉度次數 |
+| O04 | 寫入拒絕、429、權限錯誤、網路中斷：保存頁保留輸入並可重試，不能顯示虛假的成功或永久載入。 | 通：`tests/app/offline-workflows.spec.js`，`O03 O04: a browser network interruption queues a write and reconnecting clears it without false success`、`G08: delayed and failed synchronization stays visible and Check Sync recovers the status`；`tests/app/word-editor-workflows.spec.js`，`E07: a rejected write keeps the edited word and allows retry`；`tests/import-flow.test.mjs`，`exhausted daily quota is not retried as a transient Firestore error` 驗證 429／quota 分類 |
 
 ## 現有測試證據與執行規則
 
 - 局部證據索引：導覽／頁面配置見 `tests/app-architecture.test.mjs`；單字集合及卡片見 `tests/word-collection.test.mjs`、`tests/word-presentation.test.mjs`、`tests/visual/core-surfaces.spec.js`；匯入與表單見 `tests/word-import.test.mjs`、`tests/word-import-form.test.mjs`、`tests/visual/word-edit.spec.js`、`tests/visual/word-pos-import.spec.js`；學習與測驗見 `tests/session-model.test.mjs`、`tests/session-interactions.test.mjs`、`tests/review-engine.test.mjs`、`tests/optional-practice.test.mjs`；筆記／字幕見 `tests/import-flow.test.mjs`；閱讀見 `tests/reading-model.test.mjs`；離線／資料庫見 `tests/offline-support.test.mjs`、`tests/emulator/firestore-sync.test.mjs`。這是現有保護的索引，**不是**把整組 ID 判為完成的證據。
 - `tests/visual/core-surfaces.spec.js` 的 24 個快照保留：它們驗證不同寬度的外觀與少量局部互動，**不計入**上表保存／導覽操作的完成數。`word-edit.spec.js` 儲存未變更的內容；`word-pos-import.spec.js` 使用 mock 寫入。兩者都應保留，完成欄位要等更完整測試才可標 `通`。
-- `tests/emulator/firestore-sync.test.mjs` 驗證規則、同步與寫入合約；`tests/import-flow.test.mjs`、`tests/review-engine.test.mjs` 等驗證純邏輯。它們提供上表「局」的部分證據，但沒有測真實 app 的按鈕接線。
-- 建議新增少量可重用的 app-level Playwright flow：共同處理測試登入、seed、重新進入、失敗注入；把多個 ID 放進同一條合理的使用者旅程。另以少量 Emulator flow 驗證寫入／離線回讀合約。不要用一張新全頁快照取代行為斷言。
+- `tests/emulator/firestore-sync.test.mjs` 驗證規則、同步與寫入合約；`tests/import-flow.test.mjs`、`tests/review-engine.test.mjs` 等驗證純邏輯。它們補足真實 App 流程不適合窮舉的資料層邊界，但不能取代按鈕接線測試。
+- 真實 App Playwright flow 共用測試登入、seed、重新進入、失敗注入與 Emulator 回讀工具，並把相關 ID 放進同一條合理的使用者旅程。後續應沿用這些工具，不要用新增全頁快照取代行為斷言。
 - 每個新增或改動的前端互動，PR／commit 的檢查項目為：清冊 ID（或新增 ID）、預期行為、驗證該操作的測試檔與 test 名稱、錯誤狀態是否需要補測。舊測試只有在有等價替代且確認原保護效果保留時才可移除。
 - 定期用 `rg -n 'onClick=|onChange=|onKeyDown=|onPointer|onDoubleClick=|<summary|href=' src/app src/features src/components` 重新盤點入口；條件式渲染的控制（例如有資料夾才出現的泡泡）也要核對。這個文字搜尋只是防漏提醒，不能代替人工確認預期行為與測試證據。
