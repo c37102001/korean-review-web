@@ -2,7 +2,7 @@
 
 > 規劃基準：2026-09-21。這是實作計畫，**不是已完成的測試報告**。操作定義與目前缺口見 [Web 可執行操作與測試清冊](web-operation-test-inventory.md)；高風險流程見 [核心操作測試清單](core-workflow-test-checklist.md)。
 
-> 實作進度（2026-09-23）：第 1–7 階段已完成；第 7 階段的真實 App 測試見 `tests/app/subtitle-workflows.spec.js` 與 `tests/app/reading-workflows.spec.js`。各操作證據與測試層級以清冊為準。第 8 階段尚待實作。
+> 實作進度（2026-09-24）：第 1–8 階段均已完成。第 8 階段的真實 App 測試見 `tests/app/offline-workflows.spec.js` 與 `tests/app/recovery-workflows.spec.js`；84 個操作 ID 的測試名稱、層級與保存回讀證據以清冊為準。
 
 ## 共同規則
 

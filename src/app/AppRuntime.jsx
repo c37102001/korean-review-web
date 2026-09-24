@@ -282,18 +282,18 @@ function useOfflineMode(user) {
     }));
   }, [user?.uid]);
 
-  const syncPendingWrites = useCallback(async () => {
+  const syncPendingWrites = useCallback(async ({ networkReady = false } = {}) => {
     if (!user || navigator.onLine === false || manualOfflineEnabled()) return;
     const pending = offlinePendingWrites();
     if (!pending) return;
-    setState((current) => ({
-      ...current,
-      syncDelayed: false,
-      error: '',
-      progress: `正在同步 ${pending} 筆離線操作...`,
-    }));
     try {
-      await setFirestoreNetworkEnabled(true);
+      if (!networkReady) await setFirestoreNetworkEnabled(true);
+      setState((current) => ({
+        ...current,
+        syncDelayed: false,
+        error: '',
+        progress: `正在同步 ${pending} 筆離線操作...`,
+      }));
       await waitForFirestoreSync();
       clearOfflinePendingWrites();
       setState((current) => ({
@@ -435,7 +435,7 @@ function useOfflineMode(user) {
         switching: false,
         progress: navigator.onLine === false ? '已關閉主動離線，等待網路恢復後同步' : '正在同步本機修改...',
       }));
-      await syncPendingWrites();
+      await syncPendingWrites({ networkReady: true });
     } catch (error) {
       if (next) setManualOfflineEnabled(false);
       setState((current) => ({
