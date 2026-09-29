@@ -59,7 +59,10 @@ test('R01: copy, batch import, search, collapse, edit, validation, delete, and r
   })];
   await dialog.locator('.yt-subtitle-source').fill(JSON.stringify({ schemaVersion: 1, data: imported }));
   await expect(dialog.locator('.subtitle-parse-success')).toContainText('可儲存 2 題');
-  await dialog.getByRole('button', { name: '匯入 2 題' }).click();
+  await dialog.getByRole('button', { name: '下一步：選擇標籤' }).click();
+  await expect(dialog.getByText('選擇匯入標籤', { exact: true })).toBeVisible();
+  await dialog.getByRole('radio', { name: /保留 JSON 內標籤/ }).check();
+  await dialog.getByRole('button', { name: '確認匯入 2 題' }).click();
   await expect(page.locator('.reading-test-card')).toHaveCount(2);
 
   const search = page.getByPlaceholder('搜尋韓文文章、題目、選項或中文翻譯');

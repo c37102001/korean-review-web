@@ -4,6 +4,7 @@ import { ActionMenu } from '../../../components/actions/ActionMenu.jsx';
 import { EditIconButton } from '../../../components/actions/ContentActionButtons.jsx';
 import { CollapsibleGroup, EntityCardShell, EntityGrid, LibraryPageShell } from '../../../components/library/LibraryPrimitives.jsx';
 import {
+  assignReadingTestsTag,
   formatReadingTestsJson,
   groupReadingTestsByTag,
   parseReadingTestsJson,
@@ -39,6 +40,9 @@ function ReadingTestCard({ test, index, onOpen, onEdit, onDelete }) {
 export function ReadingTestsEditorModal({ test, existingTests, tagSuggestions = [], onSave, onClose }) {
   const [source, setSource] = useState(() => test ? formatReadingTestsJson([test]) : READING_TEST_JSON_SAMPLE);
   const [tag, setTag] = useState(test?.tag || '');
+  const [importStep, setImportStep] = useState('json');
+  const [tagChoice, setTagChoice] = useState('');
+  const [newTag, setNewTag] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const preview = useMemo(() => {
@@ -53,10 +57,23 @@ export function ReadingTestsEditorModal({ test, existingTests, tagSuggestions = 
   const submit = async (event) => {
     event.preventDefault();
     if (preview.error) { setError(preview.error); return; }
+    if (!test && importStep === 'json') {
+      setImportStep('tag');
+      setError('');
+      return;
+    }
+    let testsToSave = preview.tests;
+    if (!test) {
+      if (!tagChoice) { setError('請選擇要匯入的標籤'); return; }
+      if (tagChoice === 'new' && !newTag.trim()) { setError('請輸入新標籤名稱'); return; }
+      if (tagChoice === 'untagged') testsToSave = assignReadingTestsTag(preview.tests, '');
+      else if (tagChoice === 'new') testsToSave = assignReadingTestsTag(preview.tests, newTag);
+      else if (tagChoice.startsWith('existing:')) testsToSave = assignReadingTestsTag(preview.tests, tagChoice.slice('existing:'.length));
+    }
     setSaving(true);
     setError('');
     try {
-      await onSave(test ? [{ ...preview.tests[0], tag: tag.trim() }] : preview.tests);
+      await onSave(test ? [{ ...preview.tests[0], tag: tag.trim() }] : testsToSave);
     } catch (saveError) { setError(saveError.message || '儲存閱讀題失敗'); } finally { setSaving(false); }
   };
   return (
@@ -64,17 +81,49 @@ export function ReadingTestsEditorModal({ test, existingTests, tagSuggestions = 
       <form className="modal-panel reading-test-editor" onSubmit={submit}>
         <button type="button" className="modal-close" disabled={saving} onClick={onClose} aria-label="關閉"><X size={18} /></button>
         <div className="grammar-modal-head"><span className="eyebrow">Reading Practice JSON</span><h2>{test ? '編輯閱讀題' : '批次匯入閱讀題'}</h2></div>
-        {test && <label className="grammar-field"><span>標籤 <small>選填</small></span><input value={tag} onChange={(event) => setTag(event.target.value)} list="reading-test-tag-suggestions" placeholder="留空會歸類為無標籤" />{!!tagSuggestions.length && <datalist id="reading-test-tag-suggestions">{tagSuggestions.map((suggestion) => <option value={suggestion} key={suggestion} />)}</datalist>}</label>}
-        <label className="grammar-field tagged-note-field">
-          <span>JSON 內容</span>
-          <textarea className="yt-subtitle-source" value={source} onChange={(event) => setSource(event.target.value)} rows={24} spellCheck={false} />
-          <small>`data` 可放多篇文章；每篇可填選用的 `tag`，並在 `questions` 放入 1 至 3 題。每題都有自己的 `question`、`options` 與 `answer`，其中 `answer` 必須是該題正確選項的 id；`learned` 預設 false。</small>
-          <small className={preview.error ? 'subtitle-parse-error' : 'subtitle-parse-success'}>{preview.error || `格式正確，可儲存 ${preview.tests.length} 題`}</small>
-        </label>
+        {!test && importStep === 'tag' ? (
+          <ReadingImportTagStep
+            count={preview.tests.length}
+            tagSuggestions={tagSuggestions}
+            tagChoice={tagChoice}
+            onTagChoiceChange={(choice) => { setTagChoice(choice); setError(''); }}
+            newTag={newTag}
+            onNewTagChange={(value) => { setNewTag(value); setError(''); }}
+          />
+        ) : <>
+          {test && <label className="grammar-field"><span>標籤 <small>選填</small></span><input value={tag} onChange={(event) => setTag(event.target.value)} list="reading-test-tag-suggestions" placeholder="留空會歸類為無標籤" />{!!tagSuggestions.length && <datalist id="reading-test-tag-suggestions">{tagSuggestions.map((suggestion) => <option value={suggestion} key={suggestion} />)}</datalist>}</label>}
+          <label className="grammar-field tagged-note-field">
+            <span>JSON 內容</span>
+            <textarea className="yt-subtitle-source" value={source} onChange={(event) => setSource(event.target.value)} rows={24} spellCheck={false} />
+            <small>`data` 可放多篇文章；每篇可填選用的 `tag`，並在 `questions` 放入 1 至 3 題。每題都有自己的 `question`、`options` 與 `answer`，其中 `answer` 必須是該題正確選項的 id；`learned` 預設 false。</small>
+            <small className={preview.error ? 'subtitle-parse-error' : 'subtitle-parse-success'}>{preview.error || `格式正確，可儲存 ${preview.tests.length} 題`}</small>
+          </label>
+        </>}
         {error && <div className="json-edit-error">{error}</div>}
-        <div className="actions grammar-editor-actions"><button type="button" disabled={saving} onClick={onClose}>取消</button><button type="submit" className="primary" disabled={saving || !!preview.error}><Check size={17} /> {saving ? '儲存中' : test ? '儲存修改' : `匯入 ${preview.tests.length || ''} 題`}</button></div>
+        <div className="actions grammar-editor-actions">
+          {!test && importStep === 'tag' ? <button type="button" disabled={saving} onClick={() => { setImportStep('json'); setError(''); }}>返回修改 JSON</button> : <button type="button" disabled={saving} onClick={onClose}>取消</button>}
+          <button type="submit" className="primary" disabled={saving || !!preview.error}><Check size={17} /> {saving ? '儲存中' : test ? '儲存修改' : importStep === 'tag' ? `確認匯入 ${preview.tests.length} 題` : `下一步：選擇標籤`}</button>
+        </div>
       </form>
     </div>
+  );
+}
+
+function ReadingImportTagStep({ count, tagSuggestions, tagChoice, onTagChoiceChange, newTag, onNewTagChange }) {
+  return (
+    <section className="reading-import-tag-step">
+      <div className="reading-import-tag-heading">
+        <strong>選擇匯入標籤</strong>
+        <span>這個選擇會套用到本次匯入的 {count} 篇閱讀文章。</span>
+      </div>
+      <div className="reading-import-tag-options" role="radiogroup" aria-label="匯入標籤">
+        <label><input type="radio" name="reading-import-tag" value="json" checked={tagChoice === 'json'} onChange={(event) => onTagChoiceChange(event.target.value)} /><span><strong>保留 JSON 內標籤</strong><small>每篇文章沿用 JSON 中的 tag，未填寫的會放在無標籤。</small></span></label>
+        {tagSuggestions.map((suggestion) => <label key={suggestion}><input type="radio" name="reading-import-tag" value={`existing:${suggestion}`} checked={tagChoice === `existing:${suggestion}`} onChange={(event) => onTagChoiceChange(event.target.value)} /><span><strong>{suggestion}</strong><small>全部加入這個既有標籤。</small></span></label>)}
+        <label><input type="radio" name="reading-import-tag" value="untagged" checked={tagChoice === 'untagged'} onChange={(event) => onTagChoiceChange(event.target.value)} /><span><strong>無標籤</strong><small>全部放在無標籤分類。</small></span></label>
+        <label><input type="radio" name="reading-import-tag" value="new" checked={tagChoice === 'new'} onChange={(event) => onTagChoiceChange(event.target.value)} /><span><strong>新增標籤</strong><small>建立一個新的分類並加入全部文章。</small></span></label>
+      </div>
+      {tagChoice === 'new' && <label className="grammar-field reading-import-new-tag"><span>新標籤名稱</span><input value={newTag} onChange={(event) => onNewTagChange(event.target.value)} maxLength={40} autoFocus required /></label>}
+    </section>
   );
 }
 

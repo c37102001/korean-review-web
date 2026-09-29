@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  assignReadingTestsTag,
   formatReadingTestsJson,
   groupReadingTestsByTag,
   normalizeReadingTest,
@@ -61,4 +62,11 @@ test('reading tests group by tag and place learned tests last inside each group'
   assert.deepEqual(groups.map((group) => group.label), ['旅遊', 'TOPIK', UNTAGGED_READING_TEST_LABEL]);
   const topik = groups.find((group) => group.label === 'TOPIK');
   assert.deepEqual(topik.tests.map((entry) => entry.id), ['active', 'learned-first']);
+});
+
+test('a batch of reading tests can be assigned to a new tag or left untagged', () => {
+  const source = [readingTest('one', 'TOPIK'), readingTest('two', '旅遊')];
+  assert.deepEqual(assignReadingTestsTag(source, '  新聞  ').map((entry) => entry.tag), ['新聞', '新聞']);
+  assert.deepEqual(assignReadingTestsTag(source, '').map((entry) => entry.tag), ['', '']);
+  assert.deepEqual(source.map((entry) => entry.tag), ['TOPIK', '旅遊']);
 });

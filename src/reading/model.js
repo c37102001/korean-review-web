@@ -165,6 +165,11 @@ export function formatReadingTestsJson(tests = []) {
   }, null, 2);
 }
 
+export function assignReadingTestsTag(tests = [], tag = '') {
+  const normalizedTag = String(tag || '').trim();
+  return tests.map((test) => ({ ...test, tag: normalizedTag }));
+}
+
 export function readingTestTagLabel(test) {
   return String(test?.tag || '').trim() || UNTAGGED_READING_TEST_LABEL;
 }
