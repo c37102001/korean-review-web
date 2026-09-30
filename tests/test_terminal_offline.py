@@ -61,6 +61,22 @@ class OfflineTests(unittest.TestCase):
         self.assertTrue(cached['records'][0]['item']['noReview'])
         self.assertEqual(cached['pending']['folders']['system-learned'], {'word': True})
 
+    def test_learned_shortcut_can_remove_membership_offline_without_resetting_no_review(self):
+        self.payload['records'] = [{'id': 'word', 'date': '2026-09-19', 'item': {'ko': '가다'}}]
+        self.payload['folders'].append({'id': 'system-learned', 'wordIds': []})
+        self.payload['state'].update({'learnedFolderId': 'system-learned', 'learnedWordIds': []})
+        terminal._write_terminal_cache(self.session.uid, self.payload)
+        self.client.start_offline(self.session)
+        state = copy.deepcopy(self.payload['state'])
+
+        self.assertTrue(terminal.toggle_word_as_learned(self.client, self.session, state, 'word'))
+        self.assertFalse(terminal.toggle_word_as_learned(self.client, self.session, state, 'word'))
+
+        cached = terminal._read_terminal_cache(self.session.uid)
+        self.assertEqual(cached['folders'][-1]['wordIds'], [])
+        self.assertFalse(cached['pending']['folders']['system-learned']['word'])
+        self.assertTrue(cached['records'][0]['item']['noReview'])
+
     def test_learned_folder_offline_sync_updates_word_in_same_commit_without_reading_it(self):
         self.payload['records'] = [{'id': 'word', 'date': '2026-09-19', 'item': {'ko': '가다'}}]
         self.payload['folders'].append({'id': 'system-learned', 'wordIds': []})

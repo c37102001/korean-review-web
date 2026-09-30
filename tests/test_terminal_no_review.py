@@ -36,6 +36,25 @@ class NoReviewTests(unittest.TestCase):
         self.assertEqual(writes[1]["updateMask"]["fieldPaths"], ["item.noReview"])
         self.assertTrue(writes[1]["update"]["fields"]["item"]["mapValue"]["fields"]["noReview"]["booleanValue"])
 
+    def test_terminal_learned_shortcut_toggles_folder_membership(self):
+        client = terminal.FirebaseClient("key", "project")
+        session = terminal.AuthSession("test@example.com", "uid", "token", "refresh")
+        state = {
+            "learnedWordIds": [],
+            "learnedFolderId": "system-learned",
+            "folders": [{"id": "system-learned", "wordIds": []}],
+        }
+        with patch.object(client, "add_word_to_folder") as add, patch.object(client, "remove_word_from_folder") as remove:
+            self.assertTrue(terminal.toggle_word_as_learned(client, session, state, "word"))
+            self.assertEqual(state["learnedWordIds"], ["word"])
+            self.assertEqual(state["folders"][0]["wordIds"], ["word"])
+            add.assert_called_once_with(session, "system-learned", "word", mark_no_review=True)
+
+            self.assertFalse(terminal.toggle_word_as_learned(client, session, state, "word"))
+            self.assertEqual(state["learnedWordIds"], [])
+            self.assertEqual(state["folders"][0]["wordIds"], [])
+            remove.assert_called_once_with(session, "system-learned", "word")
+
 
 if __name__ == "__main__":
     unittest.main()

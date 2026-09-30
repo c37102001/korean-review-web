@@ -221,18 +221,18 @@ def run_daily_recognition(
                 message = "請先按 8 揭露答案，再加入「已學習」。"
                 continue
             try:
-                added = mark_word_as_learned(client, session, state, question.item_id)
+                now_learned = toggle_word_as_learned(client, session, state, question.item_id)
             except RuntimeError as exc:
-                message = f"加入已學習失敗：{friendly_firebase_error(exc)}"
+                message = f"更新已學習失敗：{friendly_firebase_error(exc)}"
                 continue
-            if added:
+            if now_learned:
                 questions = questions[:idx + 1] + [
                     candidate for candidate in questions[idx + 1:]
                     if candidate.item_id != question.item_id
                 ]
                 message = "已加入「已學習」，本次尚未出現的同卡例句也已略過。"
             else:
-                message = "這個單字已經在「已學習」資料夾中。"
+                message = "已移出「已學習」。"
         elif key in ("*", "u", "U") and not grammar_mode:
             try:
                 now_unfamiliar = toggle_word_as_unfamiliar(client, session, state, question.item_id)

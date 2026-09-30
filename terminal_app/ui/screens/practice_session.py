@@ -370,14 +370,14 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
                     message = "請先公佈答案，再加入「已學習」。"
                     continue
                 try:
-                    added = mark_word_as_learned(client, session, state, question.item_id)
+                    now_learned = toggle_word_as_learned(client, session, state, question.item_id)
                 except RuntimeError as exc:
-                    message = f"加入已學習失敗：{friendly_firebase_error(exc)}"
+                    message = f"更新已學習失敗：{friendly_firebase_error(exc)}"
                     continue
                 message = (
                     "已加入「已學習」，未來每日測驗不再出現。"
-                    if added
-                    else "這個單字已經在「已學習」資料夾中。"
+                    if now_learned
+                    else "已移出「已學習」。"
                 )
                 result_message = message
             elif key in ("u", "U") and daily_review and question.kind == "term":

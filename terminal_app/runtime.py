@@ -748,30 +748,25 @@ class FirebaseClient:
         )
 
 
-def mark_word_as_learned(
+def toggle_word_as_learned(
     client: FirebaseClient,
     session: AuthSession,
     state: Dict[str, Any],
     word_id: str,
 ) -> bool:
-    """Persist a learned word once and keep the in-memory filters in sync."""
+    """Toggle learned membership while keeping noReview independent on removal."""
     learned_word_ids = list(state.get("learnedWordIds") or [])
+    folder_id = str(state.get("learnedFolderId") or SYSTEM_LEARNED_FOLDER_ID)
     if word_id in learned_word_ids:
-        return False
-    client.add_word_to_folder(
-        session,
-        str(state.get("learnedFolderId") or SYSTEM_LEARNED_FOLDER_ID),
-        word_id,
-        mark_no_review=True,
-    )
-    state["learnedWordIds"] = [*learned_word_ids, word_id]
-    sync_state_folder_membership(
-        state,
-        str(state.get("learnedFolderId") or SYSTEM_LEARNED_FOLDER_ID),
-        word_id,
-        True,
-    )
-    return True
+        client.remove_word_from_folder(session, folder_id, word_id)
+        state["learnedWordIds"] = [item for item in learned_word_ids if item != word_id]
+        now_learned = False
+    else:
+        client.add_word_to_folder(session, folder_id, word_id, mark_no_review=True)
+        state["learnedWordIds"] = [*learned_word_ids, word_id]
+        now_learned = True
+    sync_state_folder_membership(state, folder_id, word_id, now_learned)
+    return now_learned
 
 
 def mark_word_as_unfamiliar(
