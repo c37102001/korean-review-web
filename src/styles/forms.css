@@ -295,6 +295,15 @@
   margin-bottom: 0;
 }
 
+.export-format-control {
+  width: min(360px, 100%);
+  margin: 0 0 16px;
+}
+
+.export-content {
+  min-height: 180px;
+}
+
 .json-code {
   max-height: min(560px, 58vh);
   overflow: auto;

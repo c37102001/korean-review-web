@@ -269,6 +269,12 @@ function buildNotebookExport(items) {
   return JSON.stringify({ schemaVersion: CONTENT_SCHEMA_VERSION, exportedAt: new Date().toISOString(), data: cleanItems }, null, 2);
 }
 
+function buildNotebookTextExport(items) {
+  return items
+    .map((item) => [item.ko, wordChineseSummary(item)].filter(Boolean).join(' '))
+    .join('\n');
+}
+
 function downloadNotebookJson(jsonText) {
   const blob = new Blob([jsonText], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -306,6 +312,48 @@ export function ExportJsonModal({ items, title = '匯出 JSON', onClose }) {
           </div>
         </div>
         <pre className="json-code"><code>{jsonText}</code></pre>
+      </div>
+    </div>
+  );
+}
+
+export function ExportWordsModal({ items, onClose }) {
+  const [format, setFormat] = useState('json');
+  const [copied, setCopied] = useState(false);
+  const jsonText = useMemo(() => buildNotebookExport(items), [items]);
+  const plainText = useMemo(() => buildNotebookTextExport(items), [items]);
+  const exportText = format === 'json' ? jsonText : plainText;
+  const selectFormat = (nextFormat) => {
+    setFormat(nextFormat);
+    setCopied(false);
+  };
+  const copyExport = async () => {
+    await copyText(exportText);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  };
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="export-words-title">
+      <div className="modal-panel export-panel">
+        <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
+        <div className="export-head">
+          <div>
+            <span className="eyebrow">篩選結果 · {items.length} 個單字</span>
+            <h2 id="export-words-title">匯出單字</h2>
+          </div>
+          <div className="actions">
+            <button onClick={copyExport}><Copy size={17} /> {copied ? '已複製' : '複製'}</button>
+            {format === 'json' && (
+              <button className="primary" onClick={() => downloadNotebookJson(jsonText)}><Download size={17} /> 下載</button>
+            )}
+          </div>
+        </div>
+        <div className="segmented export-format-control" role="group" aria-label="匯出格式">
+          <button type="button" className={format === 'json' ? 'active' : ''} aria-pressed={format === 'json'} onClick={() => selectFormat('json')}>JSON</button>
+          <button type="button" className={format === 'text' ? 'active' : ''} aria-pressed={format === 'text'} onClick={() => selectFormat('text')}>一般文字</button>
+        </div>
+        <pre className="json-code export-content" aria-label={format === 'json' ? 'JSON 匯出內容' : '一般文字匯出內容'}><code>{exportText}</code></pre>
       </div>
     </div>
   );
@@ -786,12 +834,12 @@ export function NotebookPage({ store, updateStore, items, questions, folders = [
               {showLearned ? <Eye size={18} /> : <EyeOff size={18} />}
               {showLearned ? '顯示已學習' : '隱藏已學習'}
             </button>
-            <button onClick={() => setExportOpen(true)}><Download size={18} /> 匯出 JSON</button>
+            <button onClick={() => setExportOpen(true)} disabled={!collection.filteredItems.length}><Download size={18} /> 匯出單字</button>
             <button onClick={() => setJsonEditOpen(true)}><Pencil size={18} /> 修改 JSON</button>
           </ActionMenu>
         </div>
       </div>
-      {exportOpen && <ExportJsonModal items={items} onClose={() => setExportOpen(false)} />}
+      {exportOpen && <ExportWordsModal items={collection.filteredItems} onClose={() => setExportOpen(false)} />}
       {jsonEditOpen && (
         <EditJsonModal
           items={items}

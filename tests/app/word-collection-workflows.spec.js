@@ -194,17 +194,21 @@ test('W08: starred words stay selected in study and practice after reload', asyn
   assertNoProductionRequests();
 });
 
-test('W15: export copy and download contain parseable source data', async ({ page, request }) => {
+test('W15: export uses the full filtered result and supports JSON and plain text', async ({ page, request }) => {
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'export-word@example.test');
   await seedWord(page, request, 'exported', '책', '書');
+  await seedWord(page, request, 'excluded', '사과', '蘋果');
   await openNotebook(page);
+  await expect(cards(page)).toHaveCount(2);
+  await expect(cards(page).filter({ hasText: '책' })).toHaveCount(1);
+  await page.getByPlaceholder('搜尋韓文單字或中文意思').fill('책');
   await expect(cards(page)).toHaveCount(1);
-  await expect(cards(page)).toContainText('책');
   await page.locator('.notebook-actions .action-menu summary').click();
-  await page.getByRole('button', { name: '匯出 JSON' }).click();
+  await page.getByRole('button', { name: '匯出單字' }).click();
   const dialog = page.getByRole('dialog');
-  const json = JSON.parse(await dialog.locator('pre').innerText());
+  await expect(dialog.getByRole('group', { name: '匯出格式' })).toBeVisible();
+  const json = JSON.parse(await dialog.getByLabel('JSON 匯出內容').innerText());
   expect(json.data).toHaveLength(1);
   expect(json.data[0].ko).toBe('책');
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -216,6 +220,12 @@ test('W15: export copy and download contain parseable source data', async ({ pag
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.json$/);
   expect(JSON.parse(await readFile(await download.path(), 'utf8'))).toEqual(json);
+  await dialog.getByRole('button', { name: '一般文字' }).click();
+  await expect(dialog.getByLabel('一般文字匯出內容')).toHaveText('책 書');
+  await dialog.getByRole('button', { name: '複製' }).click();
+  await expect(dialog.getByRole('button', { name: '已複製' })).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('책 書');
+  await expect(dialog.getByRole('button', { name: '下載' })).toHaveCount(0);
   await dialog.getByRole('button', { name: '關閉' }).click();
   expect((await readDocument(page, request, 'records', 'exported'))?.fields.id.stringValue).toBe('exported');
   assertNoProductionRequests();

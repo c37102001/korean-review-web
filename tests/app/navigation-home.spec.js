@@ -98,9 +98,14 @@ test('G05: global back returns one level through subtitle and folder details', a
   assertNoProductionRequests();
 });
 
-test('G06: settings menu closes on Escape/outside and commands stay distinct', async ({ page }) => {
+test('G06: settings menu closes on Escape/outside and commands stay distinct', async ({ page, request }) => {
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'settings-menu@example.test');
+  await seedDocument(page, request, 'records', 'settings-word', {
+    id: 'settings-word', date: '2026-09-21',
+    createdAt: '2026-09-21T00:00:00.000Z', updatedAt: '2026-09-21T00:00:00.000Z',
+    item: { ko: '설정', pos: '名詞', meanings: [{ zh: '設定', examples: [] }] },
+  });
   const menu = page.locator('.home-settings-menu');
   await menu.locator('summary').click();
   await expect(menu).toHaveJSProperty('open', true);
@@ -124,8 +129,8 @@ test('G06: settings menu closes on Escape/outside and commands stay distinct', a
   await page.keyboard.press('Escape');
   await expect(more).toHaveJSProperty('open', false);
   await more.locator('summary').click();
-  await more.getByRole('button', { name: '匯出 JSON' }).click();
-  await expect(page.getByRole('dialog').getByRole('heading', { name: '匯出 JSON' })).toBeVisible();
+  await more.getByRole('button', { name: '匯出單字' }).click();
+  await expect(page.getByRole('dialog').getByRole('heading', { name: '匯出單字' })).toBeVisible();
   await expect(more).toHaveJSProperty('open', false);
   await page.getByRole('dialog').getByRole('button', { name: '關閉' }).click();
   await expect(page.getByRole('heading', { name: '單字本' })).toBeVisible();
