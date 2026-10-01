@@ -247,6 +247,7 @@ def run_practice(stdscr: curses.window, title: str, questions: List[Question], c
             )
             continue
         key = read_terminal_key(stdscr, wide=True)
+        key = keypad_shortcut_alias(key, "146789")
         if key == "\x1b":
             set_cursor_visibility(0)
             return False

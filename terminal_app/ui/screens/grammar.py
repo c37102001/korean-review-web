@@ -121,6 +121,7 @@ def run_grammar_recall_practice(
         key = read_terminal_key(stdscr, wide=True)
         if isinstance(key, int) and 0 <= key <= 255:
             key = chr(key)
+        key = keypad_shortcut_alias(key, "14678")
         if key == "\x1b":
             return False
         if key == curses.KEY_UP:

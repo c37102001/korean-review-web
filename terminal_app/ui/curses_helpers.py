@@ -155,6 +155,24 @@ def _is_character_key(key: Any, character: str) -> bool:
     return key == character if isinstance(key, str) else key == ord(character)
 
 
+KEYPAD_SHORTCUT_ALIASES = {
+    "q": "7", "w": "8", "e": "9",
+    "a": "4", "s": "5", "d": "6",
+    "z": "1", "c": "3",
+}
+
+
+def keypad_shortcut_alias(key: Any, supported_digits: str) -> Any:
+    """Map lowercase keyboard-grid aliases only when a screen owns that digit."""
+    character = chr(key) if isinstance(key, int) and 0 <= key <= 255 else key
+    target = KEYPAD_SHORTCUT_ALIASES.get(character) if isinstance(character, str) else None
+    return target if target and target in supported_digits else key
+
+
+def _is_hide_toggle_key(key: Any) -> bool:
+    return _is_character_key(key, "3") or _is_character_key(key, "c")
+
+
 def _hide_terminal_until_toggled(stdscr: curses.window, *, wide: bool) -> None:
     try:
         curses.curs_set(0)
@@ -165,7 +183,7 @@ def _hide_terminal_until_toggled(stdscr: curses.window, *, wide: bool) -> None:
         clear_with_default_background(stdscr)
         stdscr.refresh()
         key = stdscr.get_wch() if wide else stdscr.getch()
-        if _is_character_key(key, "3"):
+        if _is_hide_toggle_key(key):
             break
     try:
         curses.curs_set(_cursor_visibility)
@@ -176,7 +194,7 @@ def _hide_terminal_until_toggled(stdscr: curses.window, *, wide: bool) -> None:
 def read_terminal_key(stdscr: curses.window, *, wide: bool = False) -> Any:
     key = stdscr.get_wch() if wide else stdscr.getch()
     stop_korean_speech()
-    if _is_character_key(key, "3"):
+    if _is_hide_toggle_key(key):
         _hide_terminal_until_toggled(stdscr, wide=wide)
         return curses.KEY_RESIZE
     if _is_character_key(key, "."):

@@ -1,7 +1,6 @@
 import unittest
 
 from terminal_app.domain.content import card_korean_forms, card_korean_speech, normalize_records
-from terminal_app.runtime import study_auto_audio_steps
 
 
 class TerminalVariantTests(unittest.TestCase):
@@ -14,7 +13,6 @@ class TerminalVariantTests(unittest.TestCase):
         self.assertEqual(cards[0].variants, ["쏟아요", "쏟는"])
         self.assertEqual(card_korean_forms(cards[0]), "쏟다 / 쏟아요 / 쏟는")
         self.assertEqual(card_korean_speech(cards[0]), "쏟다. 쏟아요. 쏟는")
-        self.assertEqual(study_auto_audio_steps(cards[0], 1)[0][2], "쏟다. 쏟아요. 쏟는")
         self.assertEqual(questions[0].ko, "쏟다")
 
     def test_missing_or_duplicate_variants_leave_clean_title(self):

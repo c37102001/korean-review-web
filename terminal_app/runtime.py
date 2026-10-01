@@ -1125,21 +1125,6 @@ def card_examples(card: Card) -> List[Dict[str, str]]:
     return examples
 
 
-def study_auto_audio_steps(card: Card, repeat_count: int) -> List[Tuple[str, int, str, int]]:
-    repeats = min(3, max(1, int(repeat_count or 1)))
-    examples = card_examples(card)
-    cycle: List[Tuple[str, int, str]] = [("front", -1, card_korean_speech(card))]
-    if examples:
-        cycle.extend(("back", index, example.get("ko", "")) for index, example in enumerate(examples))
-    else:
-        cycle.append(("back", -1, ""))
-    return [
-        (face, example_index, text, repeat_index)
-        for repeat_index in range(1, repeats + 1)
-        for face, example_index, text in cycle
-    ]
-
-
 def cards_in_folder(cards: List[Card], folder: Dict[str, Any]) -> List[Card]:
     word_ids = set(str(item) for item in (folder.get("wordIds") or []) if item)
     return [card for card in cards if card.id in word_ids]

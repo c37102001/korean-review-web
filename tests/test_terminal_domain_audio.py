@@ -14,7 +14,7 @@ from terminal_app.audio.youtube import TerminalYoutubeAudioPlayer, download_yout
 from terminal_app.domain.content import normalize_grammar_notes, normalize_reading_tests, normalize_records, normalize_youtube_subtitles
 from terminal_app.domain.models import YoutubeSubtitle
 from terminal_app.runtime import is_auto_audio_enabled, set_auto_audio_enabled
-from terminal_app.ui.curses_helpers import auto_audio_control_label, read_terminal_key
+from terminal_app.ui.curses_helpers import auto_audio_control_label, keypad_shortcut_alias, read_terminal_key
 
 
 class FakeRunner:
@@ -173,6 +173,21 @@ class TerminalDomainAudioTests(unittest.TestCase):
         self.assertEqual(key, curses.KEY_RESIZE)
         self.assertEqual(screen.erase_count, 3)
         self.assertEqual(screen.timeout_values, [-1])
+
+    def test_c_uses_the_same_global_hide_toggle_as_three(self):
+        screen = HiddenTerminalScreen(['c', '6', 'c'])
+        key = read_terminal_key(screen, wide=True)
+
+        self.assertEqual(key, curses.KEY_RESIZE)
+        self.assertEqual(screen.erase_count, 2)
+
+    def test_keyboard_grid_aliases_only_map_supported_numeric_shortcuts(self):
+        aliases = {'q': '7', 'w': '8', 'e': '9', 'a': '4', 's': '5', 'd': '6', 'z': '1'}
+        for letter, digit in aliases.items():
+            self.assertEqual(keypad_shortcut_alias(letter, '1456789'), digit)
+        self.assertEqual(keypad_shortcut_alias('e', '146'), 'e')
+        self.assertEqual(keypad_shortcut_alias('x', '1456789'), 'x')
+        self.assertEqual(keypad_shortcut_alias('A', '4'), 'A')
 
     def test_domain_modules_do_not_import_ui_network_audio_or_cache(self):
         domain_dir = Path(__file__).parents[1] / 'terminal_app' / 'domain'

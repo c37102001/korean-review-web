@@ -135,6 +135,7 @@ def run_reading_test_detail(
         key = read_terminal_key(stdscr, wide=True)
         if isinstance(key, int) and 0 <= key <= 255:
             key = chr(key)
+        key = keypad_shortcut_alias(key, "146")
         key_text = key.lower() if isinstance(key, str) else ""
         if key in ("\x1b", 27):
             return

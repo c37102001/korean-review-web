@@ -165,6 +165,7 @@ def run_youtube_subtitle_detail(
                 key = chr(key)
             elif key == curses.KEY_ENTER:
                 key = "\n"
+            key = keypad_shortcut_alias(key, "4567")
             if key in ("\x1b", 27):
                 return
             if isinstance(key, str) and key.lower() == "h":

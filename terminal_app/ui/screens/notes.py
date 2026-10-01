@@ -85,6 +85,7 @@ def run_grammar_note_detail(
         key = read_terminal_key(stdscr, wide=True)
         if isinstance(key, int) and 0 <= key <= 255:
             key = chr(key)
+        key = keypad_shortcut_alias(key, "4679")
         if key == "\x1b":
             return
         if key == curses.KEY_UP:
