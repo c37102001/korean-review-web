@@ -160,7 +160,7 @@ def run_daily_recognition(
         key = read_terminal_key(stdscr, wide=True)
         if isinstance(key, int) and 0 <= key <= 255:
             key = chr(key)
-        key = keypad_shortcut_alias(key, "146789")
+        key = keypad_shortcut_alias(key, "1246789")
         if key == "\x1b":
             return False
         if key in ("\n", "\r") or key in (curses.KEY_ENTER, 10, 13):

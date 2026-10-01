@@ -158,7 +158,7 @@ def _is_character_key(key: Any, character: str) -> bool:
 KEYPAD_SHORTCUT_ALIASES = {
     "q": "7", "w": "8", "e": "9",
     "a": "4", "s": "5", "d": "6",
-    "z": "1", "c": "3",
+    "z": "1", "x": "2", "c": "3",
 }
 
 

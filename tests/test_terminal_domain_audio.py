@@ -182,9 +182,9 @@ class TerminalDomainAudioTests(unittest.TestCase):
         self.assertEqual(screen.erase_count, 2)
 
     def test_keyboard_grid_aliases_only_map_supported_numeric_shortcuts(self):
-        aliases = {'q': '7', 'w': '8', 'e': '9', 'a': '4', 's': '5', 'd': '6', 'z': '1'}
+        aliases = {'q': '7', 'w': '8', 'e': '9', 'a': '4', 's': '5', 'd': '6', 'z': '1', 'x': '2'}
         for letter, digit in aliases.items():
-            self.assertEqual(keypad_shortcut_alias(letter, '1456789'), digit)
+            self.assertEqual(keypad_shortcut_alias(letter, '12456789'), digit)
         self.assertEqual(keypad_shortcut_alias('e', '146'), 'e')
         self.assertEqual(keypad_shortcut_alias('x', '1456789'), 'x')
         self.assertEqual(keypad_shortcut_alias('A', '4'), 'A')
