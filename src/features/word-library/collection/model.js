@@ -1,11 +1,14 @@
 export const FAMILIARITY_FILTER_OPTIONS = [
-  { value: 'score-negative-1', label: '熟悉度 -1' },
-  { value: 'score-negative-2', label: '熟悉度 -2' },
-  { value: 'score-negative-3', label: '熟悉度 -3' },
-  { value: 'score-negative-4-or-less', label: '熟悉度 -4 以下' },
-  { value: '學習中', label: '學習中' },
-  { value: '熟悉', label: '熟悉' },
-  { value: '已熟悉', label: '已熟悉' },
+  { value: 'score-negative-4-or-less', label: '-4 以下' },
+  { value: 'score-negative-3', label: '-3' },
+  { value: 'score-negative-2', label: '-2' },
+  { value: 'score-negative-1', label: '-1' },
+  { value: 'score-zero', label: '0' },
+  { value: 'score-positive-1', label: '1' },
+  { value: 'score-positive-2', label: '2' },
+  { value: 'score-positive-3', label: '3' },
+  { value: 'score-positive-4', label: '4' },
+  { value: 'score-positive-5-or-more', label: '5 以上' },
 ];
 
 export const UNFILED_FOLDER_FILTER_ID = '__unfiled__';
@@ -27,15 +30,19 @@ export function familiarityLevel(score) {
 }
 
 export function familiarityFilterValue(level, score) {
-  if (level !== '不熟悉') return level;
+  if (score <= -4) return 'score-negative-4-or-less';
   if (score === -1) return 'score-negative-1';
   if (score === -2) return 'score-negative-2';
   if (score === -3) return 'score-negative-3';
-  return 'score-negative-4-or-less';
+  if (score === 0) return 'score-zero';
+  if (score >= 5) return 'score-positive-5-or-more';
+  return `score-positive-${score}`;
 }
 
 export function matchesFamiliarityLevels(level, selectedLevels = [], score = 0) {
-  return !selectedLevels.length || selectedLevels.includes(familiarityFilterValue(level, score));
+  return !selectedLevels.length
+    || selectedLevels.includes(familiarityFilterValue(level, score))
+    || selectedLevels.includes(level);
 }
 
 export function folderFilterWordIds(folders = [], selectedFolderIds = []) {

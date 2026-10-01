@@ -1140,16 +1140,34 @@ def familiarity_level(score: int) -> str:
     return "學習中"
 
 
+FAMILIARITY_FILTER_OPTIONS = [
+    ("score-negative-4-or-less", "-4 以下"),
+    ("score-negative-3", "-3"),
+    ("score-negative-2", "-2"),
+    ("score-negative-1", "-1"),
+    ("score-zero", "0"),
+    ("score-positive-1", "1"),
+    ("score-positive-2", "2"),
+    ("score-positive-3", "3"),
+    ("score-positive-4", "4"),
+    ("score-positive-5-or-more", "5 以上"),
+]
+
+
 def familiarity_filter_value(level: str, score: int) -> str:
-    if level != "不熟悉":
-        return level
+    if score <= -4:
+        return "score-negative-4-or-less"
     if score == -1:
         return "score-negative-1"
     if score == -2:
         return "score-negative-2"
     if score == -3:
         return "score-negative-3"
-    return "score-negative-4-or-less"
+    if score == 0:
+        return "score-zero"
+    if score >= 5:
+        return "score-positive-5-or-more"
+    return f"score-positive-{score}"
 
 
 def card_familiarity(state: Dict[str, Any], questions: List[Question], card_id: str) -> Tuple[int, str]:

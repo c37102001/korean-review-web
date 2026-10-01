@@ -124,9 +124,9 @@ test('W02 W03 W04 W09 W14: filters compose, sort and pagination retain correct s
   await expect(cards(page)).toHaveCount(3);
   await page.getByRole('button', { name: '熟悉度 全部' }).click();
   const levelFilter = page.getByRole('group', { name: '熟悉度篩選' });
-  await levelFilter.getByRole('checkbox', { name: '熟悉度 -1' }).check();
+  await levelFilter.getByRole('checkbox', { name: '-1', exact: true }).check();
   await expect(cards(page)).toHaveCount(1);
-  await levelFilter.getByRole('checkbox', { name: '熟悉度 -2' }).check();
+  await levelFilter.getByRole('checkbox', { name: '-2', exact: true }).check();
   await expect(cards(page)).toHaveCount(2);
   await levelFilter.getByRole('button', { name: '清除' }).click();
   await page.keyboard.press('Escape');

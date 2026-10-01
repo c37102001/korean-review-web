@@ -53,15 +53,7 @@ def run_notebook(
     }
     row = 0
     sort_modes = ["latest", "alphabetical", "score"]
-    level_options = [
-        ("score-negative-1", "熟悉度 -1"),
-        ("score-negative-2", "熟悉度 -2"),
-        ("score-negative-3", "熟悉度 -3"),
-        ("score-negative-4-or-less", "熟悉度 -4 以下"),
-        ("學習中", "學習中"),
-        ("熟悉", "熟悉"),
-        ("已熟悉", "已熟悉"),
-    ]
+    level_options = list(FAMILIARITY_FILTER_OPTIONS)
     folders = list(state.get("folders") or [])
     folder_names = {str(folder.get("id") or ""): str(folder.get("name") or "未命名資料夾") for folder in folders}
     set_cursor_visibility(0)

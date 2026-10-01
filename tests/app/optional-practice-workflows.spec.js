@@ -59,7 +59,7 @@ test('H04: all four practice types create the configured pool and can start', as
     await dialog.getByLabel('方向').selectOption('zh-ko');
     await dialog.getByPlaceholder('搜尋韓文單字或中文意思').fill('去');
     await dialog.getByRole('button', { name: '熟悉度 全部' }).click();
-    await dialog.getByRole('group', { name: '熟悉度篩選' }).getByRole('checkbox', { name: '學習中' }).check();
+    await dialog.getByRole('group', { name: '熟悉度篩選' }).getByRole('checkbox', { name: '0', exact: true }).check();
     await page.keyboard.press('Escape');
     await dialog.getByRole('button', { name: /資料夾 全部/ }).click();
     const folders = dialog.getByRole('group', { name: '資料夾篩選' });

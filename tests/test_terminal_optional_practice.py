@@ -80,7 +80,10 @@ class OptionalPracticeTests(unittest.TestCase):
         self.assertEqual(terminal.familiarity_filter_value("不熟悉", -1), "score-negative-1")
         self.assertEqual(terminal.familiarity_filter_value("不熟悉", -3), "score-negative-3")
         self.assertEqual(terminal.familiarity_filter_value("不熟悉", -8), "score-negative-4-or-less")
-        self.assertEqual(terminal.familiarity_filter_value("熟悉", 4), "熟悉")
+        self.assertEqual(terminal.familiarity_filter_value("學習中", 0), "score-zero")
+        self.assertEqual(terminal.familiarity_filter_value("學習中", 1), "score-positive-1")
+        self.assertEqual(terminal.familiarity_filter_value("熟悉", 4), "score-positive-4")
+        self.assertEqual(terminal.familiarity_filter_value("已熟悉", 8), "score-positive-5-or-more")
 
     def test_familiarity_score_has_no_initial_offset(self):
         self.assertEqual(terminal.familiarity_score({}), 0)

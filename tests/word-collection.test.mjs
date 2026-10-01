@@ -5,10 +5,18 @@ import {
   buildWordQuestionIds,
   deriveWordCollection,
   enrichWordsWithStats,
+  FAMILIARITY_FILTER_OPTIONS,
   filterItemsByFolderSelection,
   questionsForWords,
   UNFILED_FOLDER_FILTER_ID,
 } from '../src/features/word-library/collection/model.js';
+
+test('familiarity filters expose exact scores with bounded ends', () => {
+  assert.deepEqual(
+    FAMILIARITY_FILTER_OPTIONS.map((option) => option.label),
+    ['-4 以下', '-3', '-2', '-1', '0', '1', '2', '3', '4', '5 以上'],
+  );
+});
 
 const items = [
   {
@@ -86,7 +94,7 @@ test('one collection selector composes search, familiarity, folders, sorting and
     store,
     folders,
     selectedFolderIds: ['folder-1', UNFILED_FOLDER_FILTER_ID],
-    selectedLevels: ['score-negative-1', '學習中'],
+    selectedLevels: ['score-negative-1', 'score-zero'],
     sort: 'alphabetical',
     pageNumber: 2,
     pageSize: 1,

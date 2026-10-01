@@ -1102,7 +1102,7 @@ test('unfamiliar practice selects the lowest-scoring 30 unique words', () => {
 });
 
 test('familiarity filtering supports multiple levels and precise negative scores', () => {
-  const selected = ['score-negative-1', 'score-negative-3', '學習中'];
+  const selected = ['score-negative-1', 'score-negative-3', 'score-positive-2'];
   assert.equal(helpers.matchesFamiliarityLevels('不熟悉', selected, -1), true);
   assert.equal(helpers.matchesFamiliarityLevels('不熟悉', selected, -2), false);
   assert.equal(helpers.matchesFamiliarityLevels('不熟悉', selected, -3), true);
@@ -1110,8 +1110,15 @@ test('familiarity filtering supports multiple levels and precise negative scores
   assert.equal(helpers.matchesFamiliarityLevels('學習中', selected, 2), true);
   assert.equal(helpers.matchesFamiliarityLevels('熟悉', selected, 3), false);
   assert.equal(helpers.matchesFamiliarityLevels('已熟悉', selected, 5), false);
+  assert.equal(helpers.matchesFamiliarityLevels('學習中', ['score-zero'], 0), true);
+  assert.equal(helpers.matchesFamiliarityLevels('學習中', ['score-positive-1'], 1), true);
+  assert.equal(helpers.matchesFamiliarityLevels('熟悉', ['score-positive-3'], 3), true);
+  assert.equal(helpers.matchesFamiliarityLevels('熟悉', ['score-positive-4'], 4), true);
+  assert.equal(helpers.matchesFamiliarityLevels('已熟悉', ['score-positive-5-or-more'], 5), true);
+  assert.equal(helpers.matchesFamiliarityLevels('已熟悉', ['score-positive-5-or-more'], 12), true);
   assert.equal(helpers.matchesFamiliarityLevels('不熟悉', ['score-negative-4-or-less'], -4), true);
   assert.equal(helpers.matchesFamiliarityLevels('不熟悉', ['score-negative-4-or-less'], -12), true);
+  assert.equal(helpers.matchesFamiliarityLevels('學習中', ['學習中'], 2), true);
   assert.equal(helpers.matchesFamiliarityLevels('已熟悉', []), true);
 });
 
