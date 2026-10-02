@@ -9,18 +9,19 @@ import {
   groupReadingTestsByTag,
   parseReadingTestsJson,
   readingTestTagLabel,
+  readingTestTitle,
   READING_TEST_JSON_SAMPLE,
   UNTAGGED_READING_TEST_LABEL,
 } from '../../../reading/model.js';
 import { copyText } from '../../../shared/clipboard.js';
 import { formatContentTimestamp } from '../../../shared/dateTime.js';
 
-function ReadingTestCard({ test, index, onOpen, onEdit, onDelete }) {
+function ReadingTestCard({ test, onOpen, onEdit, onDelete }) {
   const questionCount = test.questions.length;
   return (
     <EntityCardShell className="reading-test-card" onOpen={() => onOpen(test.id)}>
       <div className="card-head">
-        <div><span className="eyebrow">Reading · {questionCount} questions</span><h2>閱讀題 {index + 1}</h2></div>
+        <div><span className="eyebrow">Reading · {questionCount} questions</span><h2>{readingTestTitle(test)}</h2></div>
         <div className="card-actions">
           <EditIconButton label="編輯閱讀題" onClick={() => onEdit(test)} />
           <button type="button" className="edit-icon-button delete-icon-button" title="刪除閱讀題" aria-label="刪除閱讀題" onClick={(event) => { event.stopPropagation(); onDelete(test); }}><Trash2 size={15} /></button>
@@ -252,7 +253,7 @@ export default function ReadingTestsPage({ tests, error, onSave, onSaveMany, onD
       {filtered.length ? <div className="folder-tag-groups reading-test-tag-groups">{groups.map((group) => {
         const collapsed = collapsedTags.has(group.label);
         return <CollapsibleGroup className="folder-tag-group" collapsed={collapsed} onToggle={() => toggleTag(group.label)} title={group.label} countLabel={`${group.tests.length} 題`} key={group.label}>
-          <EntityGrid className="reading-test-grid">{group.tests.map((test, index) => <ReadingTestCard key={test.id} test={test} index={index} onOpen={onOpen} onEdit={setEditing} onDelete={deleteTest} />)}</EntityGrid>
+          <EntityGrid className="reading-test-grid">{group.tests.map((test) => <ReadingTestCard key={test.id} test={test} onOpen={onOpen} onEdit={setEditing} onDelete={deleteTest} />)}</EntityGrid>
         </CollapsibleGroup>;
       })}</div> : <div className="panel grammar-empty">{query ? '找不到符合的閱讀題。' : '還沒有閱讀題，請用 JSON 一次匯入一題或多題。'}</div>}
       {editing && <ReadingTestsEditorModal test={editing.id ? editing : null} existingTests={tests} tagSuggestions={tagSuggestions} onSave={async (nextTests) => { if (editing.id) await onSave(nextTests[0]); else await onSaveMany(nextTests); setEditing(null); }} onClose={() => setEditing(null)} />}

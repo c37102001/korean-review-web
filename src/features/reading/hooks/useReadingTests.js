@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { normalizeReadingTest, validateReadingTest } from '../../../reading/model.js';
 import { readingTestsRepository } from '../../../repositories/userContentRepository.js';
 import { createId } from '../../../shared/id.js';
@@ -7,6 +7,7 @@ const MAX_ATOMIC_RECORD_WRITES = 450;
 
 export function useReadingTests(user, enabled = true) {
   const [state, setState] = useState({ tests: [], loading: false, error: '' });
+  const serialMigrationRef = useRef('');
 
   useEffect(() => {
     if (!user || !enabled) {
@@ -21,6 +22,15 @@ export function useReadingTests(user, enabled = true) {
           .map((entry) => normalizeReadingTest(entry, entry.id))
           .sort((left, right) => (right.createdAt || '').localeCompare(left.createdAt || '') || left.order - right.order || left.id.localeCompare(right.id));
         setState({ tests, loading: false, error: '' });
+        const missingIds = tests.filter((test) => !test.serialNumber).map((test) => test.id).sort();
+        const migrationKey = missingIds.join('|');
+        if (migrationKey && serialMigrationRef.current !== migrationKey) {
+          serialMigrationRef.current = migrationKey;
+          readingTestsRepository.ensureSerialNumbers(user.uid, tests).catch((migrationError) => {
+            serialMigrationRef.current = '';
+            setState((current) => ({ ...current, error: migrationError.message || '閱讀題流水號建立失敗' }));
+          });
+        }
       },
       (error) => setState((current) => ({ ...current, loading: false, error: error.message })),
     );
@@ -38,8 +48,7 @@ export function useReadingTests(user, enabled = true) {
       createdAt: input.createdAt || now,
       updatedAt: now,
     }, input.id), index));
-    await readingTestsRepository.saveMany(user.uid, tests);
-    return tests;
+    return readingTestsRepository.saveMany(user.uid, tests);
   }, [user]);
 
   const save = useCallback(async (input) => (await saveMany([input]))[0], [saveMany]);

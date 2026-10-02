@@ -6,7 +6,7 @@ from terminal_app.domain.content import normalize_reading_tests
 from terminal_app.ui.screens.highlights import highlight_contexts, highlight_export_text, highlight_lines, render_highlight_markers
 
 
-def reading_test(learned=False):
+def reading_test(learned=False, serial_number=0):
     return terminal.ReadingTest(
         id='reading',
         passage={'ko': '한국어 글', 'zh': '韓文文章'},
@@ -17,10 +17,15 @@ def reading_test(learned=False):
         ],
         answer='2',
         learned=learned,
+        serial_number=serial_number,
     )
 
 
 class TerminalReadingTests(unittest.TestCase):
+    def test_reading_title_uses_the_persisted_number(self):
+        self.assertEqual(terminal._reading_title(reading_test(serial_number=42)), '閱讀題42')
+        self.assertEqual(terminal._reading_title(reading_test()), '閱讀題')
+
     def test_multiple_questions_normalize_and_reveal_independent_answers(self):
         tests = normalize_reading_tests([{
             'id': 'multi',

@@ -24,9 +24,13 @@ const readingData = (overrides = {}) => ({
 });
 
 async function seedReading(page, request, id, overrides = {}) {
+  const {
+    createdAt = '2026-09-20T00:00:00.000Z',
+    updatedAt = '2026-09-21T00:00:00.000Z',
+    ...contentOverrides
+  } = overrides;
   await seedDocument(page, request, 'readingTests', id, {
-    id, ...readingData(overrides), order: 0,
-    createdAt: '2026-09-20T00:00:00.000Z', updatedAt: '2026-09-21T00:00:00.000Z',
+    id, ...readingData(contentOverrides), order: 0, createdAt, updatedAt,
   });
 }
 
@@ -121,6 +125,53 @@ test('R01: copy, batch import, search, collapse, edit, validation, delete, and r
   await page.reload();
   await openReading(page);
   await expect(page.locator('.reading-test-card')).toHaveCount(1);
+  assertNoProductionRequests();
+});
+
+test('R01: legacy and newly imported reading tests receive permanent non-reused titles', async ({ page, request }) => {
+  const assertNoProductionRequests = await prepareAppPage(page);
+  await register(page, 'reading-sequence@example.test');
+  await seedReading(page, request, 'legacy-one', {
+    createdAt: '2026-09-18T00:00:00.000Z',
+    passage: { ko: '첫 번째 기존 글입니다.', zh: '第一篇既有文章。' },
+  });
+  await seedReading(page, request, 'legacy-two', {
+    createdAt: '2026-09-19T00:00:00.000Z',
+    passage: { ko: '두 번째 기존 글입니다.', zh: '第二篇既有文章。' },
+  });
+  await openReading(page);
+
+  await expect(page.getByRole('heading', { name: '閱讀題1', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '閱讀題2', exact: true })).toBeVisible();
+  await expect.poll(async () => {
+    const documents = await listDocuments(page, request, 'readingTests');
+    return documents.map((document) => Number(document.fields.serialNumber?.integerValue)).sort((left, right) => left - right);
+  }).toEqual([1, 2]);
+
+  page.once('dialog', (confirmation) => confirmation.accept());
+  await readingCard(page, '두 번째 기존 글입니다.').getByRole('button', { name: '刪除閱讀題' }).click();
+  await page.getByRole('button', { name: '匯入題目' }).click();
+  const dialog = page.getByRole('dialog', { name: '匯入閱讀題' });
+  const imported = readingData({
+    id: 'new-reading',
+    title: '不應匯入',
+    serialNumber: 2,
+    tag: '',
+    passage: { ko: '새로운 읽기 글입니다.', zh: '這是新的閱讀文章。' },
+  });
+  await dialog.locator('.yt-subtitle-source').fill(JSON.stringify({ schemaVersion: 2, data: [imported] }));
+  await dialog.getByRole('button', { name: '下一步：選擇標籤' }).click();
+  await dialog.getByRole('radio', { name: /^無標籤/ }).check();
+  await dialog.getByRole('button', { name: '確認匯入 1 題' }).click();
+  await expect(page.getByRole('heading', { name: '閱讀題3', exact: true })).toBeVisible();
+
+  await page.reload();
+  await openReading(page);
+  await expect(page.getByRole('heading', { name: '閱讀題1', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '閱讀題3', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '閱讀題2', exact: true })).toHaveCount(0);
+  const exportedDocument = await readDocument(page, request, 'readingTests', 'new-reading');
+  expect(exportedDocument.fields.serialNumber.integerValue).toBe('3');
   assertNoProductionRequests();
 });
 

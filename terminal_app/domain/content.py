@@ -222,6 +222,7 @@ def normalize_reading_tests(records: List[Dict[str, Any]]) -> List[ReadingTest]:
             questions=questions,
             highlights=normalize_text_highlights(record.get("highlights"), reading_entries),
             learned=record.get("learned") is True,
+            serial_number=record.get("serialNumber") if isinstance(record.get("serialNumber"), int) and record.get("serialNumber") > 0 else 0,
             order=int(record.get("order")) if isinstance(record.get("order"), int) else 0,
             created_at=str(record.get("createdAt") or ""),
             updated_at=str(record.get("updatedAt") or ""),

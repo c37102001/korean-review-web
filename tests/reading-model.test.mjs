@@ -8,6 +8,7 @@ import {
   normalizeReadingTest,
   parseReadingTestsJson,
   readingTestTagLabel,
+  readingTestTitle,
   UNTAGGED_READING_TEST_LABEL,
 } from '../src/reading/model.js';
 
@@ -35,6 +36,22 @@ test('reading test tags normalize and round-trip through JSON', () => {
   const original = readingTest('tagged', 'TOPIK');
   const [parsed] = parseReadingTestsJson(formatReadingTestsJson([original]), [original]);
   assert.equal(parsed.tag, 'TOPIK');
+});
+
+test('reading titles use persisted serial numbers that JSON cannot import or export', () => {
+  const existing = normalizeReadingTest({ ...readingTest('fixed', 'TOPIK'), serialNumber: 12 });
+  const document = JSON.parse(formatReadingTestsJson([existing]));
+  assert.equal(document.data[0].serialNumber, undefined);
+  assert.equal(document.data[0].title, undefined);
+
+  document.data[0].serialNumber = 999;
+  document.data[0].title = '任意標題';
+  const [edited] = parseReadingTestsJson(JSON.stringify(document), [existing]);
+  const [created] = parseReadingTestsJson(JSON.stringify({ ...document, data: [{ ...document.data[0], id: 'new' }] }));
+  assert.equal(edited.serialNumber, 12);
+  assert.equal(created.serialNumber, 0);
+  assert.equal(readingTestTitle(edited), '閱讀題12');
+  assert.equal(readingTestTitle(created), '閱讀題');
 });
 
 test('reading test export can omit tags while retaining the import document shape', () => {

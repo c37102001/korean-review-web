@@ -71,6 +71,7 @@ class ReadingTest:
     questions: List[Dict[str, Any]] = field(default_factory=list)
     highlights: List[Dict[str, Any]] = field(default_factory=list)
     learned: bool = False
+    serial_number: int = 0
     order: int = 0
     created_at: str = ""
     updated_at: str = ""

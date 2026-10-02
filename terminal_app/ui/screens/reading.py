@@ -21,6 +21,10 @@ def _reading_questions(test: ReadingTest) -> List[Dict[str, Any]]:
         "id": "1", "question": test.question, "options": test.options, "answer": test.answer,
     }]
 
+
+def _reading_title(test: ReadingTest) -> str:
+    return f"閱讀題{test.serial_number}" if test.serial_number > 0 else "閱讀題"
+
 def _reading_content_lines(
     test: ReadingTest,
     width: int,
@@ -122,7 +126,7 @@ def run_reading_test_detail(
         viewport_height = max(1, height - 5)
         scroll_offset = max(0, min(scroll_offset, max(0, len(lines) - viewport_height)))
         status = "已學習" if test.learned else "未學習"
-        draw_line(stdscr, 0, 2, f"閱讀測驗 | {status}", curses.A_BOLD)
+        draw_line(stdscr, 0, 2, f"{_reading_title(test)} | {status}", curses.A_BOLD)
         controls = "↑↓=捲動 P/N=切題 ←→=選項 Enter=作答" if not submitted and len(questions) > 1 else "↑↓=捲動 ←→=選項 Enter=作答" if not submitted else "↑↓=捲動 R=再做一次"
         draw_line(stdscr, 1, 2, f"{controls} H=劃線 E=匯出 L=已學習 Esc=返回", curses.A_DIM)
         for row, (line, attr) in enumerate(lines[scroll_offset:scroll_offset + viewport_height], 2):
@@ -247,7 +251,7 @@ def run_reading_tests(
         for row, test in enumerate(visible[start:start + visible_count], 2):
             index = start + row - 2
             status = " [已學習]" if test.learned else ""
-            label = f"閱讀題 {index + 1}{status}"
+            label = f"{_reading_title(test)}{status}"
             draw_line(stdscr, row, 2, ("» " if index == cursor else "  ") + label, curses.A_BOLD if index == cursor else 0)
         draw_line(stdscr, height - 1, 2, f"{cursor + 1}/{len(visible)}", curses.A_DIM)
         update_curses_screen(stdscr)

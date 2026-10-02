@@ -44,6 +44,8 @@ test('rules isolate users and enforce the progress shard contract', async () => 
   const stranger = environment.authenticatedContext('stranger').firestore();
   await assertSucceeds(setDoc(doc(owner, 'users/owner/progressShards/15'), { entries: {} }));
   await assertFails(setDoc(doc(owner, 'users/owner/progressShards/16'), { entries: {} }));
+  await assertSucceeds(setDoc(doc(owner, 'users/owner/settings/contentSequences'), { lastReadingTestNumber: 2 }));
+  await assertFails(getDoc(doc(stranger, 'users/owner/settings/contentSequences')));
   await assertSucceeds(setDoc(doc(owner, 'users/owner/reviewDays/2026-09-14/attemptSegments/00'), { attempts: [] }));
   await assertFails(getDocs(collection(stranger, 'users/owner/progressShards')));
 });

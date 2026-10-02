@@ -4,6 +4,15 @@ import { normalizeTextHighlights } from '../features/text-selection/model.js';
 
 export const UNTAGGED_READING_TEST_LABEL = '無標籤';
 
+function readingTestSerialNumber(value) {
+  return Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+export function readingTestTitle(test) {
+  const serialNumber = readingTestSerialNumber(test?.serialNumber);
+  return serialNumber ? `閱讀題${serialNumber}` : '閱讀題';
+}
+
 export const READING_TEST_JSON_SAMPLE = `{
   "schemaVersion": 2,
   "data": [
@@ -90,6 +99,7 @@ export function normalizeReadingTest(input, fallbackId = '') {
     },
     questions: rawQuestions.map(normalizeReadingQuestion),
     learned: input?.learned === true,
+    serialNumber: readingTestSerialNumber(input?.serialNumber),
     order: Number.isSafeInteger(input?.order) ? input.order : 0,
     createdAt: firestoreTimestampIso(input?.createdAt),
     updatedAt: firestoreTimestampIso(input?.updatedAt),
@@ -136,6 +146,7 @@ export function parseReadingTestsJson(text, existingTests = []) {
       ...existing,
       ...entry,
       id,
+      serialNumber: existing?.serialNumber,
       order: Number.isSafeInteger(entry?.order) ? entry.order : index,
       createdAt: entry?.createdAt || existing?.createdAt || '',
     };

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { BookOpen, Check, FolderOpen, Highlighter, Pencil, Trash2, X } from 'lucide-react';
 
 import { isSystemFolder, READING_SOURCE_FOLDER_NAME } from '../../../folders/model.js';
-import { normalizeReadingTest, readingTestTextEntries } from '../../../reading/model.js';
+import { normalizeReadingTest, readingTestTextEntries, readingTestTitle } from '../../../reading/model.js';
 import { todayString } from '../../../shared/date.js';
 import { createId } from '../../../shared/id.js';
 import { WordMatchesModal } from '../../word-library/components/WordPresentation.jsx';
@@ -137,7 +137,7 @@ export function ReadingTestPage({ test: sourceTest, allTests = [], allItems = []
   return (
     <section className="page reading-test-reader">
       <div className="topbar">
-        <div><span className="eyebrow">Reading Practice</span><h1>閱讀題</h1></div>
+        <div><span className="eyebrow">Reading Practice</span><h1>{readingTestTitle(test)}</h1></div>
         <div className="actions notebook-actions">
           <button type="button" className={`learned-visibility-button ${test.learned ? 'active' : ''}`} aria-pressed={test.learned} title={test.learned ? '取消已學習' : '標記已學習'} onClick={toggleLearned}>{test.learned ? <Check size={18} /> : <BookOpen size={18} />}已學習</button>
           <button type="button" className="reading-highlight-export-button" title="匯出劃線" aria-label="匯出劃線" onClick={() => setExportHighlights(true)}><Highlighter size={17} /><span>匯出劃線</span></button>
