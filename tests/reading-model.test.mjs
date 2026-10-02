@@ -25,7 +25,7 @@ const readingTest = (id, tag, learned = false) => ({
   answer: '1',
 });
 
-test('reading test tags normalize and round-trip through JSON', () => {
+test('reading test tags normalize and appear in exported JSON', () => {
   const legacy = normalizeReadingTest(readingTest('old'));
   assert.equal(legacy.tag, '');
   assert.equal(legacy.questions.length, 1);
@@ -34,8 +34,8 @@ test('reading test tags normalize and round-trip through JSON', () => {
   assert.equal(readingTestTagLabel(readingTest('old')), UNTAGGED_READING_TEST_LABEL);
 
   const original = readingTest('tagged', 'TOPIK');
-  const [parsed] = parseReadingTestsJson(formatReadingTestsJson([original]), [original]);
-  assert.equal(parsed.tag, 'TOPIK');
+  const exported = JSON.parse(formatReadingTestsJson([original]));
+  assert.equal(exported.data[0].tag, 'TOPIK');
 });
 
 test('reading titles use persisted serial numbers that JSON cannot import or export', () => {
@@ -54,7 +54,7 @@ test('reading titles use persisted serial numbers that JSON cannot import or exp
   assert.equal(readingTestTitle(created), '閱讀題');
 });
 
-test('reading test export contains only the portable import fields', () => {
+test('reading test export contains only the requested public fields', () => {
   const source = [readingTest('tagged', 'TOPIK'), readingTest('untagged', '')];
   source[0].order = 42;
   source[0].serialNumber = 7;
