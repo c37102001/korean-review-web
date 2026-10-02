@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   denyFirestoreWrites,
+  expandAllContentGroups,
   prepareAppPage,
   readDocument,
   register,
@@ -47,6 +48,7 @@ test('H04: all four practice types create the configured pool and can start', as
     createdAt: '2026-09-20T00:00:00.000Z', updatedAt: '2026-09-21T00:00:00.000Z',
   });
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
+  await expandAllContentGroups(page);
   await expect(page.locator('.folder-card').filter({ hasText: '動作' })).toBeVisible();
   await page.getByRole('button', { name: '韓文筆記' }).click();
   await seedDocument(page, request, 'grammarNotes', 'type-grammar', {

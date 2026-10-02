@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+  expandAllContentGroups,
   prepareAppPage,
   register,
   resetTestData,
@@ -53,22 +54,27 @@ test('G03: logout and reload keep two accounts and their cached folders isolated
   await register(page, 'owner@example.test');
   await seedFolder(page, request, '帳號A專屬資料夾');
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
+  await expandAllContentGroups(page);
   await expect(page.getByText('帳號A專屬資料夾')).toBeVisible();
   await page.reload();
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
+  await expandAllContentGroups(page);
   await expect(page.getByText('帳號A專屬資料夾')).toBeVisible();
   await signOut(page);
 
   await register(page, 'other@example.test');
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
+  await expandAllContentGroups(page);
   await expect(page.getByText('帳號A專屬資料夾')).toHaveCount(0);
   await page.reload();
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
+  await expandAllContentGroups(page);
   await expect(page.getByText('帳號A專屬資料夾')).toHaveCount(0);
   await signOut(page);
 
   await submitCredentials(page, 'owner@example.test');
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
+  await expandAllContentGroups(page);
   await expect(page.getByText('帳號A專屬資料夾')).toBeVisible();
   assertNoProductionRequests();
 });

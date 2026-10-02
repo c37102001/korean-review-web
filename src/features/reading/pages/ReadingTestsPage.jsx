@@ -3,7 +3,7 @@ import { ArrowLeft, Check, Copy, Download, Plus, Trash2, X } from 'lucide-react'
 import { ActionMenu } from '../../../components/actions/ActionMenu.jsx';
 import { EditIconButton } from '../../../components/actions/ContentActionButtons.jsx';
 import { ExportCodeBlock } from '../../../components/export/ExportCodeBlock.jsx';
-import { CollapsibleGroup, EntityCardShell, EntityGrid, LibraryPageShell } from '../../../components/library/LibraryPrimitives.jsx';
+import { CollapsibleGroup, EntityCardShell, EntityGrid, LearnedVisibilityToggle, LibraryPageShell } from '../../../components/library/LibraryPrimitives.jsx';
 import {
   assignReadingTestsTag,
   formatReadingTestsJson,
@@ -193,13 +193,16 @@ function ReadingTestsExportModal({ tests, onClose }) {
 export default function ReadingTestsPage({ tests, error, onSave, onSaveMany, onDelete, onOpen }) {
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
-  const [collapsedTags, setCollapsedTags] = useState(() => new Set());
+  const [expandedTags, setExpandedTags] = useState(() => new Set());
   const [formatCopied, setFormatCopied] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [actionError, setActionError] = useState('');
+  const [hideLearned, setHideLearned] = useState(true);
+  const visibleTests = useMemo(() => (hideLearned ? tests.filter((test) => !test.learned) : tests), [hideLearned, tests]);
+  const learnedCount = tests.filter((test) => test.learned).length;
   const filtered = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase('zh-TW');
-    return tests.filter((test) => !keyword || [
+    return visibleTests.filter((test) => !keyword || [
       test.tag, test.passage.ko, test.passage.zh,
       ...test.questions.flatMap((question) => [
         question.question.ko,
@@ -207,12 +210,15 @@ export default function ReadingTestsPage({ tests, error, onSave, onSaveMany, onD
         ...question.options.flatMap((option) => [option.ko, option.zh]),
       ]),
     ].filter(Boolean).join(' ').toLocaleLowerCase('zh-TW').includes(keyword));
-  }, [query, tests]);
+  }, [query, visibleTests]);
   const groups = useMemo(() => groupReadingTestsByTag(filtered), [filtered]);
+  const visibleTagSequences = useMemo(() => new Map(
+    groupReadingTestsByTag(visibleTests).map((group) => [group.label, group.tests.map((test) => test.id)]),
+  ), [visibleTests]);
   const tagSuggestions = useMemo(() => groupReadingTestsByTag(tests)
     .filter((group) => group.label !== UNTAGGED_READING_TEST_LABEL)
     .map((group) => group.label), [tests]);
-  const toggleTag = (tagLabel) => setCollapsedTags((current) => {
+  const toggleTag = (tagLabel) => setExpandedTags((current) => {
     const next = new Set(current);
     if (next.has(tagLabel)) next.delete(tagLabel);
     else next.add(tagLabel);
@@ -242,6 +248,7 @@ export default function ReadingTestsPage({ tests, error, onSave, onSaveMany, onD
           <button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 匯入題目</button>
           <button type="button" disabled={!tests.length} onClick={() => setExporting(true)}><Download size={18} /> 匯出題目</button>
           <ActionMenu>
+            <LearnedVisibilityToggle hidden={hideLearned} count={learnedCount} noun="閱讀題" onToggle={() => setHideLearned((current) => !current)} />
             <button type="button" onClick={copyJsonFormat}><Copy size={18} /> {formatCopied ? '已複製格式' : '複製 JSON 格式'}</button>
           </ActionMenu>
       </>}
@@ -252,11 +259,11 @@ export default function ReadingTestsPage({ tests, error, onSave, onSaveMany, onD
     >
       {actionError && <div className="form-error">{actionError}</div>}
       {filtered.length ? <div className="folder-tag-groups reading-test-tag-groups">{groups.map((group) => {
-        const collapsed = collapsedTags.has(group.label);
+        const collapsed = !expandedTags.has(group.label);
         return <CollapsibleGroup className="folder-tag-group" collapsed={collapsed} onToggle={() => toggleTag(group.label)} title={group.label} countLabel={`${group.tests.length} 題`} key={group.label}>
-          <EntityGrid className="reading-test-grid">{group.tests.map((test) => <ReadingTestCard key={test.id} test={test} onOpen={onOpen} onEdit={setEditing} onDelete={deleteTest} />)}</EntityGrid>
+          <EntityGrid className="reading-test-grid">{group.tests.map((test) => <ReadingTestCard key={test.id} test={test} onOpen={(testId) => onOpen(testId, visibleTagSequences.get(group.label))} onEdit={setEditing} onDelete={deleteTest} />)}</EntityGrid>
         </CollapsibleGroup>;
-      })}</div> : <div className="panel grammar-empty">{query ? '找不到符合的閱讀題。' : '還沒有閱讀題，請用 JSON 一次匯入一題或多題。'}</div>}
+      })}</div> : <div className="panel grammar-empty">{query ? '找不到符合的閱讀題。' : hideLearned && tests.length ? '目前沒有未學習的閱讀題。選擇顯示已學習即可查看全部題目。' : '還沒有閱讀題，請用 JSON 一次匯入一題或多題。'}</div>}
       {editing && <ReadingTestsEditorModal test={editing.id ? editing : null} existingTests={tests} tagSuggestions={tagSuggestions} onSave={async (nextTests) => { if (editing.id) await onSave(nextTests[0]); else await onSaveMany(nextTests); setEditing(null); }} onClose={() => setEditing(null)} />}
       {exporting && <ReadingTestsExportModal tests={tests} onClose={() => setExporting(false)} />}
     </LibraryPageShell>

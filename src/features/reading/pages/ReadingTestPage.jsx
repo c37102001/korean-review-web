@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BookOpen, Check, FolderOpen, Highlighter, Pencil, Trash2, X } from 'lucide-react';
+import { ArrowRight, BookOpen, Check, FolderOpen, Highlighter, Pencil, Trash2, X } from 'lucide-react';
 
 import { isSystemFolder, READING_SOURCE_FOLDER_NAME } from '../../../folders/model.js';
 import { normalizeReadingTest, readingTestTextEntries, readingTestTitle } from '../../../reading/model.js';
@@ -13,7 +13,7 @@ import { HighlightExportModal } from '../../text-selection/components/HighlightE
 import { useDismissibleWordDefinition, useTextSelectionActions } from '../../text-selection/hooks/useTextSelectionActions.js';
 import { ReadingTestsEditorModal } from './ReadingTestsPage.jsx';
 
-export function ReadingTestPage({ test: sourceTest, allTests = [], allItems = [], folders = [], onSpeak, onAddRecords, onUpdateRecord, onWriteRecords, onDeleteRecord, onOpenFolder, onSave, onDelete, onBack }) {
+export function ReadingTestPage({ test: sourceTest, allTests = [], allItems = [], folders = [], hasNext = false, onNext, onSpeak, onAddRecords, onUpdateRecord, onWriteRecords, onDeleteRecord, onOpenFolder, onSave, onDelete, onBack }) {
   const test = useMemo(() => sourceTest ? normalizeReadingTest(sourceTest, sourceTest.id) : null, [sourceTest]);
   const [selected, setSelected] = useState({});
   const [submitted, setSubmitted] = useState(false);
@@ -28,6 +28,8 @@ export function ReadingTestPage({ test: sourceTest, allTests = [], allItems = []
     setSelected({});
     setSubmitted(false);
     setError('');
+  }, [test?.id]);
+  useEffect(() => {
     setLocalHighlights(test?.highlights || []);
   }, [test?.id, test?.highlights]);
   const entries = useMemo(() => readingTestTextEntries(test), [test]);
@@ -189,7 +191,7 @@ export function ReadingTestPage({ test: sourceTest, allTests = [], allItems = []
         </section>;
       })}
       {!submitted ? <button type="button" className="primary reading-submit" disabled={answeredCount !== test.questions.length} onClick={() => setSubmitted(true)}><Check size={18} /> 確認答案</button>
-        : <div className={`reading-result ${selectedCorrectly ? 'correct' : 'incorrect'}`}><strong>{test.questions.length === 1 ? (selectedCorrectly ? '答對了' : '答錯了') : (selectedCorrectly ? '全部答對' : `答對 ${correctCount} / ${test.questions.length} 題`)}</strong><span>{test.questions.length === 1 ? `正確答案是選項 ${test.questions[0].answer}` : test.questions.map((question, index) => `第 ${index + 1} 題：${question.answer}`).join('；')}</span><button type="button" onClick={() => { setSelected({}); setSubmitted(false); }}>再做一次</button></div>}
+        : <div className={`reading-result ${selectedCorrectly ? 'correct' : 'incorrect'}`}><strong>{test.questions.length === 1 ? (selectedCorrectly ? '答對了' : '答錯了') : (selectedCorrectly ? '全部答對' : `答對 ${correctCount} / ${test.questions.length} 題`)}</strong><span>{test.questions.length === 1 ? `正確答案是選項 ${test.questions[0].answer}` : test.questions.map((question, index) => `第 ${index + 1} 題：${question.answer}`).join('；')}</span><div className="reading-result-actions"><button type="button" onClick={() => { setSelected({}); setSubmitted(false); }}>再做一次</button>{hasNext && <button type="button" className="primary" onClick={onNext}>下一題 <ArrowRight size={17} /></button>}</div></div>}
       {editing && <ReadingTestsEditorModal test={test} existingTests={allTests} tagSuggestions={[...new Set(allTests.map((entry) => entry.tag).filter(Boolean))]} onSave={async (tests) => { await onSave(tests[0]); setEditing(false); }} onClose={() => setEditing(false)} />}
       {quickAdd && <AddItemsModal
         title="新增單字"

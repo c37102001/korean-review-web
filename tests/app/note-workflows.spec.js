@@ -21,9 +21,13 @@ const taggedNote = (title, notes, examples = []) => [
 
 const noteCard = (page, title) => page.locator('.grammar-card').filter({ has: page.getByRole('heading', { name: title, exact: true }) });
 
-async function openNotes(page) {
+async function openNotes(page, { expand = true } = {}) {
   await page.getByRole('button', { name: '筆記', exact: true }).click();
   await expect(page.getByRole('heading', { name: '筆記', exact: true })).toBeVisible();
+  if (expand) {
+    const toggles = await page.locator('.note-category-toggle[aria-expanded="false"]').all();
+    for (const toggle of toggles) await toggle.click();
+  }
 }
 
 async function addNote(page, buttonName, category, content) {
@@ -135,7 +139,7 @@ test('N04: single and selected note practice use exactly the chosen examples', a
   await page.getByRole('dialog').getByRole('button', { name: '練習' }).click();
   await expect(page.locator('.practice-start')).toContainText('1 題可測驗');
   await expect(page.locator('.practice-start')).toContainText('此練習包含所選單字筆記的全部例句');
-  await page.getByRole('button', { name: '筆記', exact: true }).click();
+  await openNotes(page);
 
   await noteCard(page, '問候').getByRole('checkbox', { name: '選取 問候' }).check();
   await noteCard(page, '天氣').getByRole('checkbox', { name: '選取 天氣' }).check();
@@ -143,7 +147,7 @@ test('N04: single and selected note practice use exactly the chosen examples', a
   await expect(section).toContainText('已選 2 個筆記');
   await section.getByRole('button', { name: '練習 (2)' }).click();
   await expect(page.locator('.practice-start')).toContainText('2 題可測驗');
-  await page.getByRole('button', { name: '筆記', exact: true }).click();
+  await openNotes(page);
   await section.getByRole('button', { name: '選取本頁' }).click();
   await expect(section).toContainText('已選 2 個筆記');
   await section.getByRole('button', { name: '清除' }).click();

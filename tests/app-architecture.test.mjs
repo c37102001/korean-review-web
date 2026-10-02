@@ -90,11 +90,26 @@ test('reader add actions reuse the standard word form with only Korean prefilled
   assert.match(library, /export function EditJsonModal\(/);
 });
 
-test('reading library groups every test by tag and keeps learned tests visible', async () => {
+test('reading library groups visible tests by tag and hides learned tests by default', async () => {
   const source = await readFile(new URL('../src/features/reading/pages/ReadingTestsPage.jsx', import.meta.url), 'utf8');
   assert.match(source, /groupReadingTestsByTag\(filtered\)/);
   assert.match(source, /<CollapsibleGroup/);
-  assert.doesNotMatch(source, /hideLearned|LearnedVisibilityToggle/);
+  assert.match(source, /useState\(true\)/);
+  assert.match(source, /LearnedVisibilityToggle/);
+  assert.match(source, /tests\.filter\(\(test\) => !test\.learned\)/);
+});
+
+test('every collapsible content group starts closed and records only explicit expansions', async () => {
+  const sources = await Promise.all([
+    '../src/app/WordLibraryPages.jsx',
+    '../src/features/notes/pages/NotesNotebookPage.jsx',
+    '../src/features/reading/pages/ReadingTestsPage.jsx',
+    '../src/features/subtitles/pages/YoutubeSubtitlesPage.jsx',
+  ].map((path) => readFile(new URL(path, import.meta.url), 'utf8')));
+  sources.forEach((source) => {
+    assert.match(source, /\[expanded(?:Tags|Categories), setExpanded(?:Tags|Categories)\] = useState\(\(\) => new Set\(\)\)/);
+    assert.match(source, /collapsed=\{?!expanded|const collapsed = !expanded/);
+  });
 });
 
 test('content library routes load with the app and never import its entry', async () => {

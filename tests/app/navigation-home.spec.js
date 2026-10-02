@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { prepareAppPage, register, resetTestData, seedDocument, seedFolder } from './helpers.js';
+import { expandAllContentGroups, prepareAppPage, register, resetTestData, seedDocument, seedFolder } from './helpers.js';
 
 test.beforeEach(async ({ request }) => resetTestData(request));
 
@@ -55,6 +55,7 @@ test('G04: mobile navigation can open and leave a feature page', async ({ page, 
   await register(page, 'mobile-navigation@example.test');
   await seedFolder(page, request, '手機資料夾');
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
+  await expandAllContentGroups(page);
   await expect(page.getByText('手機資料夾')).toBeVisible();
   await page.getByRole('button', { name: '回到上一層' }).click();
   await expect(page.getByRole('heading', { name: '今天練韓文' })).toBeVisible();
@@ -80,6 +81,7 @@ test('G05: global back returns one level through subtitle and folder details', a
     createdAt: '2026-09-21T00:00:00.000Z', updatedAt: '2026-09-21T00:00:00.000Z',
   });
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
+  await expandAllContentGroups(page);
   await page.getByText('返回資料夾', { exact: true }).first().click();
   await expect(page.getByRole('heading', { name: '返回資料夾' })).toBeVisible();
   await page.locator('.notebook-actions').getByRole('button', { name: '學習' }).click();

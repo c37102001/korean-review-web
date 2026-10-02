@@ -121,6 +121,11 @@ export async function setNetworkOffline(context, offline = true) {
   await context.setOffline(offline);
 }
 
+export async function expandAllContentGroups(page) {
+  const toggles = await page.locator('.folder-tag-group-toggle[aria-expanded="false"], .note-category-toggle[aria-expanded="false"]').all();
+  for (const toggle of toggles) await toggle.click();
+}
+
 export async function failFirestoreWrites(page) {
   await page.route('http://127.0.0.1:8080/**', (route) => {
     if (route.request().url().includes('/Write/')) return route.abort('failed');

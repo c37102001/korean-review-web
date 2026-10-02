@@ -539,7 +539,7 @@ function FolderOverviewCard({ folder, itemById, itemIds, onOpen, onEdit, onDelet
 export function FoldersPage({ folders, items, loading, error, onSave, onDelete, onOpen }) {
   const [editingFolder, setEditingFolder] = useState(undefined);
   const [actionError, setActionError] = useState('');
-  const [collapsedTags, setCollapsedTags] = useState(() => new Set());
+  const [expandedTags, setExpandedTags] = useState(() => new Set());
   const itemIds = new Set(items.map((item) => item.id));
   const pinnedFolders = folders.filter((folder) => folder.pinned);
   const folderGroups = groupFoldersByTag(folders.filter((folder) => !folder.pinned));
@@ -570,14 +570,14 @@ export function FoldersPage({ folders, items, loading, error, onSave, onDelete, 
       onTogglePinned={togglePinned}
     />
   );
-  const toggleTag = (tag) => setCollapsedTags((current) => {
+  const toggleTag = (tag) => setExpandedTags((current) => {
     const next = new Set(current);
     if (next.has(tag)) next.delete(tag);
     else next.add(tag);
     return next;
   });
   const renderFolderGroup = (group, { key, title, mark }) => {
-    const collapsed = collapsedTags.has(key);
+    const collapsed = !expandedTags.has(key);
     return (
       <section className={`folder-tag-group ${collapsed ? 'collapsed' : ''}`} key={key}>
         <div className="folder-tag-group-head">

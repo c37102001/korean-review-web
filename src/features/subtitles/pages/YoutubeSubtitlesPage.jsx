@@ -104,7 +104,7 @@ export default function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, o
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [actionError, setActionError] = useState('');
-  const [collapsedTags, setCollapsedTags] = useState(() => new Set());
+  const [expandedTags, setExpandedTags] = useState(() => new Set());
   const [hideLearned, setHideLearned] = useState(true);
   const visibleNotes = useMemo(() => (hideLearned ? notes.filter((note) => !note.learned) : notes), [hideLearned, notes]);
   const learnedCount = notes.filter((note) => note.learned).length;
@@ -118,7 +118,7 @@ export default function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, o
   const tagSuggestions = useMemo(() => groupYoutubeSubtitlesByTag(notes)
     .filter((group) => group.label !== UNTAGGED_SUBTITLE_LABEL)
     .map((group) => group.label), [notes]);
-  const toggleTag = (tag) => setCollapsedTags((current) => {
+  const toggleTag = (tag) => setExpandedTags((current) => {
     const next = new Set(current);
     if (next.has(tag)) next.delete(tag);
     else next.add(tag);
@@ -142,7 +142,7 @@ export default function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, o
     >
       {actionError && <div className="form-error">{actionError}</div>}
       {filtered.length ? <div className="folder-tag-groups yt-subtitle-tag-groups">{groups.map((group) => {
-        const collapsed = collapsedTags.has(group.label);
+        const collapsed = !expandedTags.has(group.label);
         return <CollapsibleGroup className="folder-tag-group" collapsed={collapsed} onToggle={() => toggleTag(group.label)} title={group.label} countLabel={`${group.notes.length} 個字幕檔案`} key={group.label}>
           <EntityGrid className="yt-subtitle-note-grid">{group.notes.map((note) => <YoutubeSubtitleCard key={note.id} note={note} onOpen={onOpen} onEdit={setEditing} onDelete={deleteNote} />)}</EntityGrid>
         </CollapsibleGroup>;

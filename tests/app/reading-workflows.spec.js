@@ -34,9 +34,15 @@ async function seedReading(page, request, id, overrides = {}) {
   });
 }
 
-async function openReading(page) {
+async function expandReadingGroups(page) {
+  const toggles = await page.locator('.folder-tag-group-toggle[aria-expanded="false"]').all();
+  for (const toggle of toggles) await toggle.click();
+}
+
+async function openReading(page, { expand = true } = {}) {
   await page.getByRole('button', { name: '閱讀測驗', exact: true }).click();
   await expect(page.getByRole('heading', { name: '閱讀測驗', exact: true })).toBeVisible();
+  if (expand) await expandReadingGroups(page);
 }
 
 const readingCard = (page, text) => page.locator('.reading-test-card').filter({ hasText: text });
@@ -67,6 +73,7 @@ test('R01: copy, batch import, search, collapse, edit, validation, delete, and r
   await expect(dialog.getByText('選擇匯入標籤', { exact: true })).toBeVisible();
   await dialog.getByRole('radio', { name: /保留 JSON 內標籤/ }).check();
   await dialog.getByRole('button', { name: '確認匯入 2 題' }).click();
+  await expandReadingGroups(page);
   await expect(page.locator('.reading-test-card')).toHaveCount(2);
 
   await page.getByRole('button', { name: '匯出題目' }).click();
@@ -116,6 +123,7 @@ test('R01: copy, batch import, search, collapse, edit, validation, delete, and r
   await source.fill(JSON.stringify(parsed));
   await dialog.getByRole('button', { name: '儲存修改' }).click();
   await expect(page.locator('.folder-tag-group').filter({ hasText: '生活' })).toBeVisible();
+  await expandReadingGroups(page);
 
   await expect.poll(async () => (
     (await listDocuments(page, request, 'readingTests'))
@@ -207,6 +215,40 @@ test('R02: wrong and correct submissions reveal translations, lock choices, and 
   assertNoProductionRequests();
 });
 
+test('R01 R02: learned tests are hidden from tag counts and visible tag tests continue in order', async ({ page, request }) => {
+  const assertNoProductionRequests = await prepareAppPage(page);
+  await register(page, 'reading-learned-visibility@example.test');
+  await seedReading(page, request, 'active-test', {
+    passage: { ko: '첫 번째 연습 글입니다.', zh: '第一篇練習文章。' },
+  });
+  await seedReading(page, request, 'learned-test', {
+    learned: true,
+    passage: { ko: '두 번째 학습 완료 글입니다.', zh: '第二篇已學習文章。' },
+  });
+  await openReading(page, { expand: false });
+
+  const tagGroup = page.locator('.folder-tag-group').filter({ hasText: 'TOPIK' });
+  await expect(tagGroup.locator('.folder-tag-group-toggle')).toHaveAttribute('aria-expanded', 'false');
+  await tagGroup.locator('.folder-tag-group-toggle').click();
+  await expect(page.locator('.reading-test-card')).toHaveCount(1);
+  await expect(tagGroup.locator('.folder-tag-group-head')).toContainText('1 題');
+  await expect(readingCard(page, '두 번째 학습 완료 글입니다.')).toHaveCount(0);
+
+  await page.locator('.notebook-actions .action-menu summary').click();
+  await page.getByRole('button', { name: '隱藏已學習' }).click();
+  await expect(page.locator('.reading-test-card')).toHaveCount(2);
+  await expect(tagGroup.locator('.folder-tag-group-head')).toContainText('2 題');
+
+  await readingCard(page, '첫 번째 연습 글입니다.').click();
+  await page.getByRole('radiogroup', { name: '閱讀題選項' }).getByRole('radio').nth(1).check();
+  await page.getByRole('button', { name: '確認答案' }).click();
+  await page.getByRole('button', { name: '下一題' }).click();
+  await expect(page.locator('.reading-passage')).toContainText('두 번째 학습 완료 글입니다.');
+  await expect(page.locator('.reading-translation')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '下一題' })).toHaveCount(0);
+  assertNoProductionRequests();
+});
+
 test('R02: one passage supports multiple questions with independent options and answers', async ({ page, request }) => {
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'reading-multiple@example.test');
@@ -266,6 +308,10 @@ test('R03: learned state, editing, folder navigation, delete cancellation, and c
   await page.getByRole('button', { name: '開啟資料夾「閱讀測驗」' }).click();
   await expect(page.getByRole('heading', { name: '閱讀測驗' })).toBeVisible();
   await page.getByRole('button', { name: '閱讀測驗', exact: true }).click();
+  await expect(page.locator('.reading-test-card')).toHaveCount(0);
+  await page.locator('.notebook-actions .action-menu summary').click();
+  await page.getByRole('button', { name: '隱藏已學習' }).click();
+  await expandReadingGroups(page);
   await page.locator('.reading-test-card').click();
   page.once('dialog', (confirmation) => confirmation.dismiss());
   await page.getByRole('button', { name: '刪除' }).click();
@@ -289,6 +335,10 @@ test('R04: selected text opens Naver, highlights persist and export, and saved w
   });
   await openReading(page);
   await page.locator('.reading-test-card').click();
+  const options = page.getByRole('radiogroup', { name: '閱讀題選項' });
+  await options.getByRole('radio').nth(1).check();
+  await page.getByRole('button', { name: '確認答案' }).click();
+  await expect(page.locator('.reading-translation')).toBeVisible();
   const passage = page.locator('.reading-passage [data-selectable-entry-id]');
   let known = passage.locator('.subtitle-known-word').first();
   await known.click();
@@ -298,6 +348,7 @@ test('R04: selected text opens Naver, highlights persist and export, and saved w
   let editDialog = page.getByRole('dialog');
   await editDialog.locator('.meaning-editor-card').getByLabel('中文 *').fill('物品、東西');
   await editDialog.getByRole('button', { name: '儲存修改' }).click();
+  await expect(page.locator('.reading-translation')).toBeVisible();
   await expect.poll(async () => (
     await readDocument(page, request, 'records', 'known-word')
   )?.fields.item.mapValue.fields.meanings.arrayValue.values[0].mapValue.fields.zh.stringValue).toBe('物品、東西');
@@ -321,6 +372,7 @@ test('R04: selected text opens Naver, highlights persist and export, and saved w
   await page.getByRole('button', { name: /畫線標記/ }).click();
   let highlight = passage.locator('.reading-text-highlight');
   await expect(highlight).toHaveText('요즘');
+  await expect(page.locator('.reading-translation')).toBeVisible();
   await expect.poll(async () => (
     await readDocument(page, request, 'readingTests', 'selection-test')
   )?.fields.highlights?.arrayValue.values.length).toBe(1);

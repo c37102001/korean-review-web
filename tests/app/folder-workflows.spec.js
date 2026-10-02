@@ -5,9 +5,15 @@ test.beforeEach(async ({ request }) => resetTestData(request));
 
 const cards = (page) => page.locator('.word-grid .word-card');
 
-async function openFolders(page) {
+async function expandFolderGroups(page) {
+  const toggles = await page.locator('.folder-tag-group-toggle[aria-expanded="false"]').all();
+  for (const toggle of toggles) await toggle.click();
+}
+
+async function openFolders(page, { expand = true } = {}) {
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
   await expect(page.getByRole('heading', { name: '資料夾', exact: true })).toBeVisible();
+  if (expand) await expandFolderGroups(page);
 }
 
 async function createFolder(page, name, tag = '') {
@@ -17,6 +23,7 @@ async function createFolder(page, name, tag = '') {
   if (tag) await dialog.getByLabel('標籤').fill(tag);
   await dialog.getByRole('button', { name: '儲存' }).click();
   await expect(dialog).toHaveCount(0);
+  await expandFolderGroups(page);
   return page.locator('.folder-card').filter({ hasText: name });
 }
 
@@ -40,6 +47,7 @@ test('F01 F02 F04: create, rename, tag, pin, collapse and delete preserve words'
   await expect(page.getByRole('dialog').getByLabel('資料夾名稱')).toBeDisabled();
   await page.getByRole('dialog').getByLabel('標籤').fill('系統');
   await page.getByRole('dialog').getByRole('button', { name: '儲存' }).click();
+  await expandFolderGroups(page);
   await expect(learned.locator('.folder-tag-chip')).toHaveText('系統');
   const first = await createFolder(page, '讀書', '學校');
   await expect(first).toBeVisible();
@@ -52,6 +60,7 @@ test('F01 F02 F04: create, rename, tag, pin, collapse and delete preserve words'
   expect(folderId).toBeTruthy();
   await first.getByRole('button', { name: '釘選資料夾' }).click();
   await expect(page.locator('.folder-tag-groups')).toContainText('置頂資料夾');
+  await page.getByTitle('展開置頂資料夾').click();
   await first.getByRole('button', { name: '取消釘選資料夾' }).click();
   const group = page.locator('.folder-tag-group').filter({ has: page.locator('.folder-tag-group-heading h2', { hasText: /^學校$/ }) });
   await group.locator('.folder-tag-group-toggle').click();
@@ -62,6 +71,7 @@ test('F01 F02 F04: create, rename, tag, pin, collapse and delete preserve words'
   await dialog.getByLabel('資料夾名稱').fill('閱讀');
   await dialog.getByLabel('標籤').fill('語言');
   await dialog.getByRole('button', { name: '儲存' }).click();
+  await expandFolderGroups(page);
   const renamed = page.locator('.folder-card').filter({ hasText: '閱讀' });
   await expect(renamed).toBeVisible();
   await expect.poll(async () => (await readDocument(page, request, 'folders', folderId))?.fields.name.stringValue).toBe('閱讀');
