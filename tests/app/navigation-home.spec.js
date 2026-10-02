@@ -42,6 +42,7 @@ test('G04: every main tab opens its real page and loads its own data', async ({ 
   for (const [tab, heading, content] of destinations) {
     await page.getByRole('button', { name: tab, exact: true }).click();
     await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
+    if (['資料夾', '筆記', 'YT 字幕', '閱讀測驗'].includes(tab)) await expandAllContentGroups(page);
     await expect(page.getByText(content, { exact: false }).first()).toBeVisible();
   }
   await page.getByRole('button', { name: '韓文筆記' }).click();
@@ -93,6 +94,7 @@ test('G05: global back returns one level through subtitle and folder details', a
   await expect(page.getByRole('heading', { name: '今天練韓文' })).toBeVisible();
 
   await page.getByRole('button', { name: 'YT 字幕', exact: true }).click();
+  await expandAllContentGroups(page);
   await page.getByText('返回字幕', { exact: true }).first().click();
   await expect(page.getByRole('heading', { name: '返回字幕' })).toBeVisible();
   await page.getByRole('button', { name: '回到上一層' }).click();

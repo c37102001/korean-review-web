@@ -29,8 +29,10 @@ async function seedSubtitle(page, request, id, {
 }
 
 async function expandSubtitleGroups(page) {
-  const toggles = await page.locator('.folder-tag-group-toggle[aria-expanded="false"]').all();
-  for (const toggle of toggles) await toggle.click();
+  const groupToggle = page.locator('.folder-tag-group-toggle').first();
+  const collapsedToggle = page.locator('.folder-tag-group-toggle[aria-expanded="false"]').first();
+  await expect(groupToggle).toBeVisible();
+  while (await collapsedToggle.count()) await collapsedToggle.click();
 }
 
 async function openSubtitles(page, { expand = true } = {}) {
@@ -44,7 +46,7 @@ const subtitleCard = (page, title) => page.locator('.yt-subtitle-note-card').fil
 test('Y01 Y02: JSON and SRT subtitles persist tags, learned visibility, search, editing, validation, and deletion', async ({ page, request }) => {
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'subtitle-lifecycle@example.test');
-  await openSubtitles(page);
+  await openSubtitles(page, { expand: false });
 
   await page.getByRole('button', { name: '新增字幕' }).click();
   let dialog = page.getByRole('dialog');
@@ -114,7 +116,7 @@ test('Y01 Y02: JSON and SRT subtitles persist tags, learned visibility, search, 
     await readDocument(page, request, 'ytSubtitles', editedSubtitleId)
   )?.fields.deletedAt?.timestampValue).toBeTruthy();
   await page.reload();
-  await openSubtitles(page);
+  await openSubtitles(page, { expand: false });
   await expect(subtitleCard(page, '旅遊韓文')).toHaveCount(0);
   assertNoProductionRequests();
 });

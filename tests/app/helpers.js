@@ -122,8 +122,10 @@ export async function setNetworkOffline(context, offline = true) {
 }
 
 export async function expandAllContentGroups(page) {
-  const toggles = await page.locator('.folder-tag-group-toggle[aria-expanded="false"], .note-category-toggle[aria-expanded="false"]').all();
-  for (const toggle of toggles) await toggle.click();
+  const groupToggle = page.locator('.folder-tag-group-toggle, .note-category-toggle').first();
+  const collapsedToggle = page.locator('.folder-tag-group-toggle[aria-expanded="false"], .note-category-toggle[aria-expanded="false"]').first();
+  await expect(groupToggle).toBeVisible();
+  while (await collapsedToggle.count()) await collapsedToggle.click();
 }
 
 export async function failFirestoreWrites(page) {

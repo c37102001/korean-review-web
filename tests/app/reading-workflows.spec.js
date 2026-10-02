@@ -35,8 +35,10 @@ async function seedReading(page, request, id, overrides = {}) {
 }
 
 async function expandReadingGroups(page) {
-  const toggles = await page.locator('.folder-tag-group-toggle[aria-expanded="false"]').all();
-  for (const toggle of toggles) await toggle.click();
+  const groupToggle = page.locator('.folder-tag-group-toggle').first();
+  const collapsedToggle = page.locator('.folder-tag-group-toggle[aria-expanded="false"]').first();
+  await expect(groupToggle).toBeVisible();
+  while (await collapsedToggle.count()) await collapsedToggle.click();
 }
 
 async function openReading(page, { expand = true } = {}) {
@@ -50,7 +52,7 @@ const readingCard = (page, text) => page.locator('.reading-test-card').filter({ 
 test('R01: copy, batch import, search, collapse, edit, validation, delete, and reload preserve reading data', async ({ page, request, context }) => {
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'reading-lifecycle@example.test');
-  await openReading(page);
+  await openReading(page, { expand: false });
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.locator('.notebook-actions .action-menu summary').click();
   await page.getByRole('button', { name: '複製 JSON 格式' }).click();
@@ -182,6 +184,8 @@ test('R01: legacy and newly imported reading tests receive permanent non-reused 
     const documents = await listDocuments(page, request, 'readingTests');
     return documents.find((document) => document.fields.passage?.mapValue?.fields?.ko?.stringValue === '새로운 읽기 글입니다.')?.fields.serialNumber?.integerValue;
   }).toBe('3');
+  await expect(page.locator('.folder-tag-group-heading h2', { hasText: /^無標籤$/ })).toBeVisible();
+  await expandReadingGroups(page);
   await expect(page.getByRole('heading', { name: '閱讀題3', exact: true })).toBeVisible();
 
   await page.reload();

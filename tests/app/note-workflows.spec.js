@@ -25,8 +25,10 @@ async function openNotes(page, { expand = true } = {}) {
   await page.getByRole('button', { name: '筆記', exact: true }).click();
   await expect(page.getByRole('heading', { name: '筆記', exact: true })).toBeVisible();
   if (expand) {
-    const toggles = await page.locator('.note-category-toggle[aria-expanded="false"]').all();
-    for (const toggle of toggles) await toggle.click();
+    const groupToggle = page.locator('.note-category-toggle').first();
+    const collapsedToggle = page.locator('.note-category-toggle[aria-expanded="false"]').first();
+    await expect(groupToggle).toBeVisible();
+    while (await collapsedToggle.count()) await collapsedToggle.click();
   }
 }
 
