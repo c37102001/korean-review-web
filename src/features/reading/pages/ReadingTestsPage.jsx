@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { ArrowLeft, Check, Copy, Download, Plus, Trash2, X } from 'lucide-react';
 import { ActionMenu } from '../../../components/actions/ActionMenu.jsx';
 import { EditIconButton } from '../../../components/actions/ContentActionButtons.jsx';
+import { ExportCodeBlock } from '../../../components/export/ExportCodeBlock.jsx';
 import { CollapsibleGroup, EntityCardShell, EntityGrid, LibraryPageShell } from '../../../components/library/LibraryPrimitives.jsx';
 import {
   assignReadingTestsTag,
@@ -159,7 +160,7 @@ function ReadingTestsExportModal({ tests, onClose }) {
             <strong>JSON 內容</strong>
             <span>已匯出 {selectedTests.length} 篇閱讀文章；標籤不會寫入匯出內容。</span>
           </div>
-          <textarea className="yt-subtitle-source reading-test-export-source" value={jsonText} rows={24} readOnly spellCheck={false} aria-label="閱讀題 JSON 匯出內容" />
+          <ExportCodeBlock content={jsonText} label="閱讀題 JSON 匯出內容" />
           <div className="actions grammar-editor-actions">
             <button type="button" onClick={() => { setShowJson(false); setCopied(false); }}><ArrowLeft size={17} /> 重新選擇</button>
             <button type="button" className="primary" onClick={copyJson}><Copy size={17} /> {copied ? '已複製' : '複製'}</button>

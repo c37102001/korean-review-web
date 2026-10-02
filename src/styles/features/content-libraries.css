@@ -286,12 +286,6 @@
   gap: 18px;
 }
 
-.reading-test-export-source {
-  width: 100%;
-  min-height: min(52vh, 560px);
-  resize: vertical;
-}
-
 .reading-import-tag-step {
   display: grid;
   gap: 16px;

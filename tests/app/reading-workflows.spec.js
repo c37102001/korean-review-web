@@ -73,14 +73,20 @@ test('R01: copy, batch import, search, collapse, edit, validation, delete, and r
   let exportDialog = page.getByRole('dialog', { name: '匯出閱讀題' });
   await exportDialog.getByRole('checkbox', { name: /TOPIK/ }).check();
   await exportDialog.getByRole('button', { name: '產生 JSON（1）' }).click();
-  let exported = JSON.parse(await exportDialog.getByLabel('閱讀題 JSON 匯出內容').inputValue());
+  const exportCode = exportDialog.getByLabel('閱讀題 JSON 匯出內容');
+  await expect(exportCode).toHaveClass(/json-code/);
+  expect(await exportCode.evaluate((element) => ({
+    tagName: element.tagName,
+    backgroundColor: getComputedStyle(element).backgroundColor,
+  }))).toEqual({ tagName: 'PRE', backgroundColor: 'rgb(31, 41, 51)' });
+  let exported = JSON.parse(await exportCode.innerText());
   expect(exported.data).toHaveLength(1);
   expect(exported.data[0].passage.ko).toContain('요즘은');
   expect(exported.data[0]).not.toHaveProperty('tag');
   await exportDialog.getByRole('button', { name: '重新選擇' }).click();
   await exportDialog.getByRole('checkbox', { name: /無標籤/ }).check();
   await exportDialog.getByRole('button', { name: '產生 JSON（2）' }).click();
-  exported = JSON.parse(await exportDialog.getByLabel('閱讀題 JSON 匯出內容').inputValue());
+  exported = JSON.parse(await exportDialog.getByLabel('閱讀題 JSON 匯出內容').innerText());
   expect(exported.data).toHaveLength(2);
   expect(exported.data.every((entry) => !Object.hasOwn(entry, 'tag'))).toBe(true);
   await exportDialog.getByRole('button', { name: '複製', exact: true }).click();

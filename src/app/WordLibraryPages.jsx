@@ -16,6 +16,7 @@ import { useOptionalPractice } from '../practice/optionalPractice.js';
 import { ActionMenu } from '../components/actions/ActionMenu.jsx';
 import { EditIconButton, KoreanSpeakButton, StarButton } from '../components/actions/ContentActionButtons.jsx';
 import { TextSpeakButton } from '../components/actions/TextSpeakButton.jsx';
+import { ExportCodeBlock } from '../components/export/ExportCodeBlock.jsx';
 import { FolderPickerDropdown } from '../features/word-library/components/BulkWordActions.jsx';
 import { GroupedFolderMultiSelect, MultiSelectFilter, SearchScopeControl } from '../features/word-library/components/WordCollectionFilters.jsx';
 import { WordChineseVisibilityButton, WordCollectionView } from '../features/word-library/components/WordCollectionView.jsx';
@@ -353,7 +354,7 @@ export function ExportWordsModal({ items, onClose }) {
           <button type="button" className={format === 'json' ? 'active' : ''} aria-pressed={format === 'json'} onClick={() => selectFormat('json')}>JSON</button>
           <button type="button" className={format === 'text' ? 'active' : ''} aria-pressed={format === 'text'} onClick={() => selectFormat('text')}>一般文字</button>
         </div>
-        <pre className="json-code export-content" aria-label={format === 'json' ? 'JSON 匯出內容' : '一般文字匯出內容'}><code>{exportText}</code></pre>
+        <ExportCodeBlock content={exportText} label={format === 'json' ? 'JSON 匯出內容' : '一般文字匯出內容'} />
       </div>
     </div>
   );
