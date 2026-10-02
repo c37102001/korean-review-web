@@ -87,6 +87,7 @@ const readingTestsContentRepository = createUserContentRepository('readingTests'
 });
 const READING_TEST_SEQUENCE_SETTING = 'contentSequences';
 const READING_TEST_MIGRATION_CHUNK_SIZE = 400;
+const readingSerialMigrations = new Map();
 
 function positiveSerialNumber(value) {
   return Number.isSafeInteger(value) && value > 0 ? value : 0;
@@ -104,14 +105,16 @@ async function saveReadingTestsWithSerialNumbers(uid, values, minimumLastNumber 
     let lastNumber = Math.max(
       positiveSerialNumber(sequenceSnapshot.data()?.lastReadingTestNumber),
       positiveSerialNumber(minimumLastNumber),
-      ...snapshots.map((snapshot) => positiveSerialNumber(snapshot.data()?.serialNumber)),
+      ...snapshots.map((snapshot) => snapshot.data()?.deletedAt ? 0 : positiveSerialNumber(snapshot.data()?.serialNumber)),
     );
     savedValues = values.map((value, index) => {
+      if (snapshots[index].data()?.deletedAt) return value;
       const existingNumber = positiveSerialNumber(snapshots[index].data()?.serialNumber);
       const serialNumber = existingNumber || ++lastNumber;
       return { ...value, serialNumber };
     });
     savedValues.forEach((value, index) => {
+      if (snapshots[index].data()?.deletedAt) return;
       if (serialOnly) {
         transaction.set(references[index], {
           serialNumber: value.serialNumber,
@@ -132,27 +135,40 @@ async function saveReadingTestsWithSerialNumbers(uid, values, minimumLastNumber 
 export const readingTestsRepository = {
   ...readingTestsContentRepository,
   async saveMany(uid, values) {
+    await readingSerialMigrations.get(uid);
     return saveReadingTestsWithSerialNumbers(uid, values);
   },
   async ensureSerialNumbers(uid, values) {
-    const knownMaximum = Math.max(0, ...values.map((value) => positiveSerialNumber(value.serialNumber)));
-    const missing = values
-      .filter((value) => !positiveSerialNumber(value.serialNumber))
-      .sort((left, right) => String(left.createdAt || '').localeCompare(String(right.createdAt || ''))
-        || Number(left.order || 0) - Number(right.order || 0)
-        || String(left.id).localeCompare(String(right.id)));
-    let minimumLastNumber = knownMaximum;
-    const assigned = new Map();
-    for (let start = 0; start < missing.length; start += READING_TEST_MIGRATION_CHUNK_SIZE) {
-      const saved = await saveReadingTestsWithSerialNumbers(
-        uid,
-        missing.slice(start, start + READING_TEST_MIGRATION_CHUNK_SIZE),
-        minimumLastNumber,
-        true,
-      );
-      saved.forEach((value) => assigned.set(value.id, value));
-      minimumLastNumber = Math.max(minimumLastNumber, ...saved.map((value) => value.serialNumber));
+    const activeMigration = readingSerialMigrations.get(uid);
+    if (activeMigration) return activeMigration;
+    const migration = (async () => {
+      const knownMaximum = Math.max(0, ...values.map((value) => positiveSerialNumber(value.serialNumber)));
+      const missing = values
+        .filter((value) => !positiveSerialNumber(value.serialNumber))
+        .sort((left, right) => String(left.createdAt || '').localeCompare(String(right.createdAt || ''))
+          || Number(left.order || 0) - Number(right.order || 0)
+          || String(left.id).localeCompare(String(right.id)));
+      let minimumLastNumber = knownMaximum;
+      const assigned = new Map();
+      for (let start = 0; start < missing.length; start += READING_TEST_MIGRATION_CHUNK_SIZE) {
+        const saved = await saveReadingTestsWithSerialNumbers(
+          uid,
+          missing.slice(start, start + READING_TEST_MIGRATION_CHUNK_SIZE),
+          minimumLastNumber,
+          true,
+        );
+        saved.forEach((value) => {
+          if (positiveSerialNumber(value.serialNumber)) assigned.set(value.id, value);
+        });
+        minimumLastNumber = Math.max(minimumLastNumber, ...saved.map((value) => positiveSerialNumber(value.serialNumber)));
+      }
+      return values.map((value) => assigned.get(value.id) || value);
+    })();
+    readingSerialMigrations.set(uid, migration);
+    try {
+      return await migration;
+    } finally {
+      if (readingSerialMigrations.get(uid) === migration) readingSerialMigrations.delete(uid);
     }
-    return values.map((value) => assigned.get(value.id) || value);
   },
 };

@@ -161,7 +161,6 @@ test('R01: legacy and newly imported reading tests receive permanent non-reused 
   await page.getByRole('button', { name: '匯入題目' }).click();
   const dialog = page.getByRole('dialog', { name: '匯入閱讀題' });
   const imported = readingData({
-    id: 'new-reading',
     title: '不應匯入',
     serialNumber: 2,
     tag: '',
@@ -171,6 +170,10 @@ test('R01: legacy and newly imported reading tests receive permanent non-reused 
   await dialog.getByRole('button', { name: '下一步：選擇標籤' }).click();
   await dialog.getByRole('radio', { name: /^無標籤/ }).check();
   await dialog.getByRole('button', { name: '確認匯入 1 題' }).click();
+  await expect.poll(async () => {
+    const documents = await listDocuments(page, request, 'readingTests');
+    return documents.find((document) => document.fields.passage?.mapValue?.fields?.ko?.stringValue === '새로운 읽기 글입니다.')?.fields.serialNumber?.integerValue;
+  }).toBe('3');
   await expect(page.getByRole('heading', { name: '閱讀題3', exact: true })).toBeVisible();
 
   await page.reload();
@@ -178,8 +181,6 @@ test('R01: legacy and newly imported reading tests receive permanent non-reused 
   await expect(page.getByRole('heading', { name: '閱讀題1', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: '閱讀題3', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: '閱讀題2', exact: true })).toHaveCount(0);
-  const exportedDocument = await readDocument(page, request, 'readingTests', 'new-reading');
-  expect(exportedDocument.fields.serialNumber.integerValue).toBe('3');
   assertNoProductionRequests();
 });
 

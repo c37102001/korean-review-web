@@ -219,17 +219,25 @@ test('P08: a failed optional answer keeps the question available and succeeds on
     await page.locator('.practice-decision-panel').getByRole('button', { name: '答對' }).click();
     await expect(page.locator('.practice-page .form-error')).toContainText('失敗');
     await expect(page.locator('.quiz-meta')).toContainText('1 / 1');
+    await expect(page.locator('.practice-decision-panel').getByRole('button', { name: '答對' })).toBeEnabled();
+    await expect.poll(async () => {
+      const document = await readDocument(page, request, 'settings', 'grammarReview');
+      return document?.fields?.optionalPractice?.mapValue?.fields?.tasks?.arrayValue?.values?.length;
+    }).toBe(1);
   } finally {
     await setEmulatorRules(request);
   }
+  // Reconnect after replacing emulator rules. The Web SDK can keep the old
+  // write stream briefly in CI even though the emulator already accepted the rules.
+  await page.reload();
+  const taskCard = page.locator('.task-card').filter({ hasText: '單字練習' });
+  await expect(taskCard).toBeVisible();
+  await taskCard.getByRole('button', { name: '開始' }).dispatchEvent('click');
+  await expect(page.locator('.quiz-meta')).toContainText('1 / 1');
+  await page.locator('.practice-page').getByRole('button', { name: '公佈答案' }).click();
   const retryButton = page.locator('.practice-decision-panel').getByRole('button', { name: '答對' });
   const completedHeading = page.getByRole('heading', { name: /單字練習.*已完成/ });
-  await expect.poll(async () => {
-    if (await completedHeading.isVisible()) return 'completed';
-    if (await retryButton.isEnabled()) return 'retry-ready';
-    return 'pending';
-  }, { timeout: 20_000 }).not.toBe('pending');
-  if (await retryButton.isVisible()) await retryButton.click();
+  await retryButton.click();
   await expect(completedHeading).toBeVisible();
   await page.getByRole('button', { name: '韓文筆記' }).click();
   await expect(page.locator('.task-card').filter({ hasText: '單字練習' })).toHaveCount(0);
