@@ -82,13 +82,15 @@ test('R01: copy, batch import, search, collapse, edit, validation, delete, and r
   let exported = JSON.parse(await exportCode.innerText());
   expect(exported.data).toHaveLength(1);
   expect(exported.data[0].passage.ko).toContain('요즘은');
-  expect(exported.data[0]).not.toHaveProperty('tag');
+  expect(Object.keys(exported.data[0])).toEqual(['tag', 'passage', 'questions', 'learned']);
+  expect(exported.data[0].tag).toBe('TOPIK');
   await exportDialog.getByRole('button', { name: '重新選擇' }).click();
   await exportDialog.getByRole('checkbox', { name: /無標籤/ }).check();
   await exportDialog.getByRole('button', { name: '產生 JSON（2）' }).click();
   exported = JSON.parse(await exportDialog.getByLabel('閱讀題 JSON 匯出內容').innerText());
   expect(exported.data).toHaveLength(2);
-  expect(exported.data.every((entry) => !Object.hasOwn(entry, 'tag'))).toBe(true);
+  expect(exported.data.map((entry) => entry.tag).sort()).toEqual(['', 'TOPIK']);
+  expect(exported.data.every((entry) => Object.keys(entry).join(',') === 'tag,passage,questions,learned')).toBe(true);
   await exportDialog.getByRole('button', { name: '複製', exact: true }).click();
   expect(JSON.parse(await page.evaluate(() => navigator.clipboard.readText())).data).toHaveLength(2);
   await exportDialog.getByRole('button', { name: '關閉' }).click();

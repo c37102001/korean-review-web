@@ -46,7 +46,7 @@ test('reading titles use persisted serial numbers that JSON cannot import or exp
 
   document.data[0].serialNumber = 999;
   document.data[0].title = '任意標題';
-  const [edited] = parseReadingTestsJson(JSON.stringify(document), [existing]);
+  const [edited] = parseReadingTestsJson(JSON.stringify(document), [existing], { editingId: existing.id });
   const [created] = parseReadingTestsJson(JSON.stringify({ ...document, data: [{ ...document.data[0], id: 'new' }] }));
   assert.equal(edited.serialNumber, 12);
   assert.equal(created.serialNumber, 0);
@@ -54,13 +54,18 @@ test('reading titles use persisted serial numbers that JSON cannot import or exp
   assert.equal(readingTestTitle(created), '閱讀題');
 });
 
-test('reading test export can omit tags while retaining the import document shape', () => {
+test('reading test export contains only the portable import fields', () => {
   const source = [readingTest('tagged', 'TOPIK'), readingTest('untagged', '')];
-  const exported = JSON.parse(formatReadingTestsJson(source, { includeTags: false }));
+  source[0].order = 42;
+  source[0].serialNumber = 7;
+  source[0].highlights = [{ id: 'mark', entryId: 'tagged-passage', text: 'tagged', start: 0, end: 6 }];
+  source[0].createdAt = '2026-10-02T00:00:00.000Z';
+  const exported = JSON.parse(formatReadingTestsJson(source));
 
   assert.equal(exported.schemaVersion, 2);
   assert.equal(exported.data.length, 2);
-  assert.ok(exported.data.every((entry) => !Object.hasOwn(entry, 'tag')));
+  assert.deepEqual(Object.keys(exported.data[0]), ['tag', 'passage', 'questions', 'learned']);
+  assert.deepEqual(exported.data.map((entry) => entry.tag), ['TOPIK', '']);
   assert.equal(exported.data[0].passage.ko, source[0].passage.ko);
   assert.deepEqual(exported.data[0].questions, normalizeReadingTest(source[0]).questions);
 });
@@ -75,7 +80,7 @@ test('reading highlights persist only while their source text and offsets remain
 
   const normalized = normalizeReadingTest(source);
   assert.deepEqual(normalized.highlights, [source.highlights[0]]);
-  const [roundTripped] = parseReadingTestsJson(formatReadingTestsJson([normalized]), [normalized]);
+  const [roundTripped] = parseReadingTestsJson(formatReadingTestsJson([normalized]), [normalized], { editingId: normalized.id });
   assert.deepEqual(roundTripped.highlights, [source.highlights[0]]);
 });
 

@@ -1338,7 +1338,7 @@ test('reading test JSON editing keeps a stable id and round-trips bilingual cont
     answer: '1',
     order: 7,
   }, 'reading-1');
-  const reparsed = helpers.parseReadingTestsJson(helpers.formatReadingTestsJson([existing]), [existing]);
+  const reparsed = helpers.parseReadingTestsJson(helpers.formatReadingTestsJson([existing]), [existing], { editingId: existing.id });
   assert.equal(reparsed[0].id, 'reading-1');
   assert.equal(reparsed[0].passage.zh, '韓文');
   assert.equal(reparsed[0].order, 7);

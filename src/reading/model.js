@@ -129,7 +129,7 @@ export function validateReadingTest(test, index = 0) {
   return test;
 }
 
-export function parseReadingTestsJson(text, existingTests = []) {
+export function parseReadingTestsJson(text, existingTests = [], { editingId = '' } = {}) {
   let parsed;
   try {
     parsed = JSON.parse(String(text || ''));
@@ -140,14 +140,15 @@ export function parseReadingTestsJson(text, existingTests = []) {
   if (!parsed.data.length) throw new Error('data 至少需要一題閱讀測驗');
   const existingById = new Map(existingTests.map((test) => [test.id, test]));
   const tests = parsed.data.map((entry, index) => {
-    const existing = entry?.id ? existingById.get(String(entry.id)) : null;
-    const id = String(entry?.id || createId());
+    const existing = (editingId && parsed.data.length === 1 ? existingById.get(editingId) : null)
+      || (entry?.id ? existingById.get(String(entry.id)) : null);
+    const id = String(existing?.id || entry?.id || createId());
     const merged = {
       ...existing,
       ...entry,
       id,
       serialNumber: existing?.serialNumber,
-      order: Number.isSafeInteger(entry?.order) ? entry.order : index,
+      order: Number.isSafeInteger(entry?.order) ? entry.order : Number.isSafeInteger(existing?.order) ? existing.order : index,
       createdAt: entry?.createdAt || existing?.createdAt || '',
     };
     if (!Array.isArray(entry?.questions) && (entry?.question || entry?.options || entry?.answer)) delete merged.questions;
@@ -158,19 +159,16 @@ export function parseReadingTestsJson(text, existingTests = []) {
   return tests;
 }
 
-export function formatReadingTestsJson(tests = [], { includeTags = true } = {}) {
+export function formatReadingTestsJson(tests = []) {
   return JSON.stringify({
     schemaVersion: 2,
     data: tests.map((source) => {
       const test = normalizeReadingTest(source, source?.id || '');
       return {
-        ...(test.id ? { id: test.id } : {}),
-        ...(includeTags && test.tag ? { tag: test.tag } : {}),
+        tag: test.tag,
         passage: test.passage,
         questions: test.questions,
         learned: test.learned === true,
-        ...(test.highlights?.length ? { highlights: test.highlights } : {}),
-        ...(Number.isSafeInteger(test.order) ? { order: test.order } : {}),
       };
     }),
   }, null, 2);

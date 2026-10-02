@@ -49,7 +49,7 @@ export function ReadingTestsEditorModal({ test, existingTests, tagSuggestions = 
   const [error, setError] = useState('');
   const preview = useMemo(() => {
     try {
-      const parsed = parseReadingTestsJson(source, existingTests);
+      const parsed = parseReadingTestsJson(source, existingTests, { editingId: test?.id || '' });
       if (test && parsed.length !== 1) throw new Error('編輯時 JSON 只能包含一題');
       return { tests: parsed, error: '' };
     } catch (parseError) {
@@ -135,7 +135,7 @@ function ReadingTestsExportModal({ tests, onClose }) {
   const [showJson, setShowJson] = useState(false);
   const [copied, setCopied] = useState(false);
   const selectedTests = useMemo(() => tests.filter((test) => selectedTags.has(readingTestTagLabel(test))), [selectedTags, tests]);
-  const jsonText = useMemo(() => formatReadingTestsJson(selectedTests, { includeTags: false }), [selectedTests]);
+  const jsonText = useMemo(() => formatReadingTestsJson(selectedTests), [selectedTests]);
   const toggleTag = (tag) => {
     setSelectedTags((current) => {
       const next = new Set(current);
@@ -158,7 +158,7 @@ function ReadingTestsExportModal({ tests, onClose }) {
         {showJson ? <>
           <div className="reading-import-tag-heading">
             <strong>JSON 內容</strong>
-            <span>已匯出 {selectedTests.length} 篇閱讀文章；標籤不會寫入匯出內容。</span>
+            <span>已匯出 {selectedTests.length} 篇閱讀文章。</span>
           </div>
           <ExportCodeBlock content={jsonText} label="閱讀題 JSON 匯出內容" />
           <div className="actions grammar-editor-actions">
