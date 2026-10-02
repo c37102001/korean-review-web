@@ -206,6 +206,7 @@ import {
   recordDailyRecognitionAnswer,
   recordDailyReviewAnswer,
   recordDailyWrongReviewAnswer,
+  resetQuestionReviewState,
   reviewQuestions,
   shouldInitializeDailyRecognition,
   toggleStarredItem,
@@ -366,6 +367,23 @@ export function AppWorkspace({
     const learnedSelected = folderIds.includes(learnedFolder?.id);
     await writeLearningRecords(user.uid, learnedSelected ? records.map((record) => ({ ...record, item: { ...record.item, noReview: true } })) : records, onProgress, folderIds, [], [], [], [], learnedFolder?.id);
   };
+  const resetImportedWordReview = async (wordIds = [], records = []) => {
+    const resetWordIds = new Set(wordIds.filter(Boolean).map(String));
+    if (!resetWordIds.size) return;
+    const resetQuestionIds = new Set(resetWordIds);
+    questions.forEach((question) => {
+      if (resetWordIds.has(String(question.itemId || ''))) resetQuestionIds.add(question.id);
+    });
+    records.forEach((record) => {
+      if (!resetWordIds.has(String(record.id || ''))) return;
+      (record.item?.meanings || []).forEach((meaning) => {
+        (meaning.examples || []).forEach((example) => {
+          if (example.id) resetQuestionIds.add(example.id);
+        });
+      });
+    });
+    await updateStore((current) => resetQuestionReviewState(current, [...resetQuestionIds]));
+  };
   const updateLearningRecord = async (record, onProgress, desiredFolderIds) => {
     const learnedSelected = Array.isArray(desiredFolderIds)
       ? desiredFolderIds.includes(learnedFolder?.id)
@@ -382,13 +400,14 @@ export function AppWorkspace({
     );
     await writeLearningRecords(user.uid, [nextRecord], onProgress, folderIdsToAdd, [], [], [], folderIdsToRemove, learnedFolder?.id);
   };
-  const updateLearningRecords = async (updatedRecords, onProgress, folderIds = [], additionalFolderWordIds = []) => {
+  const updateLearningRecords = async (updatedRecords, onProgress, folderIds = [], additionalFolderWordIds = [], resetReviewWordIds = []) => {
     const nextRecords = updatedRecords.map((record) => (
       learnedWordIds.has(record.id) || folderIds.includes(learnedFolder?.id)
         ? { ...record, item: { ...record.item, noReview: true } }
         : record
     ));
     await writeLearningRecords(user.uid, nextRecords, onProgress, folderIds, additionalFolderWordIds, [], [], [], learnedFolder?.id);
+    await resetImportedWordReview(resetReviewWordIds, nextRecords);
   };
   const updateWordsNoReview = async (wordIds, noReview) => {
     if (!noReview && wordIds.some((id) => learnedWordIds.has(id))) {
@@ -396,11 +415,13 @@ export function AppWorkspace({
     }
     await setWordsNoReview(user.uid, wordIds, noReview);
   };
-  const writeYoutubeSubtitleRecords = async (records, onProgress, folderIds = [], additionalFolderWordIds = []) => {
+  const writeYoutubeSubtitleRecords = async (records, onProgress, folderIds = [], additionalFolderWordIds = [], resetReviewWordIds = []) => {
     await writeYoutubeSubtitleLearningRecords(user.uid, records, folders.folders, onProgress, folderIds, additionalFolderWordIds);
+    await resetImportedWordReview(resetReviewWordIds, records);
   };
-  const writeReadingTestRecords = async (records, onProgress, folderIds = [], additionalFolderWordIds = []) => {
+  const writeReadingTestRecords = async (records, onProgress, folderIds = [], additionalFolderWordIds = [], resetReviewWordIds = []) => {
     await writeReadingTestLearningRecords(user.uid, records, folders.folders, onProgress, folderIds, additionalFolderWordIds);
+    await resetImportedWordReview(resetReviewWordIds, records);
   };
   const deleteLearningRecordsFromStore = async (recordIds) => {
     const ids = [...new Set(recordIds.filter(Boolean))];

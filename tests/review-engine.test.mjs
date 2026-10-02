@@ -8,6 +8,7 @@ import {
   dueQuestions,
   excludeLearnedQuestions,
   recordAnswer,
+  resetQuestionReviewState,
 } from '../src/review-engine/index.js';
 
 const question = (id, date = '2026-09-01') => ({
@@ -20,6 +21,36 @@ test('review selectors and reducers load without React or Firebase', () => {
   const next = recordAnswer(store, question('가'), false);
   assert.equal(next.stats['가'].wrong, 1);
   assert.ok(next.progress['가'].nextDue > new Date().toISOString().slice(0, 10));
+});
+
+test('reimporting a word clears term and example review state', () => {
+  const store = {
+    stats: { word: { correct: 4 }, example: { wrong: 2 }, untouched: { correct: 1 } },
+    progress: { word: { stage: 3 }, example: { stage: 1 }, untouched: { stage: 2 } },
+    attempts: [
+      { id: 'old-word', questionId: 'word' },
+      { id: 'old-example', questionId: 'example' },
+      { id: 'keep', questionId: 'untouched' },
+    ],
+    recognition: {
+      correctIds: ['example', 'untouched'],
+      pendingWrongIds: ['word'],
+      assignmentIds: ['word', 'untouched'],
+      answeredIds: ['example'],
+    },
+  };
+
+  const reset = resetQuestionReviewState(store, ['word', 'example']);
+
+  assert.deepEqual(Object.keys(reset.stats), ['untouched']);
+  assert.deepEqual(Object.keys(reset.progress), ['untouched']);
+  assert.deepEqual(reset.attempts.map(({ id }) => id), ['keep']);
+  assert.deepEqual(reset.recognition, {
+    correctIds: ['untouched'],
+    pendingWrongIds: [],
+    assignmentIds: ['untouched'],
+    answeredIds: [],
+  });
 });
 
 test('learned exclusion and daily wrong review remain independent selectors', () => {

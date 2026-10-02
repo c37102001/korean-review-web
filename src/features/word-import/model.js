@@ -8,6 +8,13 @@ import {
   recordOrder,
 } from '../../words/records.js';
 const CONTENT_SCHEMA_VERSION = 2;
+const WORD_CONTENT_FIELDS = ['ko', 'pos', 'noReview', 'variants', 'meanings', 'notes', 'related'];
+
+function importableWordContent(item) {
+  return Object.fromEntries(
+    WORD_CONTENT_FIELDS.filter((field) => item?.[field] !== undefined).map((field) => [field, item[field]]),
+  );
+}
 
 export function readJsonImportDocument(text) {
   let parsed;
@@ -163,10 +170,10 @@ export function createRecordsFromImportEntries(entries, date, existingItems = []
   }));
   const updateRecords = entries.filter((entry) => entry.action === 'update').map((entry) => ({
     id: entry.existing.id,
-    date: entry.existing.date,
-    order: Number.isSafeInteger(entry.item.order) ? entry.item.order : orderBase + entry.index,
+    date,
+    order: orderBase + entry.index,
     item: { ...entry.item, noReview: entry.item.noReview ?? entry.existing.noReview },
-    createdAt: entry.existing.createdAt || now,
+    createdAt: now,
     updatedAt: now,
   }));
   const lookupRecords = [
@@ -468,8 +475,13 @@ export function resolveImportConflictDraft(draft, choice, allItems = []) {
   const editedItem = choice === 'edit' ? parseEditedImportItem(conflict.editText, '最終結果') : null;
   if (conflict.type === 'existing') {
     if (choice === 'existing') {
-      keptExistingIds.push(conflict.existing.id);
-      nextEntries[conflict.entryIndex] = null;
+      nextEntries[conflict.entryIndex] = {
+        index: conflict.entryIndex,
+        action: 'update',
+        recordId: conflict.existing.id,
+        existing: conflict.existing,
+        item: importableWordContent(conflict.existing),
+      };
     } else {
       const item = choice === 'incoming' ? conflict.incoming : choice === 'merge' ? mergeImportItems(conflict.existing, conflict.incoming) : editedItem;
       nextEntries[conflict.entryIndex] = { index: conflict.entryIndex, action: 'update', recordId: conflict.existing.id, existing: conflict.existing, item };

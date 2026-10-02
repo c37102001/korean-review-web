@@ -29,6 +29,26 @@ export function getStats(store, id) {
   return { ...stats, score, level: familiarityLevel(score) };
 }
 
+export function resetQuestionReviewState(store, questionIds = []) {
+  const resetIds = new Set(questionIds.filter(Boolean).map(String));
+  if (!resetIds.size) return store;
+  const withoutResetIds = (values = []) => values.filter((id) => !resetIds.has(String(id)));
+  const recognition = store.recognition ? {
+    ...store.recognition,
+    correctIds: withoutResetIds(store.recognition.correctIds),
+    pendingWrongIds: withoutResetIds(store.recognition.pendingWrongIds),
+    assignmentIds: withoutResetIds(store.recognition.assignmentIds),
+    answeredIds: withoutResetIds(store.recognition.answeredIds),
+  } : store.recognition;
+  return {
+    ...store,
+    stats: Object.fromEntries(Object.entries(store.stats || {}).filter(([id]) => !resetIds.has(id))),
+    progress: Object.fromEntries(Object.entries(store.progress || {}).filter(([id]) => !resetIds.has(id))),
+    attempts: (store.attempts || []).filter((attempt) => !resetIds.has(String(attempt.questionId || ''))),
+    recognition,
+  };
+}
+
 export function rankTermQuestionsByFamiliarity(store, questions = []) {
   const questionIdsByItem = new Map();
   questions.forEach((question) => {
@@ -521,4 +541,3 @@ export function compareAnswer(input, answer) {
     parts,
   };
 }
-

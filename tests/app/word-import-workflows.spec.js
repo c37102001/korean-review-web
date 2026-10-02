@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
-import { denyFirestoreWrites, listDocuments, prepareAppPage, readDocument, register, resetTestData, seedWord, setEmulatorRules } from './helpers.js';
+import { denyFirestoreWrites, listDocuments, prepareAppPage, readDocument, register, resetTestData, seedDocument, seedWord, setEmulatorRules } from './helpers.js';
+import { progressShardId } from '../../src/review-engine/store.js';
 
 test.beforeEach(async ({ request }) => resetTestData(request));
 
@@ -60,7 +61,10 @@ for (const [choice, expectedZh] of [
   test(`E06: existing-word conflict ${choice} persists the selected outcome`, async ({ page, request }) => {
     const assertNoProductionRequests = await prepareAppPage(page);
     await register(page, `word-import-${choice === '保留既有單字' ? 'keep' : choice === '直接合併' ? 'merge' : 'replace'}@example.test`);
-    await seedWord(page, request, 'original', '사과', '原義');
+    await seedWord(page, request, 'original', '사과', '原義', { date: '2026-09-10' });
+    await seedDocument(page, request, 'progressShards', progressShardId('original'), {
+      entries: { original: { stats: { correct: 5, wrong: 1, total: 6 }, progress: { stage: 4, nextDue: '2026-10-21' } } },
+    });
     const dialog = await openJsonImport(page);
     await submitImport(dialog, [word('사과', '新義')]);
     await expect(dialog.getByText('重複韓文單字：사과')).toBeVisible();
@@ -70,6 +74,9 @@ for (const [choice, expectedZh] of [
     const item = (await readDocument(page, request, 'records', 'original')).fields.item.mapValue.fields;
     expect(item.meanings.arrayValue.values[0].mapValue.fields.zh.stringValue).toBe(expectedZh);
     if (choice === '直接合併') expect(item.meanings.arrayValue.values.map((entry) => entry.mapValue.fields.zh.stringValue)).toContain('新義');
+    expect((await readDocument(page, request, 'records', 'original')).fields.date.stringValue).toBe('2026-09-21');
+    const progressShard = await readDocument(page, request, 'progressShards', progressShardId('original'));
+    expect(progressShard?.fields?.entries?.mapValue?.fields?.original).toBeUndefined();
     assertNoProductionRequests();
   });
 }

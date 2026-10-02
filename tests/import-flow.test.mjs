@@ -139,20 +139,23 @@ test('replacing an existing duplicate becomes one update with no second conflict
   assert.equal(records.addRecords.length, 0);
   assert.equal(records.updateRecords.length, 1);
   assert.equal(records.updateRecords[0].id, existing.id);
-  assert.equal(records.updateRecords[0].date, existing.date);
+  assert.equal(records.updateRecords[0].date, '2026-07-22');
+  assert.notEqual(records.updateRecords[0].createdAt, existing.createdAt);
   assert.equal(records.updateRecords[0].item.meanings[0].zh, '提問');
   assert.ok(records.updateRecords[0].order > 0);
 });
 
-test('keeping an existing duplicate retains its id for folder assignment', () => {
+test('keeping an existing duplicate rewrites it as a newly added word', () => {
   const existing = { id: 'existing-id', date: '2026-07-20', ...item('질문', '問題') };
   const draft = helpers.buildJsonImportDraft(JSON.stringify({ data: [item('질문', '提問')] }), '2026-07-22');
   draft.conflict = helpers.findImportConflict(draft.entries, [existing]);
 
   const resolved = helpers.resolveImportConflictDraft(draft, 'existing', [existing]);
 
-  assert.deepEqual(resolved.entries, []);
-  assert.deepEqual(resolved.keptExistingIds, ['existing-id']);
+  assert.equal(resolved.entries.length, 1);
+  assert.equal(resolved.entries[0].action, 'update');
+  assert.equal(resolved.entries[0].existing.id, 'existing-id');
+  assert.deepEqual(resolved.keptExistingIds, []);
   assert.equal(resolved.conflict, null);
 });
 

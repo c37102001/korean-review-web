@@ -130,7 +130,7 @@ export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', 
     if (!activeEntries.length) {
       if (selectedFolderIds.length && keptExistingIds.length) {
         if (!onWriteRecords) throw new Error('目前無法更新資料夾，請重新開啟視窗再試一次');
-        await onWriteRecords([], reportImportProgress, selectedFolderIds, keptExistingIds);
+        await onWriteRecords([], reportImportProgress, selectedFolderIds, keptExistingIds, keptExistingIds);
       }
       const detail = selectedFolderIds.length && keptExistingIds.length
         ? `已將 ${keptExistingIds.length} 筆既有單字加入資料夾，沒有建立重複卡片。`
@@ -144,7 +144,13 @@ export function AddItemsForm({ title, date, lockedDate = false, initialKo = '', 
     }
     if (!onWriteRecords) throw new Error('目前無法執行批次匯入，請重新開啟視窗再試一次');
     const { addRecords, updateRecords } = createRecordsFromImportEntries(activeEntries, targetDate, allItems, lockedDate);
-    await onWriteRecords([...addRecords, ...updateRecords], reportImportProgress, selectedFolderIds, keptExistingIds);
+    await onWriteRecords(
+      [...addRecords, ...updateRecords],
+      reportImportProgress,
+      selectedFolderIds,
+      keptExistingIds,
+      updateRecords.map((record) => record.id),
+    );
     setMessage(`已匯入 ${addRecords.length} 筆，更新 ${updateRecords.length} 筆`);
     setJsonText('');
     setImportDraft(null);
