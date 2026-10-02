@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Check, Copy, Plus, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Check, Copy, Download, Plus, Trash2, X } from 'lucide-react';
 import { ActionMenu } from '../../../components/actions/ActionMenu.jsx';
 import { EditIconButton } from '../../../components/actions/ContentActionButtons.jsx';
 import { CollapsibleGroup, EntityCardShell, EntityGrid, LibraryPageShell } from '../../../components/library/LibraryPrimitives.jsx';
@@ -127,11 +127,73 @@ function ReadingImportTagStep({ count, tagSuggestions, tagChoice, onTagChoiceCha
   );
 }
 
+function ReadingTestsExportModal({ tests, onClose }) {
+  const tagGroups = useMemo(() => groupReadingTestsByTag(tests), [tests]);
+  const [selectedTags, setSelectedTags] = useState(() => new Set());
+  const [showJson, setShowJson] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const selectedTests = useMemo(() => tests.filter((test) => selectedTags.has(readingTestTagLabel(test))), [selectedTags, tests]);
+  const jsonText = useMemo(() => formatReadingTestsJson(selectedTests, { includeTags: false }), [selectedTests]);
+  const toggleTag = (tag) => {
+    setSelectedTags((current) => {
+      const next = new Set(current);
+      if (next.has(tag)) next.delete(tag);
+      else next.add(tag);
+      return next;
+    });
+    setCopied(false);
+  };
+  const copyJson = async () => {
+    await copyText(jsonText);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  };
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="匯出閱讀題">
+      <div className="modal-panel reading-test-editor reading-test-export">
+        <button type="button" className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
+        <div className="grammar-modal-head"><span className="eyebrow">Reading Practice JSON</span><h2>匯出題目</h2></div>
+        {showJson ? <>
+          <div className="reading-import-tag-heading">
+            <strong>JSON 內容</strong>
+            <span>已匯出 {selectedTests.length} 篇閱讀文章；標籤不會寫入匯出內容。</span>
+          </div>
+          <textarea className="yt-subtitle-source reading-test-export-source" value={jsonText} rows={24} readOnly spellCheck={false} aria-label="閱讀題 JSON 匯出內容" />
+          <div className="actions grammar-editor-actions">
+            <button type="button" onClick={() => { setShowJson(false); setCopied(false); }}><ArrowLeft size={17} /> 重新選擇</button>
+            <button type="button" className="primary" onClick={copyJson}><Copy size={17} /> {copied ? '已複製' : '複製'}</button>
+          </div>
+        </> : <>
+          <section className="reading-import-tag-step">
+            <div className="reading-import-tag-heading">
+              <strong>選擇匯出標籤</strong>
+              <span>可複選；符合任一標籤的題目都會匯出。</span>
+            </div>
+            <div className="reading-import-tag-options reading-export-tag-options" aria-label="匯出標籤">
+              {tagGroups.map((group) => (
+                <label key={group.label}>
+                  <input type="checkbox" checked={selectedTags.has(group.label)} onChange={() => toggleTag(group.label)} />
+                  <span><strong>{group.label}</strong><small>{group.tests.length} 篇閱讀文章</small></span>
+                </label>
+              ))}
+            </div>
+          </section>
+          <div className="actions grammar-editor-actions">
+            <button type="button" onClick={onClose}>取消</button>
+            <button type="button" className="primary" disabled={!selectedTests.length} onClick={() => setShowJson(true)}><Check size={17} /> 產生 JSON（{selectedTests.length}）</button>
+          </div>
+        </>}
+      </div>
+    </div>
+  );
+}
+
 export default function ReadingTestsPage({ tests, error, onSave, onSaveMany, onDelete, onOpen }) {
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [collapsedTags, setCollapsedTags] = useState(() => new Set());
   const [formatCopied, setFormatCopied] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [actionError, setActionError] = useState('');
   const filtered = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase('zh-TW');
@@ -176,6 +238,7 @@ export default function ReadingTestsPage({ tests, error, onSave, onSaveMany, onD
       title="閱讀測驗"
       actions={<>
           <button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 匯入題目</button>
+          <button type="button" disabled={!tests.length} onClick={() => setExporting(true)}><Download size={18} /> 匯出題目</button>
           <ActionMenu>
             <button type="button" onClick={copyJsonFormat}><Copy size={18} /> {formatCopied ? '已複製格式' : '複製 JSON 格式'}</button>
           </ActionMenu>
@@ -193,6 +256,7 @@ export default function ReadingTestsPage({ tests, error, onSave, onSaveMany, onD
         </CollapsibleGroup>;
       })}</div> : <div className="panel grammar-empty">{query ? '找不到符合的閱讀題。' : '還沒有閱讀題，請用 JSON 一次匯入一題或多題。'}</div>}
       {editing && <ReadingTestsEditorModal test={editing.id ? editing : null} existingTests={tests} tagSuggestions={tagSuggestions} onSave={async (nextTests) => { if (editing.id) await onSave(nextTests[0]); else await onSaveMany(nextTests); setEditing(null); }} onClose={() => setEditing(null)} />}
+      {exporting && <ReadingTestsExportModal tests={tests} onClose={() => setExporting(false)} />}
     </LibraryPageShell>
   );
 }

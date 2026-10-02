@@ -147,14 +147,14 @@ export function parseReadingTestsJson(text, existingTests = []) {
   return tests;
 }
 
-export function formatReadingTestsJson(tests = []) {
+export function formatReadingTestsJson(tests = [], { includeTags = true } = {}) {
   return JSON.stringify({
     schemaVersion: 2,
     data: tests.map((source) => {
       const test = normalizeReadingTest(source, source?.id || '');
       return {
         ...(test.id ? { id: test.id } : {}),
-        ...(test.tag ? { tag: test.tag } : {}),
+        ...(includeTags && test.tag ? { tag: test.tag } : {}),
         passage: test.passage,
         questions: test.questions,
         learned: test.learned === true,

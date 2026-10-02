@@ -281,6 +281,17 @@
   width: min(920px, 100%);
 }
 
+.reading-test-export {
+  display: grid;
+  gap: 18px;
+}
+
+.reading-test-export-source {
+  width: 100%;
+  min-height: min(52vh, 560px);
+  resize: vertical;
+}
+
 .reading-import-tag-step {
   display: grid;
   gap: 16px;

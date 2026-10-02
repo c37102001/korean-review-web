@@ -65,6 +65,24 @@ test('R01: copy, batch import, search, collapse, edit, validation, delete, and r
   await dialog.getByRole('button', { name: '確認匯入 2 題' }).click();
   await expect(page.locator('.reading-test-card')).toHaveCount(2);
 
+  await page.getByRole('button', { name: '匯出題目' }).click();
+  let exportDialog = page.getByRole('dialog', { name: '匯出閱讀題' });
+  await exportDialog.getByRole('checkbox', { name: /TOPIK/ }).check();
+  await exportDialog.getByRole('button', { name: '產生 JSON（1）' }).click();
+  let exported = JSON.parse(await exportDialog.getByLabel('閱讀題 JSON 匯出內容').inputValue());
+  expect(exported.data).toHaveLength(1);
+  expect(exported.data[0].passage.ko).toContain('요즘은');
+  expect(exported.data[0]).not.toHaveProperty('tag');
+  await exportDialog.getByRole('button', { name: '重新選擇' }).click();
+  await exportDialog.getByRole('checkbox', { name: /無標籤/ }).check();
+  await exportDialog.getByRole('button', { name: '產生 JSON（2）' }).click();
+  exported = JSON.parse(await exportDialog.getByLabel('閱讀題 JSON 匯出內容').inputValue());
+  expect(exported.data).toHaveLength(2);
+  expect(exported.data.every((entry) => !Object.hasOwn(entry, 'tag'))).toBe(true);
+  await exportDialog.getByRole('button', { name: '複製', exact: true }).click();
+  expect(JSON.parse(await page.evaluate(() => navigator.clipboard.readText())).data).toHaveLength(2);
+  await exportDialog.getByRole('button', { name: '關閉' }).click();
+
   const search = page.getByPlaceholder('搜尋韓文文章、題目、選項或中文翻譯');
   await search.fill('地鐵');
   await expect(readingCard(page, '지하철은 편리합니다.')).toBeVisible();

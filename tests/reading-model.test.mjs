@@ -37,6 +37,17 @@ test('reading test tags normalize and round-trip through JSON', () => {
   assert.equal(parsed.tag, 'TOPIK');
 });
 
+test('reading test export can omit tags while retaining the import document shape', () => {
+  const source = [readingTest('tagged', 'TOPIK'), readingTest('untagged', '')];
+  const exported = JSON.parse(formatReadingTestsJson(source, { includeTags: false }));
+
+  assert.equal(exported.schemaVersion, 2);
+  assert.equal(exported.data.length, 2);
+  assert.ok(exported.data.every((entry) => !Object.hasOwn(entry, 'tag')));
+  assert.equal(exported.data[0].passage.ko, source[0].passage.ko);
+  assert.deepEqual(exported.data[0].questions, normalizeReadingTest(source[0]).questions);
+});
+
 test('reading highlights persist only while their source text and offsets remain valid', () => {
   const source = readingTest('highlighted', 'TOPIK');
   source.passage.ko = '최근 글';
