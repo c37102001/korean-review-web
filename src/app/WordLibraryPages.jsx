@@ -939,6 +939,7 @@ export function NotebookPage({ store, updateStore, items, questions, folders = [
         onSetNoReview={onSetNoReview}
         emptyMessage="找不到符合的單字"
         showPagination="always"
+        allowSelectAll
       />
     </section>
   );

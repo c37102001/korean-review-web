@@ -142,7 +142,7 @@ test('W02 W03 W04 W09 W14: filters compose, sort and pagination retain correct s
   assertNoProductionRequests();
 });
 
-test('W04 W09: page controls and select-current-page operate only on visible words', async ({ page, request }) => {
+test('W04 W09: page controls and selection cover either the current page or all filtered words', async ({ page, request }) => {
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'word-pages@example.test');
   for (let index = 0; index < 31; index += 1) {
@@ -170,6 +170,13 @@ test('W04 W09: page controls and select-current-page operate only on visible wor
   await page.getByPlaceholder('搜尋韓文單字或中文意思').fill('意思30');
   await expect(cards(page)).toHaveCount(1);
   await expect(page.locator('.pagination')).toContainText('1 / 1');
+  await page.locator('.bulk-selection-summary').getByRole('button', { name: '選取全部' }).click();
+  await expect(page.locator('.bulk-selection-summary')).toContainText('已選 1 個');
+  await page.getByPlaceholder('搜尋韓文單字或中文意思').fill('');
+  await expect(page.locator('.bulk-selection-summary')).toContainText('已選 1 個');
+  await page.locator('.bulk-selection-summary').getByRole('button', { name: '選取全部' }).click();
+  await expect(page.locator('.bulk-selection-summary')).toContainText('已選 31 個');
+  await expect(page.locator('.bulk-selection-summary').getByRole('button', { name: '取消全部' })).toBeVisible();
   assertNoProductionRequests();
 });
 
