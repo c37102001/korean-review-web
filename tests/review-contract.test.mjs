@@ -57,5 +57,5 @@ test('notes, subtitles and reading use shared library layout primitives', async 
   assert.match(pages[1], /CollapsibleGroup/);
   assert.match(pages[1], /LearnedVisibilityToggle/);
   assert.match(pages[2], /CollapsibleGroup/);
-  assert.doesNotMatch(pages[2], /LearnedVisibilityToggle/);
+  assert.match(pages[2], /LearnedVisibilityToggle/);
 });

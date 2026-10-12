@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { denyFirestoreWrites, listDocuments, prepareAppPage, readDocument, register, resetTestData, seedDocument, seedFolder, seedWord, setEmulatorRules } from './helpers.js';
+import { denyFirestoreWrites, expandAllContentGroups, listDocuments, prepareAppPage, readDocument, register, resetTestData, seedDocument, seedFolder, seedWord, setEmulatorRules } from './helpers.js';
 import { progressShardId } from '../../src/review-engine/store.js';
 
 test.beforeEach(async ({ request }) => resetTestData(request));
@@ -179,6 +179,7 @@ test('W12: adding from a folder detail page assigns the new word to that folder'
   await register(page, 'word-editor-folder-entry@example.test');
   await seedFolder(page, request, '旅行');
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
+  await expandAllContentGroups(page);
   await page.locator('.folder-card').filter({ hasText: '旅行' }).click();
   await page.locator('.notebook-actions').getByRole('button', { name: '新增', exact: true }).click();
   const dialog = page.getByRole('dialog');
@@ -193,6 +194,7 @@ test('W12: adding from a folder detail page assigns the new word to that folder'
   await expect.poll(async () => (await readDocument(page, request, 'folders', 'seed-folder'))?.fields.wordIds?.arrayValue?.values?.map((value) => value.stringValue)).toContain(docs[0].name.split('/').pop());
   await page.reload();
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
+  await expandAllContentGroups(page);
   await page.locator('.folder-card').filter({ hasText: '旅行' }).click();
   await expect(page.locator('.word-grid .word-card')).toContainText('여행');
   assertNoProductionRequests();

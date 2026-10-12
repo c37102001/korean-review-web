@@ -284,6 +284,7 @@ export function AppWorkspace({
   const [selectedFolderId, setSelectedFolderId] = useState(null);
   const [selectedYoutubeSubtitleId, setSelectedYoutubeSubtitleId] = useState(null);
   const [selectedReadingTestId, setSelectedReadingTestId] = useState(null);
+  const [readingTestSequenceIds, setReadingTestSequenceIds] = useState([]);
   const [fontScale, setFontScale] = useState(() => {
     try {
       const saved = window.localStorage.getItem(FONT_SCALE_STORAGE_KEY);
@@ -445,10 +446,16 @@ export function AppWorkspace({
     setSelectedYoutubeSubtitleId(subtitleId);
     navChild('ytSubtitle');
   };
-  const openReadingTest = (testId) => {
+  const openReadingTest = (testId, sequenceIds = [testId]) => {
     setSelectedReadingTestId(testId);
+    setReadingTestSequenceIds(sequenceIds.includes(testId) ? [...new Set(sequenceIds)] : [testId]);
     navChild('readingTest');
   };
+  const currentReadingTestIndex = readingTestSequenceIds.indexOf(selectedReadingTestId);
+  const readingTestIds = new Set(readingTests.tests.map((test) => test.id));
+  const nextReadingTestId = currentReadingTestIndex >= 0
+    ? readingTestSequenceIds.slice(currentReadingTestIndex + 1).find((testId) => readingTestIds.has(testId))
+    : null;
 
   if (storeLoading
     || (dataPolicy.folders && folders.loading)
@@ -472,7 +479,7 @@ export function AppWorkspace({
     ytSubtitles: <YoutubeSubtitlesPage notes={ytSubtitles.notes} error={ytSubtitles.error} onSave={ytSubtitles.save} onDelete={ytSubtitles.remove} onOpen={openYoutubeSubtitle} />,
     ytSubtitle: <YoutubeSubtitleReader note={selectedYoutubeSubtitle} allItems={items} folders={folders.folders} onSpeak={speakText} onAddRecords={writeYoutubeSubtitleRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={writeYoutubeSubtitleRecords} onDeleteRecord={deleteLearningRecordFromStore} onBack={goUp} onOpenFolder={openFolder} onSave={ytSubtitles.save} onDelete={ytSubtitles.remove} />,
     readingTests: <ReadingTestsPage tests={readingTests.tests} error={readingTests.error} onSave={readingTests.save} onSaveMany={readingTests.saveMany} onDelete={readingTests.remove} onOpen={openReadingTest} />,
-    readingTest: <ReadingTestPage test={readingTests.tests.find((test) => test.id === selectedReadingTestId)} allTests={readingTests.tests} allItems={items} folders={folders.folders} onSpeak={speakText} onAddRecords={writeReadingTestRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={writeReadingTestRecords} onDeleteRecord={deleteLearningRecordFromStore} onOpenFolder={openFolder} onSave={readingTests.save} onDelete={readingTests.remove} onBack={goUp} />,
+    readingTest: <ReadingTestPage key={selectedReadingTestId} test={readingTests.tests.find((test) => test.id === selectedReadingTestId)} allTests={readingTests.tests} allItems={items} folders={folders.folders} hasNext={!!nextReadingTestId} onNext={() => nextReadingTestId && setSelectedReadingTestId(nextReadingTestId)} onSpeak={speakText} onAddRecords={writeReadingTestRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={writeReadingTestRecords} onDeleteRecord={deleteLearningRecordFromStore} onOpenFolder={openFolder} onSave={readingTests.save} onDelete={readingTests.remove} onBack={goUp} />,
   };
 
   const backButtonClassName = `${page === 'ytSubtitle'

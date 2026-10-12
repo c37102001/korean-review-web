@@ -28,9 +28,17 @@ async function seedSubtitle(page, request, id, {
   });
 }
 
-async function openSubtitles(page) {
+async function expandSubtitleGroups(page) {
+  const groupToggle = page.locator('.folder-tag-group-toggle').first();
+  const collapsedToggle = page.locator('.folder-tag-group-toggle[aria-expanded="false"]').first();
+  await expect(groupToggle).toBeVisible();
+  while (await collapsedToggle.count()) await collapsedToggle.click();
+}
+
+async function openSubtitles(page, { expand = true } = {}) {
   await page.getByRole('button', { name: 'YT 字幕', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'YT 字幕', exact: true })).toBeVisible();
+  if (expand) await expandSubtitleGroups(page);
 }
 
 const subtitleCard = (page, title) => page.locator('.yt-subtitle-note-card').filter({ hasText: title });
@@ -38,7 +46,7 @@ const subtitleCard = (page, title) => page.locator('.yt-subtitle-note-card').fil
 test('Y01 Y02: JSON and SRT subtitles persist tags, learned visibility, search, editing, validation, and deletion', async ({ page, request }) => {
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'subtitle-lifecycle@example.test');
-  await openSubtitles(page);
+  await openSubtitles(page, { expand: false });
 
   await page.getByRole('button', { name: '新增字幕' }).click();
   let dialog = page.getByRole('dialog');
@@ -51,6 +59,7 @@ test('Y01 Y02: JSON and SRT subtitles persist tags, learned visibility, search, 
   ]));
   await expect(dialog.locator('.subtitle-parse-success')).toContainText('可匯入 2 句');
   await dialog.getByRole('button', { name: '儲存字幕筆記' }).click();
+  await expandSubtitleGroups(page);
   await expect(subtitleCard(page, '旅遊影片')).toContainText('旅遊');
   await expect(subtitleCard(page, '旅遊影片')).toContainText('2 句');
   let editedSubtitle;
@@ -74,6 +83,7 @@ test('Y01 Y02: JSON and SRT subtitles persist tags, learned visibility, search, 
   await expect(subtitleCard(page, '新聞片段')).toHaveCount(0);
   await page.locator('.notebook-actions .action-menu summary').click();
   await page.getByRole('button', { name: '隱藏已學習' }).click();
+  await expandSubtitleGroups(page);
   await expect(subtitleCard(page, '新聞片段')).toContainText('已學習');
 
   const search = page.getByPlaceholder('搜尋標題、標籤、影片連結或字幕內容');
@@ -106,7 +116,7 @@ test('Y01 Y02: JSON and SRT subtitles persist tags, learned visibility, search, 
     await readDocument(page, request, 'ytSubtitles', editedSubtitleId)
   )?.fields.deletedAt?.timestampValue).toBeTruthy();
   await page.reload();
-  await openSubtitles(page);
+  await openSubtitles(page, { expand: false });
   await expect(subtitleCard(page, '旅遊韓文')).toHaveCount(0);
   assertNoProductionRequests();
 });

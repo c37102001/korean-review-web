@@ -263,7 +263,10 @@ export function PracticePage({ store, updateStore, set, allItems = [], folders =
         await set.onOptionalAnswer(question.id, correct);
         rememberSessionResult(question, correct);
         goNext();
-      } catch (error) { setCompletionError(error.message || '練習進度儲存失敗，請重試'); }
+      } catch (error) {
+        const detail = error?.message ? `：${error.message}` : '，請重試';
+        setCompletionError(`練習進度儲存失敗${detail}`);
+      }
       finally { optionalSavingRef.current = false; setOptionalSaving(false); }
       return;
     }

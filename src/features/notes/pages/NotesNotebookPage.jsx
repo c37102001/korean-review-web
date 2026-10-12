@@ -265,8 +265,8 @@ function NoteCategorySection({ category, notes, query, loading, collapsed, onTog
 
 export default function NotesNotebookPage({ notes, loading, error, onSave, onDelete, onPractice }) {
   const [query, setQuery] = useState('');
-  const [collapsedCategories, setCollapsedCategories] = useState(() => new Set());
-  const toggleCategory = (category) => setCollapsedCategories((current) => {
+  const [expandedCategories, setExpandedCategories] = useState(() => new Set());
+  const toggleCategory = (category) => setExpandedCategories((current) => {
     const next = new Set(current);
     if (next.has(category)) next.delete(category);
     else next.add(category);
@@ -275,7 +275,7 @@ export default function NotesNotebookPage({ notes, loading, error, onSave, onDel
   return (
     <LibraryPageShell className="notes-notebook-page" eyebrow="Korean Notes" title="筆記" query={query} onQueryChange={setQuery} searchPlaceholder="搜尋標題、筆記或例句" error={error}>
       {[NOTE_CATEGORY_VOCABULARY, NOTE_CATEGORY_GRAMMAR].map((category) => (
-        <NoteCategorySection key={category} category={category} notes={notes} query={query} loading={loading} collapsed={collapsedCategories.has(category)} onToggleCollapse={() => toggleCategory(category)} onSave={onSave} onDelete={onDelete} onPractice={onPractice} />
+        <NoteCategorySection key={category} category={category} notes={notes} query={query} loading={loading} collapsed={!expandedCategories.has(category)} onToggleCollapse={() => toggleCategory(category)} onSave={onSave} onDelete={onDelete} onPractice={onPractice} />
       ))}
     </LibraryPageShell>
   );

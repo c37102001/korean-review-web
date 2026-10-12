@@ -574,8 +574,14 @@
   background: #fff0f1;
 }
 
-.reading-result button {
+.reading-result-actions {
+  display: flex;
+  gap: 8px;
   margin-left: auto;
+}
+
+.reading-result-actions button {
+  margin-left: 0;
 }
 
 .yt-subtitle-note-card {

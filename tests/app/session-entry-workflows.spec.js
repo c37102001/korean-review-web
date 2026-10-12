@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { prepareAppPage, readDocument, register, resetTestData, seedDocument, seedWord } from './helpers.js';
+import { expandAllContentGroups, prepareAppPage, readDocument, register, resetTestData, seedDocument, seedWord } from './helpers.js';
 import { progressShardId } from '../../src/review-engine/store.js';
 
 test.beforeEach(async ({ request }) => resetTestData(request));
@@ -16,6 +16,7 @@ test('W13 C03 H07: folder, date and weakest entry points pass only eligible scop
     createdAt: '2026-09-20T00:00:00.000Z', updatedAt: '2026-09-21T00:00:00.000Z',
   });
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
+  await expandAllContentGroups(page);
   await page.locator('.folder-card').filter({ hasText: '旅遊' }).click();
   await expect(page.locator('.word-grid .word-card')).toHaveCount(2);
   await page.locator('.notebook-actions').getByRole('button', { name: '學習' }).click();
