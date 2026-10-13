@@ -249,7 +249,7 @@ import { recordOrder, sortRecords, wordChineseSummary, wordExamples } from '../w
 import '../styles.css';
 import { FONT_SCALE_MAX, FONT_SCALE_MIN, dateLabel, monthTitle } from './AppRuntime.jsx';
 import { OptionalPracticeModal, VoiceSettingsModal } from './AppDialogs.jsx';
-import { EditJsonModal, ExportJsonModal } from './WordLibraryPages.jsx';
+import { EditJsonModal, ExportWordsModal } from './WordLibraryPages.jsx';
 export function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestionsForToday, optionalPractice, grammarNotes, onPractice, onOpenWrongReview, onAddRecords, onUpdateRecord, onWriteRecords, folders = [], offlineMode, fontScale, onFontScaleChange }) {
   const [addOpen, setAddOpen] = useState(false);
   const [practiceCreatorOpen, setPracticeCreatorOpen] = useState(false);
@@ -546,13 +546,20 @@ export function NotesPage({ store, updateStore, items, questions, date, allItems
           <button className="primary" disabled={!collection.filteredQuestions.length} onClick={() => onPractice(collection.filteredQuestions, `${date} 測驗`)}><Dumbbell size={18} /> 測驗</button>
           <WordChineseVisibilityButton visible={collection.showAllChinese} onToggle={collection.toggleAllChinese} />
           <ActionMenu>
-            <button disabled={!items.length} onClick={() => setExportOpen(true)}><Download size={18} /> 匯出 JSON</button>
+            <button disabled={!items.length} onClick={() => setExportOpen(true)}><Download size={18} /> 匯出單字</button>
             <button disabled={!items.length} onClick={() => setJsonEditOpen(true)}><Pencil size={18} /> 修改 JSON</button>
             <button className="danger-soft" disabled={!items.length} onClick={deleteDateItems}><Trash2 size={18} /> 刪除本日單字</button>
           </ActionMenu>
         </div>
       </div>
-      {exportOpen && <ExportJsonModal items={items} title={`匯出 ${date} JSON`} onClose={() => setExportOpen(false)} />}
+      {exportOpen && (
+        <ExportWordsModal
+          items={items}
+          title={`匯出 ${date} 單字`}
+          scopeLabel={`${date} · ${items.length} 個單字`}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
       {jsonEditOpen && (
         <EditJsonModal
           items={items}

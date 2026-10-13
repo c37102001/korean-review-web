@@ -152,10 +152,13 @@ test('F03 F05 W10 W11: add references, remove membership, and permanently delete
   await page.getByPlaceholder('搜尋這個資料夾中的全部卡片內容').fill('');
   await expect(cards(page)).toHaveCount(2);
   await page.locator('.notebook-actions .action-menu summary').click();
-  await page.getByRole('button', { name: '匯出 JSON' }).click();
+  await page.getByRole('button', { name: '匯出單字' }).click();
   const exportDialog = page.getByRole('dialog');
-  const exported = JSON.parse(await exportDialog.locator('pre').innerText());
+  const exported = JSON.parse(await exportDialog.getByLabel('JSON 匯出內容').innerText());
   expect(exported.data.map((entry) => entry.ko).sort()).toEqual(['바나나', '사과'].sort());
+  await exportDialog.getByRole('button', { name: '一般文字' }).click();
+  await expect(exportDialog.getByLabel('一般文字匯出內容')).toContainText('바나나 香蕉');
+  await expect(exportDialog.getByLabel('一般文字匯出內容')).toContainText('사과 蘋果');
   await exportDialog.getByRole('button', { name: '關閉' }).click();
   await cards(page).filter({ hasText: '사과' }).getByRole('button', { name: '編輯' }).click();
   await expect(page.getByRole('dialog').getByLabel('韓文 *')).toHaveValue('사과');

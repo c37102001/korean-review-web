@@ -85,8 +85,8 @@ test('reader add actions reuse the standard word form with only Korean prefilled
 
   const home = await readFile(new URL('../src/app/HomeCalendarPages.jsx', import.meta.url), 'utf8');
   const library = await readFile(new URL('../src/app/WordLibraryPages.jsx', import.meta.url), 'utf8');
-  assert.match(home, /import \{ EditJsonModal, ExportJsonModal \} from ['"]\.\/WordLibraryPages\.jsx['"]/);
-  assert.match(library, /export function ExportJsonModal\(/);
+  assert.match(home, /import \{ EditJsonModal, ExportWordsModal \} from ['"]\.\/WordLibraryPages\.jsx['"]/);
+  assert.match(library, /export function ExportWordsModal\(/);
   assert.match(library, /export function EditJsonModal\(/);
 });
 

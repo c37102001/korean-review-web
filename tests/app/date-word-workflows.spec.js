@@ -15,10 +15,13 @@ test('C04 W16: date JSON review returns, abandons and confirms only scoped edits
   await expect(page.locator('.word-grid .word-card')).toHaveCount(1);
   const actions = page.locator('.notebook-actions');
   await actions.locator('.action-menu summary').click();
-  await actions.getByRole('button', { name: '匯出 JSON' }).click();
-  const exported = JSON.parse(await page.getByRole('dialog').locator('.json-code').textContent());
+  await actions.getByRole('button', { name: '匯出單字' }).click();
+  const exportDialog = page.getByRole('dialog');
+  const exported = JSON.parse(await exportDialog.getByLabel('JSON 匯出內容').innerText());
   expect(exported.data.map((item) => item.ko)).toEqual(['어제']);
-  await page.getByRole('dialog').getByRole('button', { name: '關閉' }).click();
+  await exportDialog.getByRole('button', { name: '一般文字' }).click();
+  await expect(exportDialog.getByLabel('一般文字匯出內容')).toHaveText('어제 昨天');
+  await exportDialog.getByRole('button', { name: '關閉' }).click();
   await actions.getByRole('button', { name: '新增', exact: true }).click();
   let addDialog = page.getByRole('dialog');
   await expect(addDialog.getByLabel('日期')).toBeDisabled();

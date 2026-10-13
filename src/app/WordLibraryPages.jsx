@@ -289,36 +289,7 @@ function downloadNotebookJson(jsonText) {
 }
 
 
-export function ExportJsonModal({ items, title = '匯出 JSON', onClose }) {
-  const [copied, setCopied] = useState(false);
-  const jsonText = useMemo(() => buildNotebookExport(items), [items]);
-  const copyJson = async () => {
-    await copyText(jsonText);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  };
-
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <div className="modal-panel export-panel">
-        <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
-        <div className="export-head">
-          <div>
-            <span className="eyebrow">Backup</span>
-            <h2>{title}</h2>
-          </div>
-          <div className="actions">
-            <button onClick={copyJson}><Copy size={17} /> {copied ? '已複製' : '複製'}</button>
-            <button className="primary" onClick={() => downloadNotebookJson(jsonText)}><Download size={17} /> 下載</button>
-          </div>
-        </div>
-        <pre className="json-code"><code>{jsonText}</code></pre>
-      </div>
-    </div>
-  );
-}
-
-export function ExportWordsModal({ items, onClose }) {
+export function ExportWordsModal({ items, title = '匯出單字', scopeLabel = `共 ${items.length} 個單字`, onClose }) {
   const [format, setFormat] = useState('json');
   const [copied, setCopied] = useState(false);
   const jsonText = useMemo(() => buildNotebookExport(items), [items]);
@@ -340,8 +311,8 @@ export function ExportWordsModal({ items, onClose }) {
         <button className="modal-close" onClick={onClose} aria-label="關閉"><X size={18} /></button>
         <div className="export-head">
           <div>
-            <span className="eyebrow">篩選結果 · {items.length} 個單字</span>
-            <h2 id="export-words-title">匯出單字</h2>
+            <span className="eyebrow">{scopeLabel}</span>
+            <h2 id="export-words-title">{title}</h2>
           </div>
           <div className="actions">
             <button onClick={copyExport}><Copy size={17} /> {copied ? '已複製' : '複製'}</button>
@@ -725,7 +696,7 @@ export function FolderDetailPage({ folder, folders, store, updateStore, items, q
           <ActionMenu>
             <button onClick={() => setAddExistingOpen(true)}><Link2 size={18} /> 加入現有單字</button>
             <button onClick={() => setRenameOpen(true)}><Pencil size={18} /> {isSystemFolder(folder) ? '編輯標籤' : '編輯資料夾'}</button>
-            <button onClick={() => setExportOpen(true)} disabled={!folderItems.length}><Download size={18} /> 匯出 JSON</button>
+            <button onClick={() => setExportOpen(true)} disabled={!folderItems.length}><Download size={18} /> 匯出單字</button>
             {!isSystemFolder(folder) && <button className="danger-soft" onClick={deleteFolder}><Trash2 size={17} /> 刪除資料夾</button>}
           </ActionMenu>
         </div>
@@ -735,7 +706,14 @@ export function FolderDetailPage({ folder, folders, store, updateStore, items, q
         <SearchScopeControl value={collection.searchScope} onChange={collection.setSearchScope} />
       </div>
       {!!staleIds.length && <button className="text-link" onClick={() => onRemoveWords(folder.id, staleIds, false)}>清理 {staleIds.length} 個不存在的單字 reference</button>}
-      {exportOpen && <ExportJsonModal items={folderItems} title={`匯出 ${folder.name} JSON`} onClose={() => setExportOpen(false)} />}
+      {exportOpen && (
+        <ExportWordsModal
+          items={folderItems}
+          title={`匯出 ${folder.name}`}
+          scopeLabel={`${folder.name} · ${folderItems.length} 個單字`}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
       {renameOpen && <FolderNameModal folder={folder} tagSuggestions={[...new Set(folders.map((entry) => entry.tag).filter(Boolean))]} onSave={onSaveFolder} onClose={() => setRenameOpen(false)} />}
       {addExistingOpen && <AddExistingWordsModal folder={folder} items={items} onAdd={onAddWords} onClose={() => setAddExistingOpen(false)} />}
       {dialogs.addOpen && (
