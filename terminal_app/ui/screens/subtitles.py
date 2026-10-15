@@ -102,7 +102,7 @@ def run_youtube_subtitle_detail(
                 2,
                 (
                     f"YT字幕 | {subtitle_index + 1}/{len(subtitles)} | {subtitle.title}  "
-                    "Esc=列表 5=中文 4/6=上下篇 7/Space=播放暫停 Enter=跳轉 ↑↓=句 H=劃線 E=匯出"
+                    "Esc=列表 5=中文 7/Space=播放暫停 Enter=跳轉 ↑↓=句 H=劃線 E=匯出"
                 ),
                 curses.A_BOLD,
             )
@@ -165,7 +165,7 @@ def run_youtube_subtitle_detail(
                 key = chr(key)
             elif key == curses.KEY_ENTER:
                 key = "\n"
-            key = keypad_shortcut_alias(key, "4567")
+            key = keypad_shortcut_alias(key, "57")
             if key in ("\x1b", 27):
                 return
             if isinstance(key, str) and key.lower() == "h":
@@ -193,14 +193,6 @@ def run_youtube_subtitle_detail(
             if key == "5":
                 show_chinese = not show_chinese
                 message = f"中文：{'顯示' if show_chinese else '隱藏'}"
-            elif key == "4" or key == "6":
-                subtitle_index = (subtitle_index + (-1 if key == "4" else 1)) % len(subtitles)
-                entry_index = 0
-                scroll_offset = 0
-                next_subtitle = subtitles[subtitle_index]
-                next_entries = next_subtitle.entries
-                next_start = next_entries[0].get("startMs") if next_entries else 0
-                message = prepare_audio(next_subtitle, float(next_start or 0))
             elif key in ("7", " "):
                 if audio_player:
                     if audio_player.paused and not audio_player.process and entries and entries[entry_index].get("startMs") is not None:

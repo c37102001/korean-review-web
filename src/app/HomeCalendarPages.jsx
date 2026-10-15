@@ -250,7 +250,7 @@ import '../styles.css';
 import { FONT_SCALE_MAX, FONT_SCALE_MIN, dateLabel, monthTitle } from './AppRuntime.jsx';
 import { OptionalPracticeModal, VoiceSettingsModal } from './AppDialogs.jsx';
 import { EditJsonModal, ExportWordsModal } from './WordLibraryPages.jsx';
-export function HomePage({ store, items, questions, dueQuestionsForToday, wrongQuestionsForToday, optionalPractice, grammarNotes, onPractice, onOpenWrongReview, onAddRecords, onUpdateRecord, onWriteRecords, folders = [], offlineMode, fontScale, onFontScaleChange }) {
+export function HomePage({ store, items, questions, dailyQuestions, dueQuestionsForToday, wrongQuestionsForToday, optionalPractice, grammarNotes, onPractice, onOpenWrongReview, onAddRecords, onUpdateRecord, onWriteRecords, folders = [], offlineMode, fontScale, onFontScaleChange }) {
   const [addOpen, setAddOpen] = useState(false);
   const [practiceCreatorOpen, setPracticeCreatorOpen] = useState(false);
   const [practiceError, setPracticeError] = useState('');
@@ -288,7 +288,7 @@ export function HomePage({ store, items, questions, dueQuestionsForToday, wrongQ
             <button className="primary" disabled={!totalPending} onClick={startNextDailyTask}><Dumbbell size={18} /> 今日測驗</button>
             <button
               type="button"
-              onClick={() => setTomorrowDueCount(dailyReviewQuestions(store, questions, addDays(today, 1)).length)}
+              onClick={() => setTomorrowDueCount(dailyReviewQuestions(store, dailyQuestions, addDays(today, 1)).length)}
               title={tomorrowDueCount === null ? '計算明天每日測驗的題數' : '重新計算明天每日測驗的題數'}
             >
               <CalendarClock size={18} /> {tomorrowDueCount === null ? '查看明日題數' : `明日 ${tomorrowDueCount} 題`}

@@ -48,7 +48,7 @@ test('home starts all due words from one daily test instead of rendering date ta
 
 test('tomorrow due count is calculated only when its home button is pressed', async () => {
   const source = await readFile(new URL('../src/app/HomeCalendarPages.jsx', import.meta.url), 'utf8');
-  assert.match(source, /onClick=\{\(\) => setTomorrowDueCount\(dailyReviewQuestions\(store, questions, addDays\(today, 1\)\)\.length\)\}/);
+  assert.match(source, /onClick=\{\(\) => setTomorrowDueCount\(dailyReviewQuestions\(store, dailyQuestions, addDays\(today, 1\)\)\.length\)\}/);
   assert.match(source, /tomorrowDueCount === null \? '查看明日題數'/);
   assert.doesNotMatch(source, /useEffect\([^)]*setTomorrowDueCount/);
 });

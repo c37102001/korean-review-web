@@ -24,7 +24,7 @@ test('noReview is optional, boolean, and survives normalization and JSON editing
   assert.equal(parseSingleWordEditJson(JSON.stringify(document), original, [original]).noReview, undefined);
 });
 
-test('learned membership and noReview independently exclude term and example questions', () => {
+test('learned membership and noReview only exclude daily review questions', () => {
   const items = [{ id: 'normal' }, { id: 'paused', noReview: true }, { id: 'learned' }];
   const excluded = reviewExcludedWordIds(items, new Set(['learned']));
   assert.deepEqual([...excluded].sort(), ['learned', 'paused']);
@@ -38,6 +38,8 @@ test('learned membership and noReview independently exclude term and example que
     { id: 'grammar-shared-id', itemId: 'paused', kind: 'grammar-example' },
   ];
   assert.deepEqual(eligibleQuestions(questions, excluded).map(({ id }) => id), ['normal-term', 'grammar', 'grammar-shared-id']);
+  assert.deepEqual(eligibleWordItems(items).map(({ id }) => id), ['normal', 'paused', 'learned']);
+  assert.deepEqual(eligibleQuestions(questions).map(({ id }) => id), questions.map(({ id }) => id));
 });
 
 test('replacing an existing word with older JSON preserves noReview unless explicitly changed', () => {

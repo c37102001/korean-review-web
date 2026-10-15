@@ -258,7 +258,7 @@ import { LoadingScreen, OfflineStatusBar } from './AppDialogs.jsx';
 import { CalendarPage, HomePage, NotesPage } from './HomeCalendarPages.jsx';
 import { FolderDetailPage, FoldersPage, NotebookPage, WrongReviewPage } from './WordLibraryPages.jsx';
 import { AppErrorBoundary } from './AppErrorBoundary.jsx';
-import { eligibleQuestions, eligibleWordItems, reviewExcludedWordIds } from '../words/reviewEligibility.js';
+import { eligibleQuestions, reviewExcludedWordIds } from '../words/reviewEligibility.js';
 import { setWordsNoReview } from '../services/wordLibraryService.js';
 export function AppWorkspace({
   user,
@@ -312,6 +312,7 @@ export function AppWorkspace({
   const unfamiliarFolder = useMemo(() => folders.folders.find(isUnfamiliarFolder), [folders.folders]);
   const learnedWordIds = useMemo(() => new Set(learnedFolder?.wordIds || []), [learnedFolder]);
   const excludedWordIds = useMemo(() => reviewExcludedWordIds(items, learnedWordIds), [items, learnedWordIds]);
+  const manualQuestions = questions;
   const unfamiliarWordIds = useMemo(() => new Set(unfamiliarFolder?.wordIds || []), [unfamiliarFolder]);
   const dailyQuestions = useMemo(() => (
     eligibleQuestions(reviewQuestions(questions), excludedWordIds)
@@ -345,9 +346,9 @@ export function AppWorkspace({
   ]);
 
   const startPractice = (sourceQuestions, label, options = {}) => {
-    const eligible = eligibleQuestions(sourceQuestions, excludedWordIds);
+    const eligible = sourceQuestions;
     if (!eligible.length) {
-      setSessionNotice('目前沒有可測驗的題目；「不複習」與「已學習」單字不會出題。');
+      setSessionNotice('目前沒有可測驗的題目。');
       return;
     }
     setSessionNotice('');
@@ -355,9 +356,9 @@ export function AppWorkspace({
     navChild('practice');
   };
   const startStudy = (sourceItems, label) => {
-    const eligible = eligibleWordItems(sourceItems, excludedWordIds);
+    const eligible = sourceItems;
     if (!eligible.length) {
-      setSessionNotice('目前沒有可學習的單字；「不複習」與「已學習」單字不會加入學習。');
+      setSessionNotice('目前沒有可學習的單字。');
       return;
     }
     setSessionNotice('');
@@ -466,10 +467,10 @@ export function AppWorkspace({
   }
 
   const views = {
-    home: <HomePage store={store} items={items} questions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} optionalPractice={optionalPractice} grammarNotes={grammar.notes} onPractice={startPractice} onOpenWrongReview={() => navChild('wrongReview')} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} offlineMode={offlineMode} fontScale={fontScale} onFontScaleChange={setFontScale} />,
+    home: <HomePage store={store} items={items} questions={manualQuestions} dailyQuestions={dailyQuestions} dueQuestionsForToday={todayDailyQuestions} wrongQuestionsForToday={todayWrongQuestions} optionalPractice={optionalPractice} grammarNotes={grammar.notes} onPractice={startPractice} onOpenWrongReview={() => navChild('wrongReview')} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onWriteRecords={updateLearningRecords} folders={folders.folders} offlineMode={offlineMode} fontScale={fontScale} onFontScaleChange={setFontScale} />,
     calendar: <CalendarPage store={store} items={items} selectedDate={selectedDate} setSelectedDate={setSelectedDate} onOpenNotes={() => navChild('dateNotes')} />,
     dateNotes: <NotesPage store={store} updateStore={updateStore} items={items.filter((item) => item.date === selectedDate)} questions={questions.filter((q) => q.date === selectedDate)} date={selectedDate} allItems={items} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onSetNoReview={updateWordsNoReview} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
-    study: <StudyPage store={store} updateStore={updateStore} set={studySet || createStudySession(eligibleWordItems(items, excludedWordIds), '全部內容')} allItems={items} folders={folders.folders} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
+    study: <StudyPage store={store} updateStore={updateStore} set={studySet || createStudySession(items, '全部內容')} allItems={items} folders={folders.folders} onUpdateRecord={updateLearningRecord} onBack={pageStack.length ? goUp : null} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
     practice: <PracticePage store={store} updateStore={updateStore} set={practiceSet || createDailyReviewSession(todayDailyQuestions)} allItems={items} folders={folders.folders} onUpdateRecord={updateLearningRecord} learnedWordIds={learnedWordIds} unfamiliarWordIds={unfamiliarWordIds} onToggleLearned={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(learnedFolder?.id || SYSTEM_LEARNED_FOLDER_ID, [itemId])} onToggleUnfamiliar={(itemId, remove) => (remove ? folders.removeWords : folders.addWords)(unfamiliarFolder?.id || SYSTEM_UNFAMILIAR_FOLDER_ID, [itemId])} />,
     notebook: <NotebookPage store={store} updateStore={updateStore} items={items} questions={questions} folders={folders.folders} onAssignFolders={folders.addWordsToFolders} onCreateFolderAndAssign={folders.createFolderAndAssign} onSetNoReview={updateWordsNoReview} onPractice={startPractice} onStudy={startStudy} onAddRecords={addLearningRecords} onUpdateRecord={updateLearningRecord} onUpdateRecords={updateLearningRecords} onDeleteRecord={deleteLearningRecordFromStore} onDeleteRecords={deleteLearningRecordsFromStore} />,
     wrongReview: <WrongReviewPage store={store} updateStore={updateStore} questions={todayWrongQuestions} allItems={items} folders={folders.folders} onPractice={startPractice} onStudy={startStudy} onUpdateRecord={updateLearningRecord} />,

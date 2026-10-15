@@ -246,7 +246,7 @@ test('P08: a failed optional answer keeps the question available and succeeds on
   assertNoProductionRequests();
 });
 
-test('P06: an existing optional word task drops a word marked no-review before it starts', async ({ page, request }) => {
+test('P06: an existing optional word task keeps a word marked no-review', async ({ page, request }) => {
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'optional-eligibility@example.test');
   await seedWord(page, request, 'eligible-a', '가다', '去', { date: '2026-09-20' });
@@ -263,9 +263,9 @@ test('P06: an existing optional word task drops a word marked no-review before i
   await page.getByRole('button', { name: '儲存修改' }).click();
   await expect.poll(async () => (await readDocument(page, request, 'records', 'eligible-a'))?.fields?.item?.mapValue?.fields?.noReview?.booleanValue).toBe(true);
   await page.getByRole('button', { name: '韓文筆記' }).click();
-  await expect(page.locator('.task-card').filter({ hasText: '單字練習' })).toContainText('剩餘 1 題');
+  await expect(page.locator('.task-card').filter({ hasText: '單字練習' })).toContainText('剩餘 2 題');
   await page.locator('.task-card').filter({ hasText: '單字練習' }).getByRole('button', { name: '開始' }).click();
-  await expect(page.locator('.quiz-meta')).toContainText('1 / 1');
-  await expect(page.locator('.practice-page .prompt h1')).toHaveText('나다');
+  await expect(page.locator('.quiz-meta')).toContainText('1 / 2');
+  await expect(page.locator('.practice-page .prompt h1')).toHaveText(/^(가다|나다)$/);
   assertNoProductionRequests();
 });

@@ -135,6 +135,7 @@ class OptionalPracticeTests(unittest.TestCase):
 
     def test_terminal_can_create_a_listening_task(self):
         card, term = self.card_and_question()
+        card.no_review = True
         example = terminal.Question("example", card.id, card.date, "example", "날씨가 좋아요.", "天氣很好。", card)
         review = {}
 
@@ -144,11 +145,46 @@ class OptionalPracticeTests(unittest.TestCase):
 
         with patch.object(terminal, "menu", return_value="listening"):
             created = terminal.create_optional_practice(
-                object(), [card], [term, example], [], {"learnedWordIds": []}, review,
+                object(), [card], [term, example], [], {"learnedWordIds": [card.id]}, review,
                 Client(), terminal.AuthSession("email", "uid", "token", "refresh"),
             )
         self.assertTrue(created)
         self.assertEqual(review["optionalPractice"]["tasks"][0]["ids"], ["example"])
+
+    def test_youtube_detail_ignores_four_and_six_instead_of_switching_subtitles(self):
+        first = terminal.YoutubeSubtitle(
+            "first", "第一篇", "", "json",
+            [{"id": "first-entry", "ko": "첫 문장", "zh": "第一句", "startMs": None}],
+        )
+        second = terminal.YoutubeSubtitle(
+            "second", "第二篇", "", "json",
+            [{"id": "second-entry", "ko": "둘째 문장", "zh": "第二句", "startMs": None}],
+        )
+
+        class Screen:
+            def erase(self):
+                pass
+
+            def getmaxyx(self):
+                return 24, 100
+
+            def keypad(self, _enabled):
+                pass
+
+        headings = []
+        with (
+            patch("terminal_app.ui.screens.subtitles.set_cursor_visibility"),
+            patch("terminal_app.ui.screens.subtitles.update_curses_screen"),
+            patch("terminal_app.ui.screens.subtitles.draw_line", side_effect=lambda _screen, row, _column, text, *_args: headings.append(text) if row == 1 else None),
+            patch("terminal_app.ui.screens.subtitles.read_terminal_key", side_effect=["6", "4", "\x1b"]),
+        ):
+            terminal.run_youtube_subtitle_detail(
+                Screen(), [first, second], 0, object(), terminal.AuthSession("email", "uid", "token", "refresh")
+            )
+
+        self.assertTrue(headings)
+        self.assertTrue(all("第一篇" in heading for heading in headings))
+        self.assertTrue(all("4/6=上下篇" not in heading for heading in headings))
 
     def test_terminal_runs_and_completes_a_web_created_task(self):
         card, question = self.card_and_question()

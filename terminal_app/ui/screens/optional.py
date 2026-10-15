@@ -29,14 +29,14 @@ def optional_word_practice_setup(
 ) -> Optional[Tuple[List[Card], Dict[str, Any]]]:
     config: Dict[str, Any] = {
         "query": "", "search_scope": "all", "levels": set(), "folder_ids": set(),
-        "show_learned": False, "sort": "latest", "count": 50,
+        "show_learned": True, "sort": "latest", "count": 50,
         "direction": "ko-zh", "answer_mode": "self-grade",
     }
     level_options = list(FAMILIARITY_FILTER_OPTIONS)
     folders = list(state.get("folders") or [])
     row = 0
     while True:
-        active_cards = [card for card in filtered_notebook_cards(cards, questions, state, config) if not card.no_review and card.id not in set(state.get("learnedWordIds") or [])]
+        active_cards = filtered_notebook_cards(cards, questions, state, config)
         level_summary = "全部" if not config["levels"] else f"已選 {len(config['levels'])} 項"
         folder_summary = "全部" if not config["folder_ids"] else f"已選 {len(config['folder_ids'])} 項"
         rows = [
@@ -50,7 +50,7 @@ def optional_word_practice_setup(
         ]
         stdscr.erase()
         draw_line(stdscr, 1, 2, "新增練習 | 單字練習", curses.A_BOLD)
-        draw_line(stdscr, 2, 2, "↑↓=項目 Enter=設定/新增 Esc=返回 · 已學習單字固定排除", curses.A_DIM)
+        draw_line(stdscr, 2, 2, "↑↓=項目 Enter=設定/新增 Esc=返回", curses.A_DIM)
         for index, label in enumerate(rows):
             draw_line(stdscr, 3 + index, 2, ("» " if index == row else "  ") + label, curses.A_BOLD if index == row else 0)
         update_curses_screen(stdscr)
@@ -107,7 +107,6 @@ def create_optional_practice(
         kind = menu(stdscr, "新增練習 | 選擇類型", [(key, label) for key, label in OPTIONAL_PRACTICE_LABELS.items()])
         if not kind:
             return False
-        learned_ids = set(state.get("learnedWordIds") or []) | {card.id for card in cards if card.no_review}
         task: Dict[str, Any] = {
             "id": str(uuid.uuid4()), "kind": kind, "title": OPTIONAL_PRACTICE_LABELS[kind],
             "direction": "ko-zh", "createdAt": utc_now_iso(),
@@ -125,7 +124,7 @@ def create_optional_practice(
         elif kind in ("listening", "reading"):
             pool_ids = [
                 question.id for question in questions
-                if question.kind == "example" and question.item_id not in learned_ids
+                if question.kind == "example"
             ]
             count = 10
         else:
@@ -171,13 +170,10 @@ def run_optional_practice_menu(
             note for note in grammar_notes if note.category == NOTE_CATEGORY_GRAMMAR
         )
         question_by_id = {question.id: question for question in [*questions, *grammar_questions]}
-        learned_ids = set(state.get("learnedWordIds") or []) | {card.id for card in cards if card.no_review}
         task_questions: Dict[str, List[Question]] = {}
         for task in optional_state["tasks"]:
             answered = set(task.get("answeredIds") or [])
             active = [question_by_id[item] for item in (task.get("ids") or []) if item not in answered and item in question_by_id]
-            if task.get("kind") != "grammar":
-                active = [question for question in active if question.item_id not in learned_ids]
             task_questions[str(task.get("id"))] = active
         options = [("create", "新增練習")]
         options.extend(
@@ -217,10 +213,8 @@ def run_optional_practice_menu(
                 for item in (current_task.get("ids") or [])
                 if item not in answered and item in question_by_id
             ]
-            if current_task.get("kind") != "grammar":
-                active_questions = [question for question in active_questions if question.item_id not in learned_ids]
             if not active_questions:
-                wait_message(stdscr, "沒有可練習題目", "題目可能已刪除或已加入「已學習」，請移除此題組後重新新增。")
+                wait_message(stdscr, "沒有可練習題目", "題目可能已刪除，請移除此題組後重新新增。")
                 continue
 
             def save_result(question: Question, correct: bool) -> None:

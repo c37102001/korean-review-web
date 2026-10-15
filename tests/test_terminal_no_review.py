@@ -1,3 +1,4 @@
+import curses
 import unittest
 from unittest.mock import patch
 
@@ -25,6 +26,63 @@ class NoReviewTests(unittest.TestCase):
         self.assertEqual([question.id for question in daily_due_questions(state, questions, "2026-09-21")], ["active"])
         recognition = daily_recognition_questions(state, questions, "2026-09-21")
         self.assertEqual([question.id for question in recognition], ["active-example"])
+
+    def test_no_review_and_learned_cards_remain_in_manual_study_and_practice(self):
+        paused = terminal.Card("paused", "2026-09-19", "멈춤", "暫停", no_review=True)
+        learned = terminal.Card("learned", "2026-09-19", "학습", "學習")
+        questions = [
+            terminal.Question(card.id, card.id, card.date, "term", card.ko, card.zh, card)
+            for card in (paused, learned)
+        ]
+        state = {"learnedWordIds": ["learned"]}
+
+        class Screen:
+            def erase(self):
+                pass
+
+            def getmaxyx(self):
+                return 24, 100
+
+            def keypad(self, _enabled):
+                pass
+
+            def addstr(self, *_args):
+                pass
+
+        study_lines = []
+        with (
+            patch("terminal_app.ui.screens.study.set_cursor_visibility"),
+            patch("terminal_app.ui.screens.study.clear_with_default_background"),
+            patch("terminal_app.ui.screens.study.update_curses_screen"),
+            patch("terminal_app.ui.screens.study.is_auto_audio_enabled", return_value=False),
+            patch("terminal_app.ui.screens.study.draw_line", side_effect=lambda _screen, _row, _column, text, *_args: study_lines.append(text)),
+            patch("terminal_app.ui.screens.study.read_terminal_key", side_effect=["6", "\x1b"]),
+        ):
+            terminal.run_study(Screen(), "手動學習", [paused, learned], state, object(), object())
+        self.assertTrue(any("1/2" in line for line in study_lines))
+        self.assertTrue(any("2/2" in line for line in study_lines))
+
+        practice_lines = []
+        with (
+            patch("terminal_app.ui.screens.practice_session.set_cursor_visibility"),
+            patch("terminal_app.ui.screens.practice_session.update_curses_screen"),
+            patch("terminal_app.ui.screens.practice_session.is_auto_audio_enabled", return_value=False),
+            patch("terminal_app.ui.screens.practice_session.curses.has_colors", return_value=False),
+            patch("terminal_app.ui.screens.practice_session.draw_line", side_effect=lambda _screen, _row, _column, text, *_args: practice_lines.append(text)),
+            patch("terminal_app.ui.screens.practice_session.read_terminal_key", return_value="\x1b"),
+        ):
+            completed = terminal.run_practice(
+                Screen(),
+                "手動測驗",
+                questions,
+                {
+                    "direction": "ko-zh", "answer_mode": "self-grade", "source": "term",
+                    "starred": False, "random": False, "record_results": False,
+                },
+                state, object(), object(),
+            )
+        self.assertFalse(completed)
+        self.assertTrue(any("1/2" in line for line in practice_lines))
 
     def test_terminal_learned_write_sets_no_review_atomically(self):
         client = terminal.FirebaseClient("key", "project")

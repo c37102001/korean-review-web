@@ -12,7 +12,7 @@ async function storedWord(page, request, id) {
   return (await response.json()).fields.item.mapValue.fields;
 }
 
-test('noReview can be batch-set, edited, and never enters study or practice', async ({ page, request }) => {
+test('noReview can be batch-set and edited, stays out of daily review, and remains available manually', async ({ page, request }) => {
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'no-review@example.test');
   for (const [id, ko] of [['first', '가다'], ['second', '나다'], ['third', '다니다']]) {
@@ -45,10 +45,10 @@ test('noReview can be batch-set, edited, and never enters study or practice', as
   await expect.poll(async () => (await storedWord(page, request, 'second')).noReview?.booleanValue).toBe(true);
 
   await page.locator('.notebook-actions').getByRole('button', { name: '學習' }).click();
-  await expect(page.locator('.flash-face.front > span').first()).toHaveText('1 / 2');
+  await expect(page.locator('.flash-face.front > span').first()).toHaveText('1 / 3');
   await page.getByRole('button', { name: '回到上一層' }).click();
   await page.locator('.notebook-actions').getByRole('button', { name: '測驗' }).click();
-  await expect(page.locator('.practice-start')).toContainText('2 題可測驗');
+  await expect(page.locator('.practice-start')).toContainText('3 題可測驗');
   await page.getByRole('button', { name: '韓文筆記' }).click();
   await expect(page.getByText('2 題單字待複習', { exact: false })).toBeVisible();
   assertNoProductionRequests();
@@ -81,6 +81,16 @@ test('adding a word to the learned folder sets noReview without erasing its mean
   await page.locator('.folder-assignment-modal').getByRole('button', { name: '加入所選' }).click();
   await expect.poll(async () => (await storedWord(page, request, 'batch-target')).noReview?.booleanValue).toBe(true);
   expect((await storedWord(page, request, 'batch-target')).meanings.arrayValue.values[0].mapValue.fields.zh.stringValue).toBe('閱讀');
+  await page.locator('.notebook-actions .action-menu summary').click();
+  await page.locator('.learned-visibility-button').click();
+  await page.locator('.notebook-actions').getByRole('button', { name: '學習' }).click();
+  await expect(page.locator('.flash-face.front > span').first()).toHaveText('1 / 2');
+  await page.getByRole('button', { name: '回到上一層' }).click();
+  await page.locator('.notebook-actions .action-menu summary').click();
+  await page.locator('.learned-visibility-button').click();
+  await page.locator('.notebook-actions').getByRole('button', { name: '測驗' }).click();
+  await expect(page.locator('.practice-start')).toContainText('2 題可測驗');
+  await page.getByRole('button', { name: '回到上一層' }).click();
   await page.locator('.notebook-actions .action-menu summary').click();
   await page.locator('.learned-visibility-button').click();
   await page.getByRole('checkbox', { name: '選取 읽다' }).check();

@@ -4,7 +4,7 @@ import { progressShardId } from '../../src/review-engine/store.js';
 
 test.beforeEach(async ({ request }) => resetTestData(request));
 
-test('W13 C03 H07: folder, date and weakest entry points pass only eligible scoped words', async ({ page, request }) => {
+test('W13 C03 H07: manual entry points keep scoped no-review words', async ({ page, request }) => {
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'session-entries@example.test');
   await seedWord(page, request, 'entry-a', '가다', '去', { date: '2026-09-15' });
@@ -20,11 +20,11 @@ test('W13 C03 H07: folder, date and weakest entry points pass only eligible scop
   await page.locator('.folder-card').filter({ hasText: '旅遊' }).click();
   await expect(page.locator('.word-grid .word-card')).toHaveCount(2);
   await page.locator('.notebook-actions').getByRole('button', { name: '學習' }).click();
-  await expect(page.locator('.flash-face.front > span').first()).toHaveText('1 / 1');
-  await expect(page.locator('.flash-face.front')).toContainText('가다');
+  await expect(page.locator('.flash-face.front > span').first()).toHaveText('1 / 2');
+  await expect(page.locator('.flash-face.front')).toContainText(/(가다|오다)/);
   await page.locator('.study-back-button').click();
   await page.locator('.notebook-actions').getByRole('button', { name: '測驗' }).click();
-  await expect(page.locator('.practice-start')).toContainText('1 題可測驗');
+  await expect(page.locator('.practice-start')).toContainText('2 題可測驗');
   await page.getByRole('button', { name: '日曆' }).click();
   await page.locator('.calendar-grid button.day:not(.muted)').nth(14).click();
   await page.getByRole('button', { name: '查看日期' }).click();
@@ -44,10 +44,10 @@ test('W13 C03 H07: folder, date and weakest entry points pass only eligible scop
   await page.locator('.notebook-actions').getByRole('button', { name: '測驗' }).click();
   await expect(page.locator('.practice-start')).toContainText('1 題可測驗');
   await page.getByRole('button', { name: '韓文筆記' }).click();
-  await expect(page.locator('.weak-practice-panel button')).toContainText('3 題');
+  await expect(page.locator('.weak-practice-panel button')).toContainText('4 題');
   await page.locator('.weak-practice-panel button').click();
-  await expect(page.locator('.quiz-meta')).toContainText('1 / 3 · 韓翻中');
-  for (let answered = 0; answered < 3; answered += 1) {
+  await expect(page.locator('.quiz-meta')).toContainText('1 / 4 · 韓翻中');
+  for (let answered = 0; answered < 4; answered += 1) {
     await page.locator('.practice-page').getByRole('button', { name: '公佈答案' }).click();
     await page.locator('.practice-decision-panel').getByRole('button', { name: '答對' }).click();
   }
