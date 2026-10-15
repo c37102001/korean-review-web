@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import terminal_review_practice as terminal
 from terminal_app.domain.content import normalize_reading_tests
-from terminal_app.ui.screens.highlights import highlight_contexts, highlight_export_text, highlight_lines, render_highlight_markers
+from terminal_app.ui.screens.highlights import highlight_contexts, highlight_export_text, highlight_lines, render_highlight_markers, toggle_whole_entry_highlight
 
 
 def reading_test(learned=False, serial_number=0):
@@ -67,6 +67,20 @@ class TerminalReadingTests(unittest.TestCase):
             {'text': '단어', 'sentence': '다음 단어가 있는 문장입니다!'},
         ])
         self.assertEqual(highlight_export_text(highlights, entries), '단어\n다음 단어가 있는 문장입니다!')
+
+    def test_whole_entry_highlight_replaces_partial_highlights_and_toggles_off(self):
+        entry = {'id': 'line', 'ko': '문장 전체'}
+        partial = [{'id': 'partial', 'entryId': 'line', 'text': '문장', 'start': 0, 'end': 2}]
+
+        enabled_highlights, enabled = toggle_whole_entry_highlight(entry, partial)
+        self.assertTrue(enabled)
+        self.assertEqual(enabled_highlights, [{
+            'id': 'terminal-line-0-5', 'entryId': 'line', 'text': '문장 전체', 'start': 0, 'end': 5,
+        }])
+
+        disabled_highlights, enabled = toggle_whole_entry_highlight(entry, enabled_highlights)
+        self.assertFalse(enabled)
+        self.assertEqual(disabled_highlights, [])
 
     def test_chinese_is_revealed_only_after_submitting(self):
         test = reading_test()

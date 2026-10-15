@@ -1,7 +1,7 @@
 
 from terminal_app.runtime import *
 from terminal_app.ui.curses_helpers import *
-from terminal_app.ui.screens.highlights import render_highlight_markers, run_highlight_editor, run_highlight_export
+from terminal_app.ui.screens.highlights import render_highlight_markers, run_highlight_editor, run_highlight_export, toggle_whole_entry_highlight
 
 
 def _update_cached_subtitle_highlights(uid: str, subtitle_id: str, highlights: List[Dict[str, Any]]) -> None:
@@ -102,7 +102,7 @@ def run_youtube_subtitle_detail(
                 2,
                 (
                     f"YT字幕 | {subtitle_index + 1}/{len(subtitles)} | {subtitle.title}  "
-                    "Esc=列表 5=中文 7/Space=播放暫停 Enter=跳轉 ↑↓=句 H=劃線 E=匯出"
+                    "Esc=列表 5=中文 7/Space=播放暫停 Enter=跳轉 ↑↓=句 H=選字 G=整句 E=匯出"
                 ),
                 curses.A_BOLD,
             )
@@ -168,16 +168,29 @@ def run_youtube_subtitle_detail(
             key = keypad_shortcut_alias(key, "57")
             if key in ("\x1b", 27):
                 return
+
+            def save_highlights(next_highlights):
+                client.set_content_highlights(session, "ytSubtitles", subtitle.id, next_highlights)
+                subtitle.highlights = _clone_json(next_highlights)
+                if not client.offline_mode:
+                    _update_cached_subtitle_highlights(session.uid, subtitle.id, next_highlights)
+
             if isinstance(key, str) and key.lower() == "h":
                 if not entries:
                     message = "這篇字幕沒有可劃線的內容。"
                     continue
-                def save_highlights(next_highlights):
-                    client.set_content_highlights(session, "ytSubtitles", subtitle.id, next_highlights)
-                    subtitle.highlights = _clone_json(next_highlights)
-                    if not client.offline_mode:
-                        _update_cached_subtitle_highlights(session.uid, subtitle.id, next_highlights)
                 subtitle.highlights = run_highlight_editor(stdscr, entries, subtitle.highlights, save_highlights, entry_index)
+                continue
+            if isinstance(key, str) and key.lower() == "g":
+                if not entries or not str(entries[entry_index].get("ko") or ""):
+                    message = "目前句子沒有可劃線的內容。"
+                    continue
+                next_highlights, enabled = toggle_whole_entry_highlight(entries[entry_index], subtitle.highlights)
+                try:
+                    save_highlights(next_highlights)
+                    message = f"已{'劃線' if enabled else '取消劃線'}第 {entry_index + 1} 句。"
+                except RuntimeError as exc:
+                    message = str(exc)
                 continue
             if key in (curses.KEY_UP, curses.KEY_DOWN):
                 if entries:

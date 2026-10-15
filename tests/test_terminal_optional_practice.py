@@ -186,6 +186,49 @@ class OptionalPracticeTests(unittest.TestCase):
         self.assertTrue(all("第一篇" in heading for heading in headings))
         self.assertTrue(all("4/6=上下篇" not in heading for heading in headings))
 
+    def test_youtube_detail_g_toggles_the_whole_current_sentence_highlight(self):
+        subtitle = terminal.YoutubeSubtitle(
+            "first", "第一篇", "", "json",
+            [{"id": "first-entry", "ko": "첫 문장", "zh": "第一句", "startMs": None}],
+        )
+
+        class Screen:
+            def erase(self):
+                pass
+
+            def getmaxyx(self):
+                return 24, 100
+
+            def keypad(self, _enabled):
+                pass
+
+        class Client:
+            offline_mode = True
+
+            def __init__(self):
+                self.saved = []
+
+            def set_content_highlights(self, _session, _collection, _content_id, highlights):
+                self.saved.append(highlights)
+
+        client = Client()
+        with (
+            patch("terminal_app.ui.screens.subtitles.set_cursor_visibility"),
+            patch("terminal_app.ui.screens.subtitles.update_curses_screen"),
+            patch("terminal_app.ui.screens.subtitles.draw_line"),
+            patch("terminal_app.ui.screens.subtitles.read_terminal_key", side_effect=["g", "G", "\x1b"]),
+        ):
+            terminal.run_youtube_subtitle_detail(
+                Screen(), [subtitle], 0, client, terminal.AuthSession("email", "uid", "token", "refresh")
+            )
+
+        self.assertEqual(client.saved[0], [{
+            "id": "terminal-first-entry-0-4", "entryId": "first-entry",
+            "text": "첫 문장", "start": 0, "end": 4,
+        }])
+        self.assertEqual(client.saved[1], [])
+        self.assertEqual(subtitle.highlights, [])
+
     def test_terminal_runs_and_completes_a_web_created_task(self):
         card, question = self.card_and_question()
         review = {"optionalPractice": {

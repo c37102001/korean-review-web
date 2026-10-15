@@ -55,6 +55,33 @@ def render_highlight_markers(text: str, entry_id: str, highlights: List[Dict[str
     return rendered
 
 
+def toggle_whole_entry_highlight(
+    entry: Dict[str, str],
+    highlights: List[Dict[str, Any]],
+) -> tuple[List[Dict[str, Any]], bool]:
+    entry_id = str(entry.get("id") or "")
+    text = str(entry.get("ko") or "")
+    if not entry_id or not text:
+        return highlights, False
+    whole_entry_exists = any(
+        item.get("entryId") == entry_id
+        and item.get("start") == 0
+        and item.get("end") == len(text)
+        for item in highlights
+    )
+    without_entry = [item for item in highlights if item.get("entryId") != entry_id]
+    if whole_entry_exists:
+        return without_entry, False
+    whole_entry = {
+        "id": f"terminal-{entry_id}-0-{len(text)}",
+        "entryId": entry_id,
+        "text": text,
+        "start": 0,
+        "end": len(text),
+    }
+    return [*without_entry, whole_entry], True
+
+
 def run_highlight_export(stdscr: curses.window, highlights: List[Dict[str, Any]], entries: List[Dict[str, str]]) -> None:
     contexts = highlight_contexts(highlights, entries)
     lines = [line for index, item in enumerate(contexts) for line in ([item["text"], item["sentence"]] + ([""] if index < len(contexts) - 1 else []))]
