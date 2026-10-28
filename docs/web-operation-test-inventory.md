@@ -76,6 +76,7 @@
 | F03 | 開資料夾、搜尋／切範圍、選取本頁／全部、加入現有單字（搜尋、複選、確認）：跨頁選取與回讀後成員正確。 | 通：`tests/app/folder-workflows.spec.js`，`F03 F05 W10 W11: add references, remove membership, and permanently delete a card`、`F03: select all chooses every filtered word across folder pages` |
 | F04 | 編輯資料夾 tag／名稱、刪除資料夾：系統資料夾限制與一般資料夾刪除語意正確，單字仍保留。 | 通：`tests/app/folder-workflows.spec.js`，`F01 F02 F04: create, rename, tag, pin, collapse and delete preserve words` |
 | F05 | 在資料夾詳情編輯卡片、移出卡片、批次操作與清理失效 reference：只影響指定資料夾或指定卡片。 | 通：`tests/app/folder-workflows.spec.js`，`F05 W11: stale folder references can be removed and single-card deletion clears memberships`、`F03 F05 W10 W11: add references, remove membership, and permanently delete a card` |
+| F06 | 勾選／全選資料夾、批次隱藏、顯示隱藏與取消隱藏：預設排除隱藏資料夾，重新載入後狀態仍保存。 | 通：`tests/app/folder-workflows.spec.js`，`F06: select all folders, hide them, reveal hidden folders and restore one` |
 | E01 | 手動新增：日期、韓文、七種詞性、活用形式、中文意思、句型、成對例句、Markdown 筆記與關聯詞可輸入並保存；必填錯誤阻止寫入。 | 通：`tests/app/word-editor-workflows.spec.js`，`H03 E01 E02 W12: home manual editor saves forms, meanings and variants and rejects incomplete input`、`E02 E03: manual edit changes folder membership and related words without deleting the card` |
 | E02 | 新增／刪除多個意思、加入／移除活用形式、搜尋／加入／移除關聯詞：保存後結構完整，最後一個意思不可刪空。 | 通：`tests/app/word-editor-workflows.spec.js`，`H03 E01 E02 W12: home manual editor saves forms, meanings and variants and rejects incomplete input`、`E02 E03: manual edit changes folder membership and related words without deleting the card`、`E02: removing a variant and an extra meaning preserves the final meaning` |
 | E03 | 編輯既有單字的表單、資料夾複選勾選／取消：回讀後內容與 membership 一致，原作答進度不遺失。 | 通：`tests/app/word-editor-workflows.spec.js`，`E02 E03: manual edit changes folder membership and related words without deleting the card`、`E03 E04: editing JSON changes only the selected word and folders, preserving review progress` |
@@ -112,6 +113,7 @@
 | N02 | 兩類筆記新增、編輯 tagged 文字、改分類、取消／儲存：解析後內容與分類回讀正確，錯誤格式不寫入。 | 通：`note-workflows.spec.js`「N01 N02: create both note types, search, collapse, inspect, edit category, and reload」「N01 N02: invalid input and rejected saves retain content and can retry」 |
 | N03 | 釘選／取消釘選、刪除與確認取消：分類內置頂，回讀後狀態正確。 | 通：`note-workflows.spec.js`「N03: pin and delete honor persistence, cancel, and tombstones」 |
 | N04 | 勾選筆記、選取／取消本頁、清除，以及從單篇／多篇開始例句練習：題目只來自選取內容。 | 通：`note-workflows.spec.js`「N04: single and selected note practice use exactly the chosen examples」 |
+| N05 | 跨分類全選筆記、批次隱藏、顯示隱藏及取消隱藏：兩類筆記皆保留內容與遠端狀態，重新載入後可見性正確。 | 通：`tests/app/note-workflows.spec.js`，`N05: select all notes, hide them, reveal hidden notes and restore them` |
 | Y01 | 字幕列表搜尋、標籤收合、新增／編輯／刪除、已學習及隱藏已學習：重新進入後內容、分類與可見性正確。 | 通：`tests/app/subtitle-workflows.spec.js`，`Y01 Y02: JSON and SRT subtitles persist tags, learned visibility, search, editing, validation, and deletion` |
 | Y02 | 新增／編輯字幕時切換 JSON／SRT、設定 YouTube URL 與 tag，格式錯誤顯示提示且不寫入。 | 通：`tests/app/subtitle-workflows.spec.js`，`Y01 Y02: JSON and SRT subtitles persist tags, learned visibility, search, editing, validation, and deletion` |
 | Y03 | 讀者頁開外部 YouTube、播放／暫停、點擊或鍵盤 Enter／空白選 SRT 句子跳時間、播放中提示與字幕置中捲動；無影片時有合理 fallback。 | 通：`tests/app/subtitle-workflows.spec.js`，`Y03 Y04 Y05: the stubbed player synchronizes SRT and selected text creates a highlighted word`、`Y03: a subtitle without a video shows its fallback and keeps sentence cards non-seekable`、`Y03: a YouTube iframe API failure is reported without blanking the reader` |
@@ -134,7 +136,7 @@
 ## 現有測試證據與執行規則
 
 - 局部證據索引：導覽／頁面配置見 `tests/app-architecture.test.mjs`；單字集合及卡片見 `tests/word-collection.test.mjs`、`tests/word-presentation.test.mjs`、`tests/visual/core-surfaces.spec.js`；匯入與表單見 `tests/word-import.test.mjs`、`tests/word-import-form.test.mjs`、`tests/visual/word-edit.spec.js`、`tests/visual/word-pos-import.spec.js`；學習與測驗見 `tests/session-model.test.mjs`、`tests/session-interactions.test.mjs`、`tests/review-engine.test.mjs`、`tests/optional-practice.test.mjs`；筆記／字幕見 `tests/import-flow.test.mjs`；閱讀見 `tests/reading-model.test.mjs`；離線／資料庫見 `tests/offline-support.test.mjs`、`tests/emulator/firestore-sync.test.mjs`。這是現有保護的索引，**不是**把整組 ID 判為完成的證據。
-- `tests/visual/core-surfaces.spec.js` 的 24 個快照保留：它們驗證不同寬度的外觀與少量局部互動，**不計入**上表保存／導覽操作的完成數。`word-edit.spec.js` 儲存未變更的內容；`word-pos-import.spec.js` 使用 mock 寫入。兩者都應保留，完成欄位要等更完整測試才可標 `通`。
+- `tests/visual/core-surfaces.spec.js` 的 30 個快照保留：包含資料夾總覽及展開後筆記，驗證不同寬度的外觀與少量局部互動，**不計入**上表保存／導覽操作的完成數。本機與 CI 使用同一容器基準；原本重複的本機環境快照已停用。`word-edit.spec.js` 儲存未變更的內容；`word-pos-import.spec.js` 使用 mock 寫入。兩者繼續保留，完成欄位需依實際 App 測試判定。維護方式見 [測試穩定性規範](test-reliability-guideline.md)。
 - `tests/emulator/firestore-sync.test.mjs` 驗證規則、同步與寫入合約；`tests/import-flow.test.mjs`、`tests/review-engine.test.mjs` 等驗證純邏輯。它們補足真實 App 流程不適合窮舉的資料層邊界，但不能取代按鈕接線測試。
 - 真實 App Playwright flow 共用測試登入、seed、重新進入、失敗注入與 Emulator 回讀工具，並把相關 ID 放進同一條合理的使用者旅程。後續應沿用這些工具，不要用新增全頁快照取代行為斷言。
 - 每個新增或改動的前端互動，PR／commit 的檢查項目為：清冊 ID（或新增 ID）、預期行為、驗證該操作的測試檔與 test 名稱、錯誤狀態是否需要補測。舊測試只有在有等價替代且確認原保護效果保留時才可移除。

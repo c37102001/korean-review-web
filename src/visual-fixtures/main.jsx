@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { AppErrorBoundary } from '../app/AppErrorBoundary.jsx';
 
 import { WordCard } from '../features/word-library/components/WordPresentation.jsx';
+import { FoldersPage } from '../app/WordLibraryPages.jsx';
 import { AddItemsForm } from '../features/word-import/components/WordImportForm.jsx';
 import { WordChineseVisibilityButton } from '../features/word-library/components/WordCollectionView.jsx';
 import { useWordCollection } from '../features/word-library/hooks/useWordCollection.js';
@@ -51,6 +52,7 @@ function FixtureApp() {
   else if (fixture === 'word-import') content = <section className="page fixture-page"><AddItemsForm title="新增單字" date="2026-09-21" onWriteRecords={async (records) => { window.__wordImportResult = records; }} /></section>;
   else if (fixture === 'notebook') content = <CollectionFixture />;
   else if (fixture === 'folder') content = <CollectionFixture folder />;
+  else if (fixture === 'folders-overview') content = <FoldersPage folders={folders} items={words} loading={false} error="" onSave={asyncNoop} onSetHidden={asyncNoop} onDelete={asyncNoop} onOpen={noop} />;
   else if (fixture === 'study') content = <StudyPage store={store} updateStore={updateStore} set={createStudySession(words, '視覺測試')} allItems={words} folders={folders} onUpdateRecord={asyncNoop} {...commonClassification} />;
   else if (fixture === 'practice') {
     const session = createFixedWordPracticeSession(questions, '視覺測試');
@@ -69,7 +71,7 @@ function FixtureApp() {
   }
   else if (fixture === 'yt-reader') content = <YoutubeSubtitleReader note={subtitle} allItems={words} folders={folders} onAddRecords={asyncNoop} onBack={noop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} />;
   else if (fixture === 'yt-reader-video') content = <YoutubeSubtitleReader note={{ ...subtitle, videoId: 'subtitle-video' }} allItems={words} folders={folders} onAddRecords={asyncNoop} onBack={noop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} />;
-  else if (fixture === 'notes') content = <NotesNotebookPage notes={notes} loading={false} error="" onSave={asyncNoop} onDelete={asyncNoop} onPractice={noop} />;
+  else if (fixture === 'notes' || fixture === 'notes-expanded') content = <NotesNotebookPage notes={notes} loading={false} error="" onSave={asyncNoop} onSetHidden={asyncNoop} onDelete={asyncNoop} onPractice={noop} />;
   else if (fixture === 'render-error') content = <AppErrorBoundary><BrokenFixture /></AppErrorBoundary>;
   else content = <ReadingTestPage test={readingTest} allItems={words} folders={folders} onAddRecords={asyncNoop} onUpdateRecord={asyncNoop} onDeleteRecord={asyncNoop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} onBack={noop} />;
   return (

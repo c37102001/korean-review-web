@@ -14,7 +14,7 @@ before(async () => {
     configFile: false,
     appType: 'custom',
     plugins: [react()],
-    server: { middlewareMode: true, hmr: false },
+    server: { middlewareMode: true, hmr: false, ws: false },
   });
   wordImportForm = await server.ssrLoadModule('/src/features/word-import/components/WordImportForm.jsx');
 });

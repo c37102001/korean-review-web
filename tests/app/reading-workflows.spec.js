@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+  expandAllContentGroups,
   listDocuments,
   prepareAppPage,
   readDocument,
@@ -35,10 +36,7 @@ async function seedReading(page, request, id, overrides = {}) {
 }
 
 async function expandReadingGroups(page) {
-  const groupToggle = page.locator('.folder-tag-group-toggle').first();
-  const collapsedToggle = page.locator('.folder-tag-group-toggle[aria-expanded="false"]').first();
-  await expect(groupToggle).toBeVisible();
-  while (await collapsedToggle.count()) await collapsedToggle.click();
+  await expandAllContentGroups(page);
 }
 
 async function openReading(page, { expand = true } = {}) {
@@ -407,6 +405,7 @@ test('R04: selected text opens Naver, highlights persist and export, and saved w
   await page.getByRole('button', { name: '將選取的韓文新增為單字' }).click();
   const addDialog = page.getByRole('dialog');
   await expect(addDialog.getByLabel('韓文 *')).toHaveValue('요즘');
+  await expect(addDialog.locator('.meaning-editor-card').getByLabel('中文 *')).toHaveValue('');
   await addDialog.getByLabel('詞性 / 類型 *').selectOption('副詞');
   await addDialog.locator('.meaning-editor-card').getByLabel('中文 *').fill('最近');
   await addDialog.getByRole('button', { name: '新增到單字庫' }).click();

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const CASES = ['word-card', 'notebook', 'folder', 'study', 'practice', 'yt-reader', 'notes', 'reading'];
+const CASES = ['word-card', 'notebook', 'folder', 'folders-overview', 'study', 'practice', 'yt-reader', 'notes', 'notes-expanded', 'reading'];
 const COLLECTION_FIXTURE_WORD_COUNT = 2;
 const VIEWPORTS = [
   { name: 'mobile-360', width: 360, height: 800 },
@@ -35,7 +35,13 @@ for (const viewport of VIEWPORTS) {
           content: '*, *::before, *::after { animation: none !important; transition: none !important; }',
         });
         await expect(page.locator('[data-fixture]')).toHaveAttribute('data-fixture', fixture);
-        await page.waitForTimeout(250);
+        await page.evaluate(() => document.fonts.ready);
+        if (fixture === 'folders-overview' || fixture === 'notes-expanded') {
+          const toggles = page.locator('.folder-tag-group-toggle, .note-category-toggle');
+          await expect(toggles).toHaveCount(2);
+          for (const toggle of await toggles.all()) await toggle.click();
+          await expect(page.locator(fixture === 'folders-overview' ? '.folder-card' : '.grammar-card')).toHaveCount(2);
+        }
 
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
         expect(overflow).toBeLessThanOrEqual(1);
@@ -52,7 +58,7 @@ for (const viewport of VIEWPORTS) {
         }
 
         if (fixture === 'study') {
-          await page.locator('.flashcard').evaluate((element) => element.click());
+          await page.locator('.flashcard').click();
           await expect(page.locator('.flashcard')).toHaveClass(/flipped/);
           await expect(page.locator('.flash-face.back')).toContainText('어쩌피');
           await page.addStyleTag({
@@ -85,7 +91,6 @@ for (const viewport of VIEWPORTS) {
           await expect(page.locator('.word-card-meaning')).toHaveCount(0);
         }
 
-        await page.waitForTimeout(100);
         await expect(page).toHaveScreenshot(`${fixture}-${viewport.name}.png`, { fullPage: false });
       });
     }

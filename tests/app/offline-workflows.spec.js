@@ -32,7 +32,7 @@ async function prepareOfflineData(page) {
 async function toggleManualOffline(page, enabled) {
   const menu = await openSettings(page);
   const toggle = menu.getByRole('switch', { name: '主動離線模式' });
-  await toggle.setChecked(enabled, { force: true });
+  if (await toggle.isChecked() !== enabled) await menu.getByText('主動離線', { exact: true }).click();
   await expect(toggle).toBeChecked({ checked: enabled });
 }
 

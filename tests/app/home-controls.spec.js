@@ -14,7 +14,7 @@ async function seedTomorrowWord(page, request, id) {
 test('H02: tomorrow count is calculated on demand and recalculated after data changes', async ({ page, request }) => {
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'tomorrow@example.test');
-  const button = page.locator('.home-actions button[title$="明天每日測驗的題數"]');
+  const button = page.locator('.home-actions').getByRole('button', { name: /查看明日題數|明日 \d+ 題/ });
   await expect(button).toBeVisible();
   await seedTomorrowWord(page, request, 'tomorrow-one');
   await page.reload();

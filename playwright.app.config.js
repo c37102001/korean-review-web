@@ -7,13 +7,15 @@ export default defineConfig({
   workers: 1,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
-  reporter: 'line',
+  reporter: [['line'], ['html', { outputFolder: 'playwright-app-report', open: 'never' }]],
   use: {
     baseURL: 'http://127.0.0.1:4176/korean-review-web/',
     browserName: 'chromium',
     locale: 'zh-TW',
     timezoneId: 'Asia/Taipei',
     serviceWorkers: 'block',
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
   },
   webServer: {
     command: 'VITE_APP_TEST_EMULATORS=1 npm run dev -- --host 127.0.0.1 --port 4176 --strictPort',

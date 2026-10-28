@@ -6,7 +6,7 @@ let server;
 let draw;
 let helpers;
 before(async () => {
-  server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' });
+  server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom' });
   helpers = await server.ssrLoadModule('/src/optionalPractice.js');
   draw = helpers.drawPracticeIds;
 });

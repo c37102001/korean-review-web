@@ -55,26 +55,26 @@ test('G03: logout and reload keep two accounts and their cached folders isolated
   await seedFolder(page, request, '帳號A專屬資料夾');
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
   await expandAllContentGroups(page);
-  await expect(page.getByText('帳號A專屬資料夾')).toBeVisible();
+  await expect(page.getByRole('heading', { name: '帳號A專屬資料夾', exact: true })).toBeVisible();
   await page.reload();
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
   await expandAllContentGroups(page);
-  await expect(page.getByText('帳號A專屬資料夾')).toBeVisible();
+  await expect(page.getByRole('heading', { name: '帳號A專屬資料夾', exact: true })).toBeVisible();
   await signOut(page);
 
   await register(page, 'other@example.test');
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
   await expandAllContentGroups(page);
-  await expect(page.getByText('帳號A專屬資料夾')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '帳號A專屬資料夾', exact: true })).toHaveCount(0);
   await page.reload();
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
   await expandAllContentGroups(page);
-  await expect(page.getByText('帳號A專屬資料夾')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '帳號A專屬資料夾', exact: true })).toHaveCount(0);
   await signOut(page);
 
   await submitCredentials(page, 'owner@example.test');
   await page.getByRole('button', { name: '資料夾', exact: true }).click();
   await expandAllContentGroups(page);
-  await expect(page.getByText('帳號A專屬資料夾')).toBeVisible();
+  await expect(page.getByRole('heading', { name: '帳號A專屬資料夾', exact: true })).toBeVisible();
   assertNoProductionRequests();
 });

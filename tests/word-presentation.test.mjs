@@ -15,7 +15,7 @@ before(async () => {
     configFile: false,
     appType: 'custom',
     plugins: [react()],
-    server: { middlewareMode: true, hmr: false },
+    server: { middlewareMode: true, hmr: false, ws: false },
   });
   presentation = await server.ssrLoadModule('/src/features/word-library/components/WordPresentation.jsx');
   collectionView = await server.ssrLoadModule('/src/features/word-library/components/WordCollectionView.jsx');

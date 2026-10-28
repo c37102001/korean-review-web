@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+  expandAllContentGroups,
   listDocuments,
   prepareAppPage,
   readDocument,
@@ -29,10 +30,7 @@ async function seedSubtitle(page, request, id, {
 }
 
 async function expandSubtitleGroups(page) {
-  const groupToggle = page.locator('.folder-tag-group-toggle').first();
-  const collapsedToggle = page.locator('.folder-tag-group-toggle[aria-expanded="false"]').first();
-  await expect(groupToggle).toBeVisible();
-  while (await collapsedToggle.count()) await collapsedToggle.click();
+  await expandAllContentGroups(page);
 }
 
 async function openSubtitles(page, { expand = true } = {}) {
@@ -226,6 +224,7 @@ test('Y03 Y04 Y05: the stubbed player synchronizes SRT and selected text creates
   await page.getByRole('button', { name: '將選取的韓文新增為單字' }).click();
   let addDialog = page.getByRole('dialog');
   await expect(addDialog.getByLabel('韓文 *')).toHaveValue('첫 문');
+  await expect(addDialog.locator('.meaning-editor-card').getByLabel('中文 *')).toHaveValue('');
   await addDialog.getByLabel('詞性 / 類型 *').selectOption('名詞');
   await addDialog.locator('.meaning-editor-card').getByLabel('中文 *').fill('第一句的開頭');
   await addDialog.getByRole('button', { name: '新增到單字庫' }).click();

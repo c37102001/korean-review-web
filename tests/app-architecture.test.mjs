@@ -40,19 +40,6 @@ test('daily wrong review sits between home and its study or practice session', (
   assert.deepEqual(navigationTransition(wrongReview, { type: 'up' }), home);
 });
 
-test('home starts all due words from one daily test instead of rendering date tasks', async () => {
-  const source = await readFile(new URL('../src/app/HomeCalendarPages.jsx', import.meta.url), 'utf8');
-  assert.match(source, /onPractice\(due, '今日測驗'/);
-  assert.doesNotMatch(source, /groupTasks|task\.studyDate/);
-});
-
-test('tomorrow due count is calculated only when its home button is pressed', async () => {
-  const source = await readFile(new URL('../src/app/HomeCalendarPages.jsx', import.meta.url), 'utf8');
-  assert.match(source, /onClick=\{\(\) => setTomorrowDueCount\(dailyReviewQuestions\(store, dailyQuestions, addDays\(today, 1\)\)\.length\)\}/);
-  assert.match(source, /tomorrowDueCount === null \? '查看明日題數'/);
-  assert.doesNotMatch(source, /useEffect\([^)]*setTomorrowDueCount/);
-});
-
 test('feature collection hooks depend on repositories instead of Firebase SDK', async () => {
   const hookPaths = [
     '../src/features/folders/hooks/useWordFolders.js',
@@ -67,49 +54,14 @@ test('feature collection hooks depend on repositories instead of Firebase SDK', 
   });
 });
 
-test('reader add actions reuse the standard word form with only Korean prefilled', async () => {
+test('readers depend on the shared word import form', async () => {
   for (const path of [
     '../src/features/reading/pages/ReadingTestPage.jsx',
     '../src/features/subtitles/pages/YoutubeSubtitleReader.jsx',
   ]) {
     const source = await readFile(new URL(path, import.meta.url), 'utf8');
-    assert.match(source, /import \{ todayString \} from ['"]\.\.\/\.\.\/\.\.\/shared\/date\.js['"]/);
-    assert.match(source, /<AddItemsModal/);
-    assert.match(source, /initialKo=\{quickAdd\.ko\}/);
-    assert.match(source, /onWriteRecords=\{onWriteRecords\}/);
-    assert.doesNotMatch(source, /QuickAddWordModal|includeInitialExample|markLearned/);
+    assert.match(source, /from\s+['"][^'"]*word-import\/components\/WordImportForm\.jsx['"]/);
   }
-
-  const reading = await readFile(new URL('../src/features/reading/pages/ReadingTestPage.jsx', import.meta.url), 'utf8');
-  assert.match(reading, /import \{[^}]*\bX\b[^}]*\} from ['"]lucide-react['"]/);
-
-  const home = await readFile(new URL('../src/app/HomeCalendarPages.jsx', import.meta.url), 'utf8');
-  const library = await readFile(new URL('../src/app/WordLibraryPages.jsx', import.meta.url), 'utf8');
-  assert.match(home, /import \{ EditJsonModal, ExportWordsModal \} from ['"]\.\/WordLibraryPages\.jsx['"]/);
-  assert.match(library, /export function ExportWordsModal\(/);
-  assert.match(library, /export function EditJsonModal\(/);
-});
-
-test('reading library groups visible tests by tag and hides learned tests by default', async () => {
-  const source = await readFile(new URL('../src/features/reading/pages/ReadingTestsPage.jsx', import.meta.url), 'utf8');
-  assert.match(source, /groupReadingTestsByTag\(filtered\)/);
-  assert.match(source, /<CollapsibleGroup/);
-  assert.match(source, /useState\(true\)/);
-  assert.match(source, /LearnedVisibilityToggle/);
-  assert.match(source, /tests\.filter\(\(test\) => !test\.learned\)/);
-});
-
-test('every collapsible content group starts closed and records only explicit expansions', async () => {
-  const sources = await Promise.all([
-    '../src/app/WordLibraryPages.jsx',
-    '../src/features/notes/pages/NotesNotebookPage.jsx',
-    '../src/features/reading/pages/ReadingTestsPage.jsx',
-    '../src/features/subtitles/pages/YoutubeSubtitlesPage.jsx',
-  ].map((path) => readFile(new URL(path, import.meta.url), 'utf8')));
-  sources.forEach((source) => {
-    assert.match(source, /\[expanded(?:Tags|Categories), setExpanded(?:Tags|Categories)\] = useState\(\(\) => new Set\(\)\)/);
-    assert.match(source, /collapsed=\{?!expanded|const collapsed = !expanded/);
-  });
 });
 
 test('content library routes load with the app and never import its entry', async () => {

@@ -12,9 +12,11 @@ export async function resetTestData(request) {
   }
 }
 
-export async function prepareAppPage(page) {
+export async function prepareAppPage(page, { expectedPageErrors = [] } = {}) {
   await page.clock.setFixedTime(new Date('2026-09-21T09:00:00+08:00'));
   const productionRequests = [];
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
   await page.route('**/*', (route) => {
     const url = new URL(route.request().url());
     if (/^(?:identitytoolkit|securetoken|firestore)\.googleapis\.com$/.test(url.hostname)
@@ -27,7 +29,11 @@ export async function prepareAppPage(page) {
   });
   await page.goto('./');
   await expect(page.getByRole('heading', { name: '登入後開始測驗' })).toBeVisible();
-  return () => expect(productionRequests, 'The App must not call production Firebase').toEqual([]);
+  return () => {
+    expect(productionRequests, 'The App must not call production Firebase').toEqual([]);
+    expect(pageErrors.filter((message) => !expectedPageErrors.some((pattern) => pattern.test(message))),
+      'The App must not raise unexpected browser errors').toEqual([]);
+  };
 }
 
 export async function submitCredentials(page, email, password = 'test-pass-123') {
@@ -72,10 +78,18 @@ function firestoreValue(value, key = '') {
 
 export async function seedDocument(page, request, collection, id, fields) {
   const uid = await currentUserId(page);
-  const url = `http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents/users/${uid}/${collection}/${id}`;
-  const response = await request.patch(url, {
+  const database = `projects/${projectId}/databases/(default)`;
+  const { updatedAt: _fixtureUpdatedAt, ...content } = fields;
+  // Live fixture writes must advance delta-query checkpoints, just like App writes.
+  const response = await request.post(`http://127.0.0.1:8080/v1/${database}/documents:commit`, {
     headers: { Authorization: 'Bearer owner' },
-    data: { fields: Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, firestoreValue(value, key)])) },
+    data: { writes: [{
+      update: {
+        name: `${database}/documents/users/${uid}/${collection}/${id}`,
+        fields: Object.fromEntries(Object.entries(content).map(([key, value]) => [key, firestoreValue(value, key)])),
+      },
+      updateTransforms: [{ fieldPath: 'updatedAt', setToServerValue: 'REQUEST_TIME' }],
+    }] },
   });
   expect(response.ok(), await response.text()).toBeTruthy();
 }
@@ -121,11 +135,18 @@ export async function setNetworkOffline(context, offline = true) {
   await context.setOffline(offline);
 }
 
-export async function expandAllContentGroups(page) {
+export async function expandAllContentGroups(page, { target } = {}) {
   const groupToggle = page.locator('.folder-tag-group-toggle, .note-category-toggle').first();
   const collapsedToggle = page.locator('.folder-tag-group-toggle[aria-expanded="false"], .note-category-toggle[aria-expanded="false"]').first();
   await expect(groupToggle).toBeVisible();
-  while (await collapsedToggle.count()) await collapsedToggle.click();
+  await expect(async () => {
+    const remaining = await collapsedToggle.count();
+    for (let index = 0; index < remaining && await collapsedToggle.count(); index += 1) {
+      await collapsedToggle.click();
+    }
+    if (target) await expect(target).toBeVisible({ timeout: 500 });
+    else await expect(collapsedToggle).toHaveCount(0);
+  }).toPass({ timeout: 10_000 });
 }
 
 export async function failFirestoreWrites(page) {

@@ -14,7 +14,7 @@ test('H01 H07 P02-P03 P08: daily review records answers, and wrong-review shrink
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'daily-session@example.test');
   await seedWord(page, request, 'daily-a', '가다', '去', { date: '2026-09-20' });
-  await seedWord(page, request, 'daily-b', '나다', '出現', { date: '2026-09-20' });
+  await seedWord(page, request, 'daily-b', '나다', '出現', { date: '2026-09-19' });
   await expect(page.getByText('2 題單字待複習', { exact: false })).toBeVisible();
   await page.locator('.home-actions').getByRole('button', { name: '今日測驗' }).click();
   await expect(page.locator('.practice-start')).toContainText('2 題可測驗');
@@ -232,7 +232,7 @@ test('P08: a failed optional answer keeps the question available and succeeds on
   await page.reload();
   const taskCard = page.locator('.task-card').filter({ hasText: '單字練習' });
   await expect(taskCard).toBeVisible();
-  await taskCard.getByRole('button', { name: '開始' }).dispatchEvent('click');
+  await taskCard.getByRole('button', { name: '開始' }).click();
   await expect(page.locator('.quiz-meta')).toContainText('1 / 1');
   await page.locator('.practice-page').getByRole('button', { name: '公佈答案' }).click();
   const retryButton = page.locator('.practice-decision-panel').getByRole('button', { name: '答對' });

@@ -6,5 +6,6 @@ dist
 __pycache__/
 firebase-debug.log
 playwright-report/
+playwright-app-report/
 test-results/
 firestore-debug.log

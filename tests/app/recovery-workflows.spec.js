@@ -21,7 +21,7 @@ async function armWordCollectionRenderFailure(page) {
 }
 
 test('G07: a real page render failure exposes details and supports back and reload recovery', async ({ page, request }) => {
-  const assertNoProductionRequests = await prepareAppPage(page);
+  const assertNoProductionRequests = await prepareAppPage(page, { expectedPageErrors: [/受控的單字頁顯示失敗/] });
   await register(page, 'render-recovery@example.test');
   await seedWord(page, request, 'boundary-word', '경계', '邊界');
   await page.getByRole('button', { name: '單字本', exact: true }).click();
