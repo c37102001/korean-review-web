@@ -105,6 +105,7 @@ import {
   FolderOpen,
   FolderPlus,
   Link2,
+  ListChecks,
   Minus,
   Pencil,
   Pin,
@@ -472,15 +473,19 @@ function FolderNameModal({ folder, tagSuggestions = [], onSave, onClose }) {
   );
 }
 
-function FolderOverviewCard({ folder, itemById, itemIds, onOpen, onEdit, onDelete, onTogglePinned }) {
+function FolderOverviewCard({ folder, itemById, itemIds, onOpen, onEdit, onDelete, onTogglePinned, selected, onToggleSelected }) {
   const count = (folder.wordIds || []).filter((id) => itemIds.has(id)).length;
   const previews = (folder.wordIds || []).map((id) => itemById.get(id)).filter(Boolean).slice(0, 4);
   return (
-    <article className="folder-card" onClick={() => onOpen(folder.id)}>
+    <article className={`folder-card ${selected ? 'selected' : ''}`} onClick={() => onOpen(folder.id)}>
       <div className="folder-card-head">
         <span className="folder-icon"><FolderOpen size={25} /></span>
         <div className="card-actions">
           {isSystemFolder(folder) && <span className={`system-folder-badge ${isUnfamiliarFolder(folder) ? 'unfamiliar' : ''}`}>系統資料夾</span>}
+          {folder.hidden && <span className="content-hidden-badge">已隱藏</span>}
+          <label className="word-select-control" title="選取資料夾" onClick={(event) => event.stopPropagation()}>
+            <input type="checkbox" aria-label={`選取 ${folder.name}`} checked={selected} onChange={() => onToggleSelected(folder.id)} />
+          </label>
           <button
             type="button"
             className={`edit-icon-button pin-icon-button ${folder.pinned ? 'active' : ''}`}
@@ -507,15 +512,45 @@ function FolderOverviewCard({ folder, itemById, itemIds, onOpen, onEdit, onDelet
   );
 }
 
-export function FoldersPage({ folders, items, loading, error, onSave, onDelete, onOpen }) {
+export function FoldersPage({ folders, items, loading, error, onSave, onSetHidden, onDelete, onOpen }) {
   const [editingFolder, setEditingFolder] = useState(undefined);
   const [actionError, setActionError] = useState('');
   const [expandedTags, setExpandedTags] = useState(() => new Set());
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [showHidden, setShowHidden] = useState(false);
+  const [updatingHidden, setUpdatingHidden] = useState(false);
+  const visibleFolders = showHidden ? folders : folders.filter((folder) => !folder.hidden);
+  const hiddenCount = folders.filter((folder) => folder.hidden).length;
+  const visibleIds = visibleFolders.map((folder) => folder.id);
+  const selectedFolders = folders.filter((folder) => selectedIds.includes(folder.id));
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+  const selectedAreHidden = selectedFolders.length > 0 && selectedFolders.every((folder) => folder.hidden);
   const itemIds = new Set(items.map((item) => item.id));
-  const pinnedFolders = folders.filter((folder) => folder.pinned);
-  const folderGroups = groupFoldersByTag(folders.filter((folder) => !folder.pinned));
+  const pinnedFolders = visibleFolders.filter((folder) => folder.pinned);
+  const folderGroups = groupFoldersByTag(visibleFolders.filter((folder) => !folder.pinned));
   const tagSuggestions = groupFoldersByTag(folders).filter((group) => group.label !== UNTAGGED_FOLDER_LABEL).map((group) => group.label);
   const itemById = new Map(items.map((item) => [item.id, item]));
+  useEffect(() => {
+    const available = new Set(visibleIds);
+    setSelectedIds((current) => current.filter((id) => available.has(id)));
+  }, [folders, showHidden]);
+  const toggleSelected = (folderId) => setSelectedIds((current) => (
+    current.includes(folderId) ? current.filter((id) => id !== folderId) : [...current, folderId]
+  ));
+  const toggleAll = () => setSelectedIds(allVisibleSelected ? [] : visibleIds);
+  const updateSelectedHidden = async () => {
+    if (!selectedIds.length) return;
+    setUpdatingHidden(true);
+    setActionError('');
+    try {
+      await onSetHidden(selectedIds, !selectedAreHidden);
+      setSelectedIds([]);
+    } catch (hiddenError) {
+      setActionError(hiddenError.message || '更新資料夾顯示狀態失敗');
+    } finally {
+      setUpdatingHidden(false);
+    }
+  };
   const removeFolder = async (folder) => {
     if (isSystemFolder(folder)) return;
     if (!window.confirm(`確定要刪除資料夾「${folder.name}」嗎？單字本中的單字不會被刪除。`)) return;
@@ -539,6 +574,8 @@ export function FoldersPage({ folders, items, loading, error, onSave, onDelete, 
       onEdit={setEditingFolder}
       onDelete={removeFolder}
       onTogglePinned={togglePinned}
+      selected={selectedIds.includes(folder.id)}
+      onToggleSelected={toggleSelected}
     />
   );
   const toggleTag = (tag) => setExpandedTags((current) => {
@@ -574,10 +611,21 @@ export function FoldersPage({ folders, items, loading, error, onSave, onDelete, 
         <div><span className="eyebrow">Folders</span><h1>資料夾</h1></div>
         <div className="actions notebook-actions">
           <button className="primary" onClick={() => setEditingFolder(null)}><FolderPlus size={18} /> 新增資料夾</button>
+          <button type="button" aria-pressed={showHidden} onClick={() => setShowHidden((current) => !current)}>
+            {showHidden ? <EyeOff size={18} /> : <Eye size={18} />} {showHidden ? '隱藏隱藏項目' : `顯示隱藏${hiddenCount ? ` (${hiddenCount})` : ''}`}
+          </button>
         </div>
       </div>
+      <div className={`bulk-word-actions folder-bulk-actions ${selectedIds.length ? 'has-selection' : ''}`}>
+        <div className="bulk-selection-summary">
+          <ListChecks size={19} /><strong>{selectedIds.length ? `已選 ${selectedIds.length} 個資料夾` : '選取資料夾'}</strong>
+          <button type="button" className="text-link" disabled={!visibleIds.length || updatingHidden} onClick={toggleAll}>{allVisibleSelected ? '取消全選' : '全選資料夾'}</button>
+          {!!selectedIds.length && <button type="button" className="text-link muted-link" disabled={updatingHidden} onClick={() => setSelectedIds([])}>清除</button>}
+        </div>
+        {!!selectedIds.length && <div className="bulk-action-buttons"><button type="button" disabled={updatingHidden} onClick={updateSelectedHidden}>{selectedAreHidden ? <Eye size={17} /> : <EyeOff size={17} />} {updatingHidden ? '更新中' : selectedAreHidden ? '取消隱藏' : '隱藏'}</button></div>}
+      </div>
       {(error || actionError) && <div className="form-error">{actionError || error}</div>}
-      {loading ? <div className="empty">正在載入資料夾...</div> : folders.length ? (
+      {loading ? <div className="empty">正在載入資料夾...</div> : visibleFolders.length ? (
         <div className="folder-tag-groups">
           {!!pinnedFolders.length && (
             renderFolderGroup(
@@ -589,7 +637,7 @@ export function FoldersPage({ folders, items, loading, error, onSave, onDelete, 
             renderFolderGroup(group, { key: group.label, title: group.label, mark: '標籤' })
           ))}
         </div>
-      ) : <div className="empty folder-empty"><Folder size={32} /><strong>還沒有資料夾</strong><span>建立第一個資料夾，將同類型單字集中學習。</span></div>}
+      ) : <div className="empty folder-empty"><Folder size={32} /><strong>{folders.length ? '資料夾皆已隱藏' : '還沒有資料夾'}</strong><span>{folders.length ? '按「顯示隱藏」即可查看並恢復資料夾。' : '建立第一個資料夾，將同類型單字集中學習。'}</span></div>}
       {editingFolder !== undefined && <FolderNameModal folder={editingFolder} tagSuggestions={tagSuggestions} onSave={onSave} onClose={() => setEditingFolder(undefined)} />}
     </section>
   );

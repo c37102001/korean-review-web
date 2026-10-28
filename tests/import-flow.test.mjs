@@ -9,7 +9,7 @@ let server;
 let helpers;
 
 before(async () => {
-  server = await createServer({ server: { middlewareMode: true }, appType: 'custom' });
+  server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom' });
   helpers = await server.ssrLoadModule('/src/app/App.jsx');
 });
 
@@ -616,6 +616,7 @@ test('grammar notes normalize searchable content without review fields', () => {
     examples: [{ id: 'grammar-1-example-0', ko: '한국이 다르다고 느꼈어요.', zh: '我覺得韓國不一樣。' }],
     category: 'grammar',
     pinned: false,
+    hidden: false,
     createdAt: '2026-07-23T01:00:00.000Z',
     updatedAt: '',
   });
@@ -628,6 +629,7 @@ test('note categories default to grammar and preserve vocabulary notes', () => {
   assert.equal(helpers.normalizeGrammarNote({ title: '近義詞', category: 'vocabulary' }, 'vocab').category, 'vocabulary');
   assert.equal(helpers.normalizeGrammarNote({ title: '錯誤分類', category: 'other' }, 'other').category, 'grammar');
   assert.equal(helpers.normalizeGrammarNote({ title: '置頂', pinned: true }, 'pinned').pinned, true);
+  assert.equal(helpers.normalizeGrammarNote({ title: '隱藏', hidden: true }, 'hidden').hidden, true);
 });
 
 test('folders keep unique word id references without copying word content', () => {
@@ -643,12 +645,14 @@ test('folders keep unique word id references without copying word content', () =
       name: '交通',
       tag: '',
       pinned: false,
+      hidden: false,
       wordIds: ['word-1', 'word-2'],
       createdAt: '2026-08-17T00:00:00.000Z',
       updatedAt: '',
       systemKey: '',
     },
   );
+  assert.equal(helpers.normalizeFolder({ id: 'hidden-folder', name: '隱藏', hidden: true }).hidden, true);
 });
 
 test('folders are grouped by tag and untagged folders share a fallback group', () => {

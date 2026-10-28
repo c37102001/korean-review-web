@@ -10,7 +10,7 @@ import {
 import { db } from '../firebase.js';
 import { markOfflineSectionReady } from '../offlineSupport.js';
 import { subscribeToIncrementalCollection } from './incrementalCollectionRepository.js';
-import { retryFirestoreWrite } from './firestoreWriteRepository.js';
+import { commitFirestoreOperations, retryFirestoreWrite } from './firestoreWriteRepository.js';
 
 export function tombstonePayload(id, fields = []) {
   return Object.fromEntries([
@@ -41,6 +41,12 @@ export function createUserContentRepository(collectionName, { tombstoneFields = 
         }));
         await batch.commit();
       });
+    },
+    async setHidden(uid, ids, hidden) {
+      await commitFirestoreOperations([...new Set(ids)].map((id) => (batch) => batch.update(
+        doc(db, 'users', uid, collectionName, id),
+        { hidden, updatedAt: serverTimestamp() },
+      )));
     },
     async remove(uid, id) {
       await retryFirestoreWrite(() => setDoc(
@@ -75,7 +81,7 @@ export async function saveUserSetting(uid, settingName, value) {
 }
 
 export const grammarNotesRepository = createUserContentRepository('grammarNotes', {
-  tombstoneFields: ['title', 'notes', 'examples', 'category', 'createdAt', 'pinned'],
+  tombstoneFields: ['title', 'notes', 'examples', 'category', 'createdAt', 'pinned', 'hidden'],
 });
 
 export const youtubeSubtitlesRepository = createUserContentRepository('ytSubtitles', {

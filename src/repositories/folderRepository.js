@@ -20,6 +20,7 @@ function uniqueIds(values = []) {
 
 export const folderRepository = {
   subscribe: contentRepository.subscribe,
+  setHidden: contentRepository.setHidden,
   async save(uid, folder) {
     await contentRepository.save(uid, folder.id, folder);
   },
@@ -37,7 +38,7 @@ export const folderRepository = {
   async remove(uid, folderId) {
     await retryFirestoreWrite(() => setDoc(
       doc(db, 'users', uid, 'folders', folderId),
-      tombstonePayload(folderId, ['name', 'wordIds', 'tag', 'createdAt', 'pinned']),
+      tombstonePayload(folderId, ['name', 'wordIds', 'tag', 'createdAt', 'pinned', 'hidden']),
       { merge: true },
     ));
   },

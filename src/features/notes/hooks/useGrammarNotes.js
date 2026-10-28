@@ -65,6 +65,13 @@ export function useGrammarNotes(user, enabled = true) {
     await grammarNotesRepository.remove(user.uid, id);
   }, [user]);
 
+  const setHidden = useCallback(async (noteIds, hidden) => {
+    if (!user) throw new Error('尚未登入');
+    const selected = new Set(noteIds);
+    const targets = state.notes.filter((note) => selected.has(note.id));
+    await grammarNotesRepository.setHidden(user.uid, targets.map((note) => note.id), hidden);
+  }, [user, state.notes]);
+
   const completeReview = useCallback(async (note, date = dateKey()) => {
     if (!user) throw new Error('尚未登入');
     const review = {
@@ -77,5 +84,5 @@ export function useGrammarNotes(user, enabled = true) {
     return review;
   }, [user]);
 
-  return { ...state, save, remove, completeReview };
+  return { ...state, save, remove, setHidden, completeReview };
 }

@@ -16,6 +16,7 @@ export function normalizeFolder(folder, fallbackId = '') {
     name: String(folder?.name || '').trim(),
     tag: String(folder?.tag || '').trim(),
     pinned: folder?.pinned === true,
+    hidden: folder?.hidden === true,
     wordIds: [...new Set((Array.isArray(folder?.wordIds) ? folder.wordIds : []).filter(Boolean).map(String))],
     createdAt: firestoreTimestampIso(folder?.createdAt),
     updatedAt: firestoreTimestampIso(folder?.updatedAt),

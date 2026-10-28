@@ -91,6 +91,13 @@ export function useWordFolders(user, enabled = true) {
     await folderRepository.remove(user.uid, folderId);
   }, [user, state.folders]);
 
+  const setHidden = useCallback(async (folderIds, hidden) => {
+    if (!user) throw new Error('尚未登入');
+    const selected = new Set(folderIds);
+    const targets = state.folders.filter((folder) => selected.has(folder.id));
+    await folderRepository.setHidden(user.uid, targets.map((folder) => folder.id), hidden);
+  }, [user, state.folders]);
+
   const addWords = useCallback(async (folderId, wordIds) => {
     if (!user) throw new Error('尚未登入');
     await folderRepository.addWords(user.uid, folderId, wordIds, isLearnedFolder(state.folders.find((folder) => folder.id === folderId) || { id: folderId }));
@@ -135,6 +142,7 @@ export function useWordFolders(user, enabled = true) {
   return {
     ...state,
     save,
+    setHidden,
     remove,
     addWords,
     removeWords,

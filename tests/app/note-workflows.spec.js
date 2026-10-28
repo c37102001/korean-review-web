@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   denyFirestoreWrites,
+  expandAllContentGroups,
   listDocuments,
   prepareAppPage,
   readDocument,
@@ -25,10 +26,7 @@ async function openNotes(page, { expand = true } = {}) {
   await page.getByRole('button', { name: '筆記', exact: true }).click();
   await expect(page.getByRole('heading', { name: '筆記', exact: true })).toBeVisible();
   if (expand) {
-    const groupToggle = page.locator('.note-category-toggle').first();
-    const collapsedToggle = page.locator('.note-category-toggle[aria-expanded="false"]').first();
-    await expect(groupToggle).toBeVisible();
-    while (await collapsedToggle.count()) await collapsedToggle.click();
+    await expandAllContentGroups(page);
   }
 }
 
@@ -154,6 +152,40 @@ test('N04: single and selected note practice use exactly the chosen examples', a
   await expect(section).toContainText('已選 2 個筆記');
   await section.getByRole('button', { name: '清除' }).click();
   await expect(section).toContainText('選取單字筆記');
+  assertNoProductionRequests();
+});
+
+test('N05: select all notes, hide them, reveal hidden notes and restore them', async ({ page, request }) => {
+  const assertNoProductionRequests = await prepareAppPage(page);
+  await register(page, 'note-hidden@example.test');
+  await seedNote(page, request, 'hidden-vocabulary', '隱藏單字筆記', 'vocabulary', 0);
+  await seedNote(page, request, 'hidden-grammar', '隱藏文法筆記', 'grammar', 1);
+  await openNotes(page);
+  const bulk = page.locator('.note-global-bulk-actions');
+  await bulk.getByRole('button', { name: '全選筆記' }).click();
+  await expect(bulk).toContainText('已選 2 個筆記');
+  await bulk.getByRole('button', { name: '隱藏', exact: true }).click();
+  await expect(noteCard(page, '隱藏單字筆記')).toHaveCount(0);
+  await expect(noteCard(page, '隱藏文法筆記')).toHaveCount(0);
+  await expect.poll(async () => (await readDocument(page, request, 'grammarNotes', 'hidden-vocabulary'))?.fields.hidden?.booleanValue).toBe(true);
+  await expect.poll(async () => (await readDocument(page, request, 'grammarNotes', 'hidden-grammar'))?.fields.hidden?.booleanValue).toBe(true);
+
+  await page.getByRole('button', { name: /顯示隱藏/ }).click();
+  await expect(noteCard(page, '隱藏單字筆記').getByText('已隱藏')).toBeVisible();
+  await expect(noteCard(page, '隱藏文法筆記').getByText('已隱藏')).toBeVisible();
+  await bulk.getByRole('button', { name: '全選筆記' }).click();
+  await bulk.getByRole('button', { name: '取消隱藏' }).click();
+  await expect.poll(async () => (await readDocument(page, request, 'grammarNotes', 'hidden-vocabulary'))?.fields.hidden?.booleanValue).toBe(false);
+  await expect.poll(async () => (await readDocument(page, request, 'grammarNotes', 'hidden-grammar'))?.fields.hidden?.booleanValue).toBe(false);
+  await page.getByRole('button', { name: '隱藏隱藏項目' }).click();
+  await expect(noteCard(page, '隱藏單字筆記')).toBeVisible();
+  await expect(noteCard(page, '隱藏文法筆記')).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole('button', { name: '登出' })).toBeVisible();
+  await openNotes(page);
+  await expect(noteCard(page, '隱藏單字筆記')).toBeVisible();
+  await expect(noteCard(page, '隱藏文法筆記')).toBeVisible();
   assertNoProductionRequests();
 });
 

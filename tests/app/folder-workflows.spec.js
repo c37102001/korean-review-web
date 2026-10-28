@@ -1,15 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { currentUserId, prepareAppPage, readDocument, register, resetTestData, seedDocument, seedWord } from './helpers.js';
+import { currentUserId, expandAllContentGroups, prepareAppPage, readDocument, register, resetTestData, seedDocument, seedWord } from './helpers.js';
 
 test.beforeEach(async ({ request }) => resetTestData(request));
 
 const cards = (page) => page.locator('.word-grid .word-card');
 
 async function expandFolderGroups(page) {
-  const groupToggle = page.locator('.folder-tag-group-toggle').first();
-  const collapsedToggle = page.locator('.folder-tag-group-toggle[aria-expanded="false"]').first();
-  await expect(groupToggle).toBeVisible();
-  while (await collapsedToggle.count()) await collapsedToggle.click();
+  await expandAllContentGroups(page);
 }
 
 async function openFolders(page, { expand = true } = {}) {
@@ -112,6 +109,39 @@ test('F05 W11: stale folder references can be removed and single-card deletion c
   await expect(cards(page)).toHaveCount(0);
   await expect.poll(async () => (await readDocument(page, request, 'records', 'live'))?.fields.deletedAt?.timestampValue).toBeTruthy();
   await expect.poll(async () => (await readDocument(page, request, 'folders', 'stale-folder'))?.fields.wordIds?.arrayValue?.values?.length || 0).toBe(0);
+  assertNoProductionRequests();
+});
+
+test('F06: select all folders, hide them, reveal hidden folders and restore one', async ({ page, request }) => {
+  const assertNoProductionRequests = await prepareAppPage(page);
+  await register(page, 'folder-hidden@example.test');
+  await seedDocument(page, request, 'folders', 'hidden-target', {
+    id: 'hidden-target', name: '待隱藏資料夾', tag: '整理', wordIds: [], hidden: false,
+    createdAt: '2026-09-20T00:00:00.000Z', updatedAt: '2026-09-21T00:00:00.000Z',
+  });
+  await openFolders(page);
+  const bulk = page.locator('.folder-bulk-actions');
+  await bulk.getByRole('button', { name: '全選資料夾' }).click();
+  await expect(bulk).toContainText(/已選 \d+ 個資料夾/);
+  await bulk.getByRole('button', { name: '隱藏', exact: true }).click();
+  await expect(page.getByText('資料夾皆已隱藏')).toBeVisible();
+  await expect.poll(async () => (await readDocument(page, request, 'folders', 'hidden-target'))?.fields.hidden?.booleanValue).toBe(true);
+
+  await page.getByRole('button', { name: /顯示隱藏/ }).click();
+  await expandFolderGroups(page);
+  const target = page.locator('.folder-card').filter({ hasText: '待隱藏資料夾' });
+  await expect(target.getByText('已隱藏')).toBeVisible();
+  await target.getByRole('checkbox', { name: '選取 待隱藏資料夾' }).check();
+  await bulk.getByRole('button', { name: '取消隱藏' }).click();
+  await expect.poll(async () => (await readDocument(page, request, 'folders', 'hidden-target'))?.fields.hidden?.booleanValue).toBe(false);
+  await page.getByRole('button', { name: '隱藏隱藏項目' }).click();
+  await expandFolderGroups(page);
+  await expect(target).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole('button', { name: '登出' })).toBeVisible();
+  await openFolders(page);
+  await expect(page.locator('.folder-card').filter({ hasText: '待隱藏資料夾' })).toBeVisible();
   assertNoProductionRequests();
 });
 

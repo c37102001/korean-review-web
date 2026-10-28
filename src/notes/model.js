@@ -54,6 +54,7 @@ export function normalizeGrammarNote(note, fallbackId = '') {
       ? NOTE_CATEGORY_VOCABULARY
       : NOTE_CATEGORY_GRAMMAR,
     pinned: note?.pinned === true,
+    hidden: note?.hidden === true,
     createdAt: firestoreTimestampIso(note?.createdAt),
     updatedAt: firestoreTimestampIso(note?.updatedAt),
   };

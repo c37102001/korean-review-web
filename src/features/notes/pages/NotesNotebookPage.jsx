@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Check,
   Dumbbell,
+  Eye,
+  EyeOff,
   ListChecks,
   NotebookPen,
   Plus,
@@ -48,6 +50,7 @@ function GrammarNoteCard({ note, onOpen, onEdit, onDelete, onTogglePinned, selec
       <div className="card-head">
         <h2>{note.title}</h2>
         <div className="card-actions">
+          {note.hidden && <span className="content-hidden-badge">已隱藏</span>}
           <PinButton pinned={note.pinned} label={meta.item} onToggle={() => onTogglePinned(note)} />
           <label className="word-select-control" title={`選取${meta.item}`} onClick={(event) => event.stopPropagation()}>
             <input type="checkbox" checked={selected} onChange={() => onToggleSelected(note.id)} />
@@ -172,17 +175,15 @@ function GrammarDetailModal({ note, category, onEdit, onDelete, onPractice, onCl
   );
 }
 
-function NoteCategorySection({ category, notes, query, loading, collapsed, onToggleCollapse, onSave, onDelete, onPractice }) {
+function NoteCategorySection({ category, notes, query, loading, collapsed, onToggleCollapse, onSave, onDelete, onPractice, selectedIds, setSelectedIds }) {
   const meta = noteCategoryMeta(category);
   const categoryNotes = useMemo(() => notes.filter((note) => note.category === category), [notes, category]);
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
-  const [selectedIds, setSelectedIds] = useState([]);
   const [actionError, setActionError] = useState('');
   useEffect(() => {
     setEditing(null);
     setViewing(null);
-    setSelectedIds([]);
     setActionError('');
   }, [category]);
   const filtered = useMemo(() => {
@@ -194,10 +195,6 @@ function NoteCategorySection({ category, notes, query, loading, collapsed, onTog
         || left.title.localeCompare(right.title)
     ));
   }, [categoryNotes, query]);
-  useEffect(() => {
-    const existingIds = new Set(categoryNotes.map((note) => note.id));
-    setSelectedIds((current) => current.filter((id) => existingIds.has(id)));
-  }, [categoryNotes]);
   const selectedNotes = categoryNotes.filter((note) => selectedIds.includes(note.id));
   const selectedQuestions = grammarPracticeQuestions(selectedNotes);
   const filteredIds = filtered.map((note) => note.id);
@@ -244,13 +241,13 @@ function NoteCategorySection({ category, notes, query, loading, collapsed, onTog
     <CollapsibleGroup className="note-category-section" variant="category" collapsed={collapsed} onToggle={onToggleCollapse} title={meta.heading} countLabel={`${categoryNotes.length} 篇`} markerIcon={<NotebookPen size={15} />}>
       <>
         <div className="note-category-actions"><button className="primary" onClick={() => setEditing({ category })}><Plus size={17} /> {meta.addLabel}</button></div>
-        <div className={`bulk-word-actions grammar-bulk-actions ${selectedIds.length ? 'has-selection' : ''}`}>
+        <div className={`bulk-word-actions grammar-bulk-actions ${selectedNotes.length ? 'has-selection' : ''}`}>
           <div className="bulk-selection-summary">
-            <ListChecks size={19} /><strong>{selectedIds.length ? `已選 ${selectedIds.length} 個${meta.item}` : `選取${meta.singular}`}</strong>
+            <ListChecks size={19} /><strong>{selectedNotes.length ? `已選 ${selectedNotes.length} 個${meta.item}` : `選取${meta.singular}`}</strong>
             <button type="button" className="text-link" disabled={!filteredIds.length} onClick={toggleFiltered}>{allFilteredSelected ? '取消本頁' : '選取本頁'}</button>
-            {!!selectedIds.length && <button type="button" className="text-link muted-link" onClick={() => setSelectedIds([])}>清除</button>}
+            {!!selectedNotes.length && <button type="button" className="text-link muted-link" onClick={() => setSelectedIds((current) => current.filter((id) => !categoryNotes.some((note) => note.id === id)))}>清除</button>}
           </div>
-          {!!selectedIds.length && <div className="bulk-action-buttons"><button type="button" className="primary" disabled={!selectedQuestions.length} onClick={() => startPractice(selectedNotes, `已選 ${selectedNotes.length} 個${meta.item}`)}><Dumbbell size={17} /> 練習 ({selectedQuestions.length || 0})</button></div>}
+          {!!selectedNotes.length && <div className="bulk-action-buttons"><button type="button" className="primary" disabled={!selectedQuestions.length} onClick={() => startPractice(selectedNotes, `已選 ${selectedNotes.length} 個${meta.item}`)}><Dumbbell size={17} /> 練習 ({selectedQuestions.length || 0})</button></div>}
         </div>
         {actionError && <div className="form-error">{actionError}</div>}
         {loading ? <div className="panel grammar-empty">載入{meta.singular}中...</div> : filtered.length ? (
@@ -263,19 +260,65 @@ function NoteCategorySection({ category, notes, query, loading, collapsed, onTog
   );
 }
 
-export default function NotesNotebookPage({ notes, loading, error, onSave, onDelete, onPractice }) {
+export default function NotesNotebookPage({ notes, loading, error, onSave, onSetHidden = async () => {}, onDelete, onPractice }) {
   const [query, setQuery] = useState('');
   const [expandedCategories, setExpandedCategories] = useState(() => new Set());
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [showHidden, setShowHidden] = useState(false);
+  const [updatingHidden, setUpdatingHidden] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const visibleNotes = useMemo(() => (showHidden ? notes : notes.filter((note) => !note.hidden)), [notes, showHidden]);
+  const hiddenCount = notes.filter((note) => note.hidden).length;
+  const visibleIds = visibleNotes.map((note) => note.id);
+  const selectedNotes = notes.filter((note) => selectedIds.includes(note.id));
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+  const selectedAreHidden = selectedNotes.length > 0 && selectedNotes.every((note) => note.hidden);
+  useEffect(() => {
+    const available = new Set(visibleIds);
+    setSelectedIds((current) => current.filter((id) => available.has(id)));
+  }, [notes, showHidden]);
   const toggleCategory = (category) => setExpandedCategories((current) => {
     const next = new Set(current);
     if (next.has(category)) next.delete(category);
     else next.add(category);
     return next;
   });
+  const toggleAll = () => setSelectedIds(allVisibleSelected ? [] : visibleIds);
+  const updateSelectedHidden = async () => {
+    if (!selectedIds.length) return;
+    setUpdatingHidden(true);
+    setActionError('');
+    try {
+      await onSetHidden(selectedIds, !selectedAreHidden);
+      setSelectedIds([]);
+    } catch (hiddenError) {
+      setActionError(hiddenError.message || '更新筆記顯示狀態失敗');
+    } finally {
+      setUpdatingHidden(false);
+    }
+  };
   return (
-    <LibraryPageShell className="notes-notebook-page" eyebrow="Korean Notes" title="筆記" query={query} onQueryChange={setQuery} searchPlaceholder="搜尋標題、筆記或例句" error={error}>
+    <LibraryPageShell
+      className="notes-notebook-page"
+      eyebrow="Korean Notes"
+      title="筆記"
+      query={query}
+      onQueryChange={setQuery}
+      searchPlaceholder="搜尋標題、筆記或例句"
+      error={error}
+      actions={<button type="button" aria-pressed={showHidden} onClick={() => setShowHidden((current) => !current)}>{showHidden ? <EyeOff size={18} /> : <Eye size={18} />} {showHidden ? '隱藏隱藏項目' : `顯示隱藏${hiddenCount ? ` (${hiddenCount})` : ''}`}</button>}
+    >
+      <div className={`bulk-word-actions note-global-bulk-actions ${selectedIds.length ? 'has-selection' : ''}`}>
+        <div className="bulk-selection-summary">
+          <ListChecks size={19} /><strong>{selectedIds.length ? `已選 ${selectedIds.length} 個筆記` : '選取筆記'}</strong>
+          <button type="button" className="text-link" disabled={!visibleIds.length || updatingHidden} onClick={toggleAll}>{allVisibleSelected ? '取消全選' : '全選筆記'}</button>
+          {!!selectedIds.length && <button type="button" className="text-link muted-link" disabled={updatingHidden} onClick={() => setSelectedIds([])}>清除</button>}
+        </div>
+        {!!selectedIds.length && <div className="bulk-action-buttons"><button type="button" disabled={updatingHidden} onClick={updateSelectedHidden}>{selectedAreHidden ? <Eye size={17} /> : <EyeOff size={17} />} {updatingHidden ? '更新中' : selectedAreHidden ? '取消隱藏' : '隱藏'}</button></div>}
+      </div>
+      {actionError && <div className="form-error">{actionError}</div>}
       {[NOTE_CATEGORY_VOCABULARY, NOTE_CATEGORY_GRAMMAR].map((category) => (
-        <NoteCategorySection key={category} category={category} notes={notes} query={query} loading={loading} collapsed={!expandedCategories.has(category)} onToggleCollapse={() => toggleCategory(category)} onSave={onSave} onDelete={onDelete} onPractice={onPractice} />
+        <NoteCategorySection key={category} category={category} notes={visibleNotes} query={query} loading={loading} collapsed={!expandedCategories.has(category)} onToggleCollapse={() => toggleCategory(category)} onSave={onSave} onDelete={onDelete} onPractice={onPractice} selectedIds={selectedIds} setSelectedIds={setSelectedIds} />
       ))}
     </LibraryPageShell>
   );
