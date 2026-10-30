@@ -45,6 +45,9 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
     setPlayerLoaded(false);
     setIsVideoPlaying(false);
     setActiveSubtitleEntryId(null);
+  }, [note?.id, note?.videoId]);
+  useEffect(() => {
+    // Content updates must not reset the ready state of the existing iframe.
     setLocalHighlights(note?.highlights || []);
   }, [note?.id, note?.highlights]);
   const subtitleFolder = useMemo(() => folders.find((folder) => (
@@ -99,7 +102,7 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
     return () => window.clearInterval(interval);
   }, [note?.entries, note?.mode, playerLoaded]);
   useEffect(() => {
-    if (!activeSubtitleEntryId) return;
+    if (!activeSubtitleEntryId || !isVideoPlaying) return;
     const list = subtitleListRef.current;
     const entry = subtitleEntryRefs.current.get(activeSubtitleEntryId);
     if (!list || !entry) return;
@@ -113,7 +116,7 @@ export function YoutubeSubtitleReader({ note, allItems = [], folders = [], onSpe
       });
       return;
     }
-  }, [activeSubtitleEntryId]);
+  }, [activeSubtitleEntryId, isVideoPlaying]);
   if (!note) return <section className="page"><div className="empty">找不到這篇字幕筆記。<button onClick={onBack}>返回上一層</button></div></section>;
   const seekTo = (entry) => {
     if (note.mode !== YT_SUBTITLE_MODE_SRT || entry.startMs === null || !youtubePlayerRef.current) return;

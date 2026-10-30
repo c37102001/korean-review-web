@@ -251,6 +251,90 @@ test('Y03 Y04 Y05: the stubbed player synchronizes SRT and selected text creates
   assertNoProductionRequests();
 });
 
+for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+test(`Y03: subtitle following survives saved highlights, copying, and playback resume (${viewport.width}px)`, async ({ page, request }) => {
+  await page.setViewportSize(viewport);
+  await page.addInitScript(() => {
+    window.__ytTime = 0;
+    window.__ytState = 2;
+    window.__ytCreations = 0;
+    window.YT = { Player: class {
+      constructor(_element, options) {
+        window.__ytCreations += 1;
+        this.events = options.events;
+        window.setTimeout(() => this.events.onReady(), 0);
+      }
+      getCurrentTime() { return window.__ytTime; }
+      getPlayerState() { return window.__ytState; }
+      seekTo(time) { window.__ytTime = time; }
+      playVideo() { window.__ytState = 1; this.events.onStateChange({ data: 1 }); }
+      pauseVideo() { window.__ytState = 2; this.events.onStateChange({ data: 2 }); }
+      destroy() {}
+    } };
+  });
+  const assertNoProductionRequests = await prepareAppPage(page);
+  await register(page, 'subtitle-follow@example.test');
+  await page.route('https://www.youtube.com/embed/**', (route) => route.fulfill({ contentType: 'text/html', body: '<html></html>' }));
+  await seedSubtitle(page, request, 'follow-note', {
+    title: '持續跟隨', mode: 'srt', youtubeUrl: 'https://youtu.be/abcdefghijk',
+    entries: Array.from({ length: 24 }, (_, index) => ({
+      id: `follow-${index}`, ko: `한국어 문장 ${index + 1}입니다.`, zh: `第 ${index + 1} 句。`,
+      startMs: index * 5000, endMs: (index + 1) * 5000,
+    })),
+  });
+  await openSubtitles(page);
+  await subtitleCard(page, '持續跟隨').click();
+  const list = page.getByLabel('字幕列表');
+  const entries = list.locator('.yt-subtitle-entry');
+  const play = page.getByRole('button', { name: '播放影片', exact: true });
+  await expect(play).toBeEnabled();
+  await play.click();
+  await page.evaluate(() => { window.__ytTime = 50; });
+  await expect(entries.nth(10)).toHaveAttribute('aria-current', 'true');
+  await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await page.getByRole('button', { name: '暫停影片', exact: true }).click();
+  const playerCreations = await page.evaluate(() => window.__ytCreations);
+  await selectText(page, entries.nth(10).locator('.yt-subtitle-ko'), 0, 3);
+  await page.keyboard.press('ControlOrMeta+c');
+  await page.getByRole('button', { name: /畫線標記/ }).click();
+  await expect.poll(async () => (await readDocument(page, request, 'ytSubtitles', 'follow-note'))?.fields.highlights?.arrayValue.values.length).toBe(1);
+  await expect(play).toBeEnabled();
+  await play.click();
+  await page.evaluate(() => { window.__ytTime = 90; });
+  await expect(entries.nth(18)).toHaveAttribute('aria-current', 'true');
+  const centerOffset = () => entries.nth(18).evaluate((entry) => {
+    const list = entry.closest('.yt-subtitle-list');
+    const entryRect = entry.getBoundingClientRect();
+    const listRect = list.getBoundingClientRect();
+    return Math.abs(entryRect.top + entryRect.height / 2 - listRect.top - list.clientHeight / 2);
+  });
+  await expect.poll(centerOffset).toBeLessThan(3);
+
+  await page.getByRole('button', { name: '暫停影片', exact: true }).click();
+  await list.evaluate((element) => element.scrollTo({ top: 0, behavior: 'instant' }));
+  await play.click();
+  await expect.poll(centerOffset).toBeLessThan(3);
+  if (viewport.width < 920) {
+    expect(await page.evaluate(() => window.__ytCreations)).toBe(playerCreations);
+    assertNoProductionRequests();
+    return;
+  }
+  await page.getByRole('button', { name: '暫停影片', exact: true }).click();
+  await page.getByRole('button', { name: '匯出劃線', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '匯出劃線' });
+  await dialog.getByRole('button', { name: '複製', exact: true }).click();
+  await dialog.getByRole('button', { name: '刪除所有劃線' }).click();
+  await expect.poll(async () => (await readDocument(page, request, 'ytSubtitles', 'follow-note'))?.fields.highlights?.arrayValue.values?.length || 0).toBe(0);
+  await dialog.getByRole('button', { name: '關閉', exact: true }).click();
+  await expect(play).toBeEnabled();
+  await play.click();
+  await page.evaluate(() => { window.__ytTime = 65; });
+  await expect(entries.nth(13)).toHaveAttribute('aria-current', 'true');
+  expect(await page.evaluate(() => window.__ytCreations)).toBe(playerCreations);
+  assertNoProductionRequests();
+});
+}
+
 test('Y03: a subtitle without a video shows its fallback and keeps sentence cards non-seekable', async ({ page, request }) => {
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'subtitle-no-video@example.test');
