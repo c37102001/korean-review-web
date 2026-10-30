@@ -9,6 +9,7 @@ import { WordChineseVisibilityButton } from '../features/word-library/components
 import { useWordCollection } from '../features/word-library/hooks/useWordCollection.js';
 import NotesNotebookPage from '../features/notes/pages/NotesNotebookPage.jsx';
 import { YoutubeSubtitleReader } from '../features/subtitles/pages/YoutubeSubtitleReader.jsx';
+import YoutubeSubtitlesPage from '../features/subtitles/pages/YoutubeSubtitlesPage.jsx';
 import { ShadowingCreatorModal } from '../features/subtitles/components/ShadowingCreatorModal.jsx';
 import { ReadingTestPage } from '../features/reading/pages/ReadingTestPage.jsx';
 import { StudyPage } from '../features/sessions/study/StudyPage.jsx';
@@ -53,7 +54,7 @@ function FixtureApp() {
   else if (fixture === 'word-import') content = <section className="page fixture-page"><AddItemsForm title="新增單字" date="2026-09-21" onWriteRecords={async (records) => { window.__wordImportResult = records; }} /></section>;
   else if (fixture === 'notebook') content = <CollectionFixture />;
   else if (fixture === 'folder') content = <CollectionFixture folder />;
-  else if (fixture === 'folders-overview') content = <FoldersPage folders={folders} items={words} loading={false} error="" onSave={asyncNoop} onSetHidden={asyncNoop} onDelete={asyncNoop} onOpen={noop} />;
+  else if (fixture === 'folders-overview') content = <FoldersPage folders={folders} items={words} loading={false} error="" onSave={asyncNoop} onSetHidden={asyncNoop} onRenameTag={asyncNoop} onDelete={asyncNoop} onOpen={noop} />;
   else if (fixture === 'study') content = <StudyPage store={store} updateStore={updateStore} set={createStudySession(words, '視覺測試')} allItems={words} folders={folders} onUpdateRecord={asyncNoop} {...commonClassification} />;
   else if (fixture === 'practice') {
     const session = createFixedWordPracticeSession(questions, '視覺測試');
@@ -71,6 +72,7 @@ function FixtureApp() {
     content = <PracticePage store={store} updateStore={updateStore} set={session} allItems={words} folders={folders} {...commonClassification} />;
   }
   else if (fixture === 'yt-reader') content = <YoutubeSubtitleReader note={subtitle} allItems={words} folders={folders} onAddRecords={asyncNoop} onBack={noop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} />;
+  else if (fixture === 'video-library') content = <YoutubeSubtitlesPage notes={[{ ...subtitle, tag: '韓檢中高級單字60天' }]} onSave={asyncNoop} onRenameTag={asyncNoop} onDelete={asyncNoop} onOpen={noop} />;
   else if (fixture === 'shadowing-creator') content = <ShadowingCreatorModal notes={[{ ...subtitle, videoId: 'fixture-video' }]} onSave={asyncNoop} onClose={noop} />;
   else if (fixture === 'yt-reader-video') content = <YoutubeSubtitleReader note={{ ...subtitle, videoId: 'subtitle-video' }} allItems={words} folders={folders} onAddRecords={asyncNoop} onBack={noop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} />;
   else if (fixture === 'notes' || fixture === 'notes-expanded') content = <NotesNotebookPage notes={notes} loading={false} error="" onSave={asyncNoop} onSetHidden={asyncNoop} onDelete={asyncNoop} onPractice={noop} />;

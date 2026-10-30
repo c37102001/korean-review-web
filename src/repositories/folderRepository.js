@@ -21,6 +21,7 @@ function uniqueIds(values = []) {
 export const folderRepository = {
   subscribe: contentRepository.subscribe,
   setHidden: contentRepository.setHidden,
+  setTag: contentRepository.setTag,
   async save(uid, folder) {
     await contentRepository.save(uid, folder.id, folder);
   },

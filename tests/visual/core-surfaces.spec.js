@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const CASES = ['word-card', 'notebook', 'folder', 'folders-overview', 'study', 'practice', 'yt-reader', 'shadowing-creator', 'notes', 'notes-expanded', 'reading'];
+const CASES = ['word-card', 'notebook', 'folder', 'folders-overview', 'study', 'practice', 'yt-reader', 'video-library', 'shadowing-creator', 'notes', 'notes-expanded', 'reading'];
 const COLLECTION_FIXTURE_WORD_COUNT = 2;
 const VIEWPORTS = [
   { name: 'mobile-360', width: 360, height: 800 },
@@ -41,11 +41,11 @@ for (const viewport of VIEWPORTS) {
           await page.getByRole('button', { name: '下一步' }).click();
           await page.getByRole('checkbox', { name: '第 1 句', exact: true }).check();
         }
-        if (fixture === 'folders-overview' || fixture === 'notes-expanded') {
+        if (fixture === 'folders-overview' || fixture === 'notes-expanded' || fixture === 'video-library') {
           const toggles = page.locator('.folder-tag-group-toggle, .note-category-toggle');
           await expect(toggles).toHaveCount(2);
           for (const toggle of await toggles.all()) await toggle.click();
-          await expect(page.locator(fixture === 'folders-overview' ? '.folder-card' : '.grammar-card')).toHaveCount(2);
+          await expect(page.locator(fixture === 'folders-overview' ? '.folder-card' : fixture === 'video-library' ? '.yt-subtitle-note-card' : '.grammar-card')).toHaveCount(fixture === 'video-library' ? 1 : 2);
         }
 
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);

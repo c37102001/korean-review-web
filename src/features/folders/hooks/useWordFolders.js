@@ -98,6 +98,15 @@ export function useWordFolders(user, enabled = true) {
     await folderRepository.setHidden(user.uid, targets.map((folder) => folder.id), hidden);
   }, [user, state.folders]);
 
+  const renameTag = useCallback(async (oldTag, newTag) => {
+    if (!user) throw new Error('尚未登入');
+    const tag = String(newTag || '').trim();
+    if (tag.length > 40) throw new Error('標籤名稱最多 40 個字');
+    if (tag === oldTag) return;
+    const ids = state.folders.filter((folder) => folder.tag === oldTag).map((folder) => folder.id);
+    await folderRepository.setTag(user.uid, ids, tag);
+  }, [user, state.folders]);
+
   const addWords = useCallback(async (folderId, wordIds) => {
     if (!user) throw new Error('尚未登入');
     await folderRepository.addWords(user.uid, folderId, wordIds, isLearnedFolder(state.folders.find((folder) => folder.id === folderId) || { id: folderId }));
@@ -143,6 +152,7 @@ export function useWordFolders(user, enabled = true) {
     ...state,
     save,
     setHidden,
+    renameTag,
     remove,
     addWords,
     removeWords,

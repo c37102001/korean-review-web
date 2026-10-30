@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { youtubeSubtitlesRepository } from '../../../repositories/userContentRepository.js';
 import { createId } from '../../../shared/id.js';
 import { normalizeYoutubeSubtitle } from '../../../subtitles/model.js';
+import { SHADOWING_SUBTITLE_TAG } from '../../../subtitles/shadowing.js';
 
 export function useYoutubeSubtitles(user, enabled = true) {
   const [state, setState] = useState({ notes: [], loading: false, error: '' });
@@ -44,5 +45,15 @@ export function useYoutubeSubtitles(user, enabled = true) {
     await youtubeSubtitlesRepository.remove(user.uid, id);
   }, [user]);
 
-  return { ...state, save, remove };
+  const renameTag = useCallback(async (oldTag, newTag) => {
+    if (!user) throw new Error('尚未登入');
+    const tag = String(newTag || '').trim();
+    if (oldTag === SHADOWING_SUBTITLE_TAG) throw new Error('跟讀練習是固定系統標籤');
+    if (tag.length > 40) throw new Error('標籤名稱最多 40 個字');
+    if (tag === oldTag) return;
+    const ids = state.notes.filter((note) => note.tag === oldTag).map((note) => note.id);
+    await youtubeSubtitlesRepository.setTag(user.uid, ids, tag);
+  }, [user, state.notes]);
+
+  return { ...state, save, remove, renameTag };
 }

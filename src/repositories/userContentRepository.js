@@ -48,6 +48,12 @@ export function createUserContentRepository(collectionName, { tombstoneFields = 
         { hidden, updatedAt: serverTimestamp() },
       )));
     },
+    async setTag(uid, ids, tag) {
+      await commitFirestoreOperations([...new Set(ids)].map((id) => (batch) => batch.update(
+        doc(db, 'users', uid, collectionName, id),
+        { tag, updatedAt: serverTimestamp() },
+      )));
+    },
     async remove(uid, id) {
       await retryFirestoreWrite(() => setDoc(
         doc(db, 'users', uid, collectionName, id),

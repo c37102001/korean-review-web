@@ -4,6 +4,7 @@ import { ShadowingCreatorModal } from '../components/ShadowingCreatorModal.jsx';
 import { SHADOWING_SUBTITLE_TAG } from '../../../subtitles/shadowing.js';
 import { ActionMenu } from '../../../components/actions/ActionMenu.jsx';
 import { EditIconButton } from '../../../components/actions/ContentActionButtons.jsx';
+import { TagRenameModal } from '../../../components/library/TagRenameModal.jsx';
 import { CollapsibleGroup, EntityCardShell, EntityGrid, LearnedVisibilityToggle, LibraryPageShell } from '../../../components/library/LibraryPrimitives.jsx';
 import { formatContentTimestamp } from '../../../shared/dateTime.js';
 import {
@@ -102,10 +103,11 @@ export function YoutubeSubtitleEditorModal({ note, tagSuggestions = [], onSave, 
   );
 }
 
-export default function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, onOpen }) {
+export default function YoutubeSubtitlesPage({ notes, error, onSave, onRenameTag, onDelete, onOpen }) {
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [creatingShadowing, setCreatingShadowing] = useState(false);
+  const [editingTag, setEditingTag] = useState(null);
   const [actionError, setActionError] = useState('');
   const [expandedTags, setExpandedTags] = useState(() => new Set());
   const [hideLearned, setHideLearned] = useState(true);
@@ -152,7 +154,7 @@ export default function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, o
       {actionError && <div className="form-error">{actionError}</div>}
       {!!groups.length && <div className="folder-tag-groups yt-subtitle-tag-groups">{groups.map((group) => {
         const collapsed = !expandedTags.has(group.label);
-        return <CollapsibleGroup className="folder-tag-group" collapsed={collapsed} onToggle={() => toggleTag(group.label)} title={group.label} countLabel={`${group.notes.length} 個字幕檔案`} key={group.label}>
+        return <CollapsibleGroup className="folder-tag-group" collapsed={collapsed} onToggle={() => toggleTag(group.label)} title={group.label} countLabel={`${group.notes.length} 個字幕檔案`} key={group.label} actions={group.label !== SHADOWING_SUBTITLE_TAG && onRenameTag && <EditIconButton label={`編輯標籤「${group.label}」`} onClick={() => setEditingTag(group.notes[0]?.tag || '')} />}>
           {group.notes.length ? <EntityGrid className="yt-subtitle-note-grid">{group.notes.map((note) => <YoutubeSubtitleCard key={note.id} note={note} onOpen={onOpen} onEdit={setEditing} onDelete={deleteNote} />)}</EntityGrid> : <div className="grammar-empty">尚未建立跟讀練習。</div>}
         </CollapsibleGroup>;
       })}</div>}
@@ -164,6 +166,10 @@ export default function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, o
         setCreatingShadowing(false);
       }} onClose={() => setCreatingShadowing(false)} />}
       {editing && <YoutubeSubtitleEditorModal note={editing.id ? editing : null} tagSuggestions={tagSuggestions} onSave={async (note) => { await onSave(note); setEditing(null); }} onClose={() => setEditing(null)} />}
+      {editingTag !== null && <TagRenameModal tag={editingTag} countLabel={`${notes.filter((note) => note.tag === editingTag).length} 個影片`} onSave={async (tag) => {
+        await onRenameTag(editingTag, tag);
+        setExpandedTags((current) => new Set([...current, tag || UNTAGGED_SUBTITLE_LABEL]));
+      }} onClose={() => setEditingTag(null)} />}
     </LibraryPageShell>
   );
 }

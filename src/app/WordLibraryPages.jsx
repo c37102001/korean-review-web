@@ -15,6 +15,7 @@ import {
 import { useOptionalPractice } from '../practice/optionalPractice.js';
 import { ActionMenu } from '../components/actions/ActionMenu.jsx';
 import { EditIconButton, KoreanSpeakButton, StarButton } from '../components/actions/ContentActionButtons.jsx';
+import { TagRenameModal } from '../components/library/TagRenameModal.jsx';
 import { TextSpeakButton } from '../components/actions/TextSpeakButton.jsx';
 import { ExportCodeBlock } from '../components/export/ExportCodeBlock.jsx';
 import { FolderPickerDropdown } from '../features/word-library/components/BulkWordActions.jsx';
@@ -512,10 +513,11 @@ function FolderOverviewCard({ folder, itemById, itemIds, onOpen, onEdit, onDelet
   );
 }
 
-export function FoldersPage({ folders, items, loading, error, onSave, onSetHidden, onDelete, onOpen }) {
+export function FoldersPage({ folders, items, loading, error, onSave, onSetHidden, onRenameTag, onDelete, onOpen }) {
   const [editingFolder, setEditingFolder] = useState(undefined);
   const [actionError, setActionError] = useState('');
   const [expandedTags, setExpandedTags] = useState(() => new Set());
+  const [editingTag, setEditingTag] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [showHidden, setShowHidden] = useState(false);
   const [updatingHidden, setUpdatingHidden] = useState(false);
@@ -601,6 +603,7 @@ export function FoldersPage({ folders, items, loading, error, onSave, onSetHidde
             <span className="folder-tag-group-heading"><span className="folder-tag-mark">{mark}</span><h2>{title}</h2></span>
             <ChevronDown size={18} />
           </button>
+          {key !== '__pinned__' && onRenameTag && <EditIconButton label={`編輯標籤「${title}」`} onClick={() => setEditingTag(group.folders[0]?.tag || '')} />}
           <button
             type="button"
             className="text-link"
@@ -648,6 +651,10 @@ export function FoldersPage({ folders, items, loading, error, onSave, onSetHidde
         </div>
       ) : <div className="empty folder-empty"><Folder size={32} /><strong>{folders.length ? '資料夾皆已隱藏' : '還沒有資料夾'}</strong><span>{folders.length ? '按「顯示隱藏」即可查看並恢復資料夾。' : '建立第一個資料夾，將同類型單字集中學習。'}</span></div>}
       {editingFolder !== undefined && <FolderNameModal folder={editingFolder} tagSuggestions={tagSuggestions} onSave={onSave} onClose={() => setEditingFolder(undefined)} />}
+      {editingTag !== null && <TagRenameModal tag={editingTag} countLabel={`${folders.filter((folder) => folder.tag === editingTag).length} 個資料夾`} onSave={async (tag) => {
+        await onRenameTag(editingTag, tag);
+        setExpandedTags((current) => new Set([...current, tag || UNTAGGED_FOLDER_LABEL]));
+      }} onClose={() => setEditingTag(null)} />}
     </section>
   );
 }

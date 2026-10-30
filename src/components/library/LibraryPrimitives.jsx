@@ -14,7 +14,7 @@ export function LibraryPageShell({ className = '', eyebrow, title, actions, quer
   );
 }
 
-export function CollapsibleGroup({ className = '', variant = 'tag', collapsed, onToggle, title, countLabel, marker = '標籤', markerIcon, children }) {
+export function CollapsibleGroup({ className = '', variant = 'tag', collapsed, onToggle, title, countLabel, marker = '標籤', markerIcon, actions, children }) {
   const isCategory = variant === 'category';
   return (
     <section className={`${className} ${collapsed ? 'collapsed' : ''}`.trim()}>
@@ -27,6 +27,7 @@ export function CollapsibleGroup({ className = '', variant = 'tag', collapsed, o
           {isCategory && <span className="note-category-count">{countLabel}</span>}
           <ChevronDown size={isCategory ? 19 : 18} />
         </button>
+        {actions}
         {!isCategory && <span>{countLabel}</span>}
       </div>
       {!collapsed && children}

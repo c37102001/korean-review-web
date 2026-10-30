@@ -466,6 +466,11 @@
   white-space: nowrap;
 }
 
+.folder-tag-group-head > .edit-icon-button {
+  flex-shrink: 0;
+  margin-right: auto;
+}
+
 .folder-tag-group-toggle {
   min-width: 0;
   display: inline-flex;
@@ -494,13 +499,20 @@
 
 .folder-tag-group-heading {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 9px;
 }
 
 .folder-tag-group-heading h2 {
   margin: 0;
+  overflow-wrap: anywhere;
   font-size: calc(22.0px * var(--user-font-scale, 1));
+}
+
+.folder-tag-group-heading > .folder-tag-mark {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .folder-tag-group-head > span {
