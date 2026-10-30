@@ -586,6 +586,8 @@ export function FoldersPage({ folders, items, loading, error, onSave, onSetHidde
   });
   const renderFolderGroup = (group, { key, title, mark }) => {
     const collapsed = !expandedTags.has(key);
+    const groupIds = (key === '__pinned__' ? pinnedFolders : visibleFolders.filter((folder) => folderTagLabel(folder) === group.label)).map((folder) => folder.id);
+    const allGroupSelected = groupIds.length > 0 && groupIds.every((id) => selectedIds.includes(id));
     return (
       <section className={`folder-tag-group ${collapsed ? 'collapsed' : ''}`} key={key}>
         <div className="folder-tag-group-head">
@@ -599,6 +601,13 @@ export function FoldersPage({ folders, items, loading, error, onSave, onSetHidde
             <span className="folder-tag-group-heading"><span className="folder-tag-mark">{mark}</span><h2>{title}</h2></span>
             <ChevronDown size={18} />
           </button>
+          <button
+            type="button"
+            className="text-link"
+            aria-label={`${allGroupSelected ? '取消全選' : '全選'} ${title} 資料夾`}
+            disabled={!groupIds.length || updatingHidden}
+            onClick={() => setSelectedIds((current) => toggleFolderGroupSelection(current, groupIds))}
+          >{allGroupSelected ? '取消全選' : '全選'}</button>
           <span>{group.folders.length} 個資料夾</span>
         </div>
         {!collapsed && <div className="folder-grid">{group.folders.map(renderFolderCard)}</div>}

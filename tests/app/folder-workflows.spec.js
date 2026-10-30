@@ -112,6 +112,41 @@ test('F05 W11: stale folder references can be removed and single-card deletion c
   assertNoProductionRequests();
 });
 
+test('F06: tag selection includes pinned folders, preserves other selections and respects hidden visibility', async ({ page, request }) => {
+  const assertNoProductionRequests = await prepareAppPage(page);
+  await register(page, 'folder-tag-selection@example.test');
+  for (const folder of [
+    { id: 'tag-a', name: '標籤一般', tag: '目標' },
+    { id: 'tag-pin', name: '標籤置頂', tag: '目標', pinned: true },
+    { id: 'tag-hidden', name: '標籤隱藏', tag: '目標', hidden: true },
+    { id: 'tag-other', name: '別組', tag: '其他' },
+  ]) await seedDocument(page, request, 'folders', folder.id, { ...folder, wordIds: [] });
+  await openFolders(page, { expand: false });
+  for (const name of ['標籤置頂', '別組', '標籤一般']) {
+    await expandAllContentGroups(page, { target: page.getByRole('checkbox', { name: `選取 ${name}`, exact: true }) });
+  }
+  const bulk = page.locator('.folder-bulk-actions');
+  await page.getByRole('checkbox', { name: '選取 別組', exact: true }).check();
+  await page.getByTitle('收合目標').click();
+  await page.getByRole('button', { name: '全選 目標 資料夾', exact: true }).click();
+  await expect(bulk).toContainText('已選 3 個資料夾');
+  await expect(page.getByRole('checkbox', { name: '選取 標籤置頂', exact: true })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: '選取 別組', exact: true })).toBeChecked();
+  await expect(page.getByTitle('展開目標')).toBeVisible();
+  await page.getByRole('button', { name: '取消全選 目標 資料夾', exact: true }).click();
+  await expect(bulk).toContainText('已選 1 個資料夾');
+  await page.getByRole('button', { name: /顯示隱藏/ }).click();
+  await page.getByRole('button', { name: '全選 目標 資料夾', exact: true }).click();
+  await expect(bulk).toContainText('已選 4 個資料夾');
+  await page.getByTitle('展開目標').click();
+  await expect(page.getByRole('checkbox', { name: '選取 標籤隱藏', exact: true })).toBeChecked();
+  await bulk.getByRole('button', { name: '隱藏', exact: true }).click();
+  for (const id of ['tag-a', 'tag-pin', 'tag-hidden', 'tag-other']) {
+    await expect.poll(async () => (await readDocument(page, request, 'folders', id))?.fields.hidden?.booleanValue).toBe(true);
+  }
+  assertNoProductionRequests();
+});
+
 test('F06: select all folders, hide them, reveal hidden folders and restore one', async ({ page, request }) => {
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'folder-hidden@example.test');

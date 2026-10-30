@@ -456,6 +456,16 @@
   border-bottom: 1px solid #dce7e4;
 }
 
+.folder-tag-group-head > .text-link,
+.folder-tag-group-head > span {
+  flex-shrink: 0;
+}
+
+.folder-tag-group-head > .text-link {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
 .folder-tag-group-toggle {
   min-width: 0;
   display: inline-flex;
