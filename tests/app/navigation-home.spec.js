@@ -36,16 +36,16 @@ test('G04: every main tab opens its real page and loads its own data', async ({ 
     ['單字本', '單字本', '안녕하세요'],
     ['資料夾', '資料夾', '導覽資料夾'],
     ['筆記', '筆記', '導覽筆記'],
-    ['YT 字幕', 'YT 字幕', '導覽字幕'],
+    ['影片學習', '影片學習', '導覽字幕'],
     ['閱讀測驗', '閱讀測驗', '오늘은 맑아요.'],
   ];
   for (const [tab, heading, content] of destinations) {
     await page.getByRole('button', { name: tab, exact: true }).click();
     await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
-    const target = ['資料夾', '筆記', 'YT 字幕'].includes(tab)
+    const target = ['資料夾', '筆記', '影片學習'].includes(tab)
       ? page.getByRole('heading', { name: content, exact: true })
       : page.getByText(content, { exact: true });
-    if (['資料夾', '筆記', 'YT 字幕', '閱讀測驗'].includes(tab)) await expandAllContentGroups(page, { target });
+    if (['資料夾', '筆記', '影片學習', '閱讀測驗'].includes(tab)) await expandAllContentGroups(page, { target });
     await expect(target).toBeVisible();
   }
   await page.getByRole('button', { name: '韓文筆記' }).click();
@@ -57,7 +57,7 @@ test('G04: library groups start closed and can be expanded after data arrives', 
   const assertNoProductionRequests = await prepareAppPage(page);
   await register(page, 'closed-groups@example.test');
   await seedNavigationContent(page, request);
-  for (const tab of ['資料夾', '筆記', 'YT 字幕', '閱讀測驗']) {
+  for (const tab of ['資料夾', '筆記', '影片學習', '閱讀測驗']) {
     await page.getByRole('button', { name: tab, exact: true }).click();
     const toggles = page.locator('.folder-tag-group-toggle, .note-category-toggle');
     await expect(toggles.first()).toBeVisible();
@@ -123,12 +123,12 @@ test('G05: global back returns one level through subtitle and folder details', a
   await page.getByRole('button', { name: '回到上一層' }).click();
   await expect(page.getByRole('heading', { name: '今天練韓文' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'YT 字幕', exact: true }).click();
+  await page.getByRole('button', { name: '影片學習', exact: true }).click();
   await expandAllContentGroups(page);
   await page.locator('.yt-subtitle-note-card').getByRole('heading', { name: '返回字幕', exact: true }).click();
   await expect(page.getByRole('heading', { name: '返回字幕' })).toBeVisible();
   await page.getByRole('button', { name: '回到上一層' }).click();
-  await expect(page.getByRole('heading', { name: 'YT 字幕' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '影片學習' })).toBeVisible();
   assertNoProductionRequests();
 });
 

@@ -34,8 +34,8 @@ async function expandSubtitleGroups(page) {
 }
 
 async function openSubtitles(page, { expand = true } = {}) {
-  await page.getByRole('button', { name: 'YT 字幕', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'YT 字幕', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '影片學習', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '影片學習', exact: true })).toBeVisible();
   if (expand) await expandSubtitleGroups(page);
 }
 

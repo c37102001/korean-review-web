@@ -84,7 +84,7 @@ export function YoutubeSubtitleEditorModal({ note, tagSuggestions = [], onSave, 
         <div className="grammar-modal-head"><span className="eyebrow">YouTube Subtitles</span><h2>{note ? '編輯字幕筆記' : '新增字幕筆記'}</h2></div>
         <label className="grammar-field"><span>標題</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：影片名稱或主題" autoFocus required /></label>
         <label className="grammar-field"><span>標籤 <small>選填</small></span><input value={tag} onChange={(event) => setTag(event.target.value)} list="yt-subtitle-tag-suggestions" placeholder="留空會歸類為無標籤" />{!!tagSuggestions.length && <datalist id="yt-subtitle-tag-suggestions">{tagSuggestions.map((suggestion) => <option value={suggestion} key={suggestion} />)}</datalist>}</label>
-        <label className="yt-subtitle-learned-option"><input type="checkbox" checked={learned} onChange={(event) => setLearned(event.target.checked)} /><span><strong>已學習</strong><small>標示完成後，預設不顯示在 YT 字幕列表中。</small></span></label>
+        <label className="yt-subtitle-learned-option"><input type="checkbox" checked={learned} onChange={(event) => setLearned(event.target.checked)} /><span><strong>已學習</strong><small>標示完成後，預設不顯示在影片學習列表中。</small></span></label>
         <label className="grammar-field"><span>YouTube 連結 <small>選填</small></span><input type="url" value={youtubeUrl} onChange={(event) => setYoutubeUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=..." /></label>
         <div className="grammar-field"><span>字幕格式</span><div className="segmented compact note-category-control"><button type="button" className={mode === YT_SUBTITLE_MODE_JSON ? 'active' : ''} onClick={() => setMode(YT_SUBTITLE_MODE_JSON)}>JSON 逐句字幕</button><button type="button" className={mode === YT_SUBTITLE_MODE_SRT ? 'active' : ''} onClick={() => setMode(YT_SUBTITLE_MODE_SRT)}>SRT 時間字幕</button></div></div>
         <label className="grammar-field tagged-note-field">
@@ -133,7 +133,7 @@ export default function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, o
     <LibraryPageShell
       className="yt-subtitles-page"
       eyebrow="YouTube Subtitles"
-      title="YT 字幕"
+      title="影片學習"
       actions={<><button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 新增字幕</button><ActionMenu><LearnedVisibilityToggle hidden={hideLearned} count={learnedCount} noun="字幕檔案" onToggle={() => setHideLearned((current) => !current)} /></ActionMenu></>}
       query={query}
       onQueryChange={setQuery}

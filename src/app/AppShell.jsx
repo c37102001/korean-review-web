@@ -32,7 +32,7 @@ export function AppShell({
         <button className={navClass(page, ['notebook'])} onClick={() => navTop('notebook')}><LibraryBig size={18} /> 單字本</button>
         <button className={navClass(page, ['folders', 'folder'])} onClick={() => navTop('folders')}><Folder size={18} /> 資料夾</button>
         <button className={navClass(page, ['notes'])} onClick={() => navTop('notes')}><NotebookPen size={18} /> 筆記</button>
-        <button className={navClass(page, ['ytSubtitles', 'ytSubtitle'])} onClick={() => navTop('ytSubtitles')}><Captions size={18} /> YT 字幕</button>
+        <button className={navClass(page, ['ytSubtitles', 'ytSubtitle'])} onClick={() => navTop('ytSubtitles')}><Captions size={18} /> 影片學習</button>
         <button className={navClass(page, ['readingTests', 'readingTest'])} onClick={() => navTop('readingTests')}><BookOpen size={18} /> 閱讀測驗</button>
         <button className="logout-button" onClick={onLogout}><LogOut size={18} /> 登出</button>
       </aside>
