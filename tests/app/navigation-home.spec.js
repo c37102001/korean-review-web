@@ -124,7 +124,7 @@ test('G05: global back returns one level through subtitle and folder details', a
   await expect(page.getByRole('heading', { name: '今天練韓文' })).toBeVisible();
 
   await page.getByRole('button', { name: '影片學習', exact: true }).click();
-  await expandAllContentGroups(page);
+  await expandAllContentGroups(page, { target: page.getByRole('heading', { name: '返回字幕', exact: true }) });
   await page.locator('.yt-subtitle-note-card').getByRole('heading', { name: '返回字幕', exact: true }).click();
   await expect(page.getByRole('heading', { name: '返回字幕' })).toBeVisible();
   await page.getByRole('button', { name: '回到上一層' }).click();

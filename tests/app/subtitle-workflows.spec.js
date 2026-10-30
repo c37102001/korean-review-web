@@ -30,7 +30,7 @@ async function seedSubtitle(page, request, id, {
 }
 
 async function expandSubtitleGroups(page) {
-  await expandAllContentGroups(page);
+  await expandAllContentGroups(page, { target: page.locator('.yt-subtitle-note-card').first() });
 }
 
 async function openSubtitles(page, { expand = true } = {}) {

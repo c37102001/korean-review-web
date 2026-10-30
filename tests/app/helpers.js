@@ -137,12 +137,12 @@ export async function setNetworkOffline(context, offline = true) {
 
 export async function expandAllContentGroups(page, { target } = {}) {
   const groupToggle = page.locator('.folder-tag-group-toggle, .note-category-toggle').first();
-  const collapsedToggle = page.locator('.folder-tag-group-toggle[aria-expanded="false"], .note-category-toggle[aria-expanded="false"]').first();
+  const collapsedToggle = page.locator('.folder-tag-group-toggle[aria-expanded="false"], .note-category-toggle[aria-expanded="false"]');
   await expect(groupToggle).toBeVisible();
   await expect(async () => {
     const remaining = await collapsedToggle.count();
     for (let index = 0; index < remaining && await collapsedToggle.count(); index += 1) {
-      await collapsedToggle.click();
+      await collapsedToggle.first().click();
     }
     if (target) await expect(target).toBeVisible({ timeout: 500 });
     else await expect(collapsedToggle).toHaveCount(0);

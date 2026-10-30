@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Check, Plus, Trash2, X } from 'lucide-react';
+import { Check, Mic, Plus, Trash2, X } from 'lucide-react';
+import { ShadowingCreatorModal } from '../components/ShadowingCreatorModal.jsx';
+import { SHADOWING_SUBTITLE_TAG } from '../../../subtitles/shadowing.js';
 import { ActionMenu } from '../../../components/actions/ActionMenu.jsx';
 import { EditIconButton } from '../../../components/actions/ContentActionButtons.jsx';
 import { CollapsibleGroup, EntityCardShell, EntityGrid, LearnedVisibilityToggle, LibraryPageShell } from '../../../components/library/LibraryPrimitives.jsx';
@@ -83,7 +85,7 @@ export function YoutubeSubtitleEditorModal({ note, tagSuggestions = [], onSave, 
         <button type="button" className="modal-close" disabled={saving} onClick={onClose} aria-label="關閉"><X size={18} /></button>
         <div className="grammar-modal-head"><span className="eyebrow">YouTube Subtitles</span><h2>{note ? '編輯字幕筆記' : '新增字幕筆記'}</h2></div>
         <label className="grammar-field"><span>標題</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：影片名稱或主題" autoFocus required /></label>
-        <label className="grammar-field"><span>標籤 <small>選填</small></span><input value={tag} onChange={(event) => setTag(event.target.value)} list="yt-subtitle-tag-suggestions" placeholder="留空會歸類為無標籤" />{!!tagSuggestions.length && <datalist id="yt-subtitle-tag-suggestions">{tagSuggestions.map((suggestion) => <option value={suggestion} key={suggestion} />)}</datalist>}</label>
+        <label className="grammar-field"><span>標籤 <small>選填</small></span><input value={tag} disabled={note?.tag === SHADOWING_SUBTITLE_TAG} onChange={(event) => setTag(event.target.value)} list="yt-subtitle-tag-suggestions" placeholder="留空會歸類為無標籤" />{!!tagSuggestions.length && <datalist id="yt-subtitle-tag-suggestions">{tagSuggestions.map((suggestion) => <option value={suggestion} key={suggestion} />)}</datalist>}</label>
         <label className="yt-subtitle-learned-option"><input type="checkbox" checked={learned} onChange={(event) => setLearned(event.target.checked)} /><span><strong>已學習</strong><small>標示完成後，預設不顯示在影片學習列表中。</small></span></label>
         <label className="grammar-field"><span>YouTube 連結 <small>選填</small></span><input type="url" value={youtubeUrl} onChange={(event) => setYoutubeUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=..." /></label>
         <div className="grammar-field"><span>字幕格式</span><div className="segmented compact note-category-control"><button type="button" className={mode === YT_SUBTITLE_MODE_JSON ? 'active' : ''} onClick={() => setMode(YT_SUBTITLE_MODE_JSON)}>JSON 逐句字幕</button><button type="button" className={mode === YT_SUBTITLE_MODE_SRT ? 'active' : ''} onClick={() => setMode(YT_SUBTITLE_MODE_SRT)}>SRT 時間字幕</button></div></div>
@@ -103,6 +105,7 @@ export function YoutubeSubtitleEditorModal({ note, tagSuggestions = [], onSave, 
 export default function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, onOpen }) {
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
+  const [creatingShadowing, setCreatingShadowing] = useState(false);
   const [actionError, setActionError] = useState('');
   const [expandedTags, setExpandedTags] = useState(() => new Set());
   const [hideLearned, setHideLearned] = useState(true);
@@ -114,10 +117,16 @@ export default function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, o
     return visibleNotes.filter((note) => [note.title, note.tag, note.youtubeUrl, ...note.entries.flatMap((entry) => [entry.ko, entry.zh])]
       .filter(Boolean).join(' ').toLocaleLowerCase('zh-TW').includes(keyword));
   }, [query, visibleNotes]);
-  const groups = useMemo(() => groupYoutubeSubtitlesByTag(filtered), [filtered]);
-  const tagSuggestions = useMemo(() => groupYoutubeSubtitlesByTag(notes)
+  const groups = useMemo(() => {
+    const grouped = groupYoutubeSubtitlesByTag(filtered);
+    if (!query.trim() && !grouped.some((group) => group.label === SHADOWING_SUBTITLE_TAG)) {
+      grouped.unshift({ label: SHADOWING_SUBTITLE_TAG, notes: [] });
+    }
+    return grouped;
+  }, [filtered, query]);
+  const tagSuggestions = useMemo(() => [...new Set([SHADOWING_SUBTITLE_TAG, ...groupYoutubeSubtitlesByTag(notes)
     .filter((group) => group.label !== UNTAGGED_SUBTITLE_LABEL)
-    .map((group) => group.label), [notes]);
+    .map((group) => group.label)])], [notes]);
   const toggleTag = (tag) => setExpandedTags((current) => {
     const next = new Set(current);
     if (next.has(tag)) next.delete(tag);
@@ -134,19 +143,26 @@ export default function YoutubeSubtitlesPage({ notes, error, onSave, onDelete, o
       className="yt-subtitles-page"
       eyebrow="YouTube Subtitles"
       title="影片學習"
-      actions={<><button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 新增字幕</button><ActionMenu><LearnedVisibilityToggle hidden={hideLearned} count={learnedCount} noun="字幕檔案" onToggle={() => setHideLearned((current) => !current)} /></ActionMenu></>}
+      actions={<><button className="primary" onClick={() => setEditing({})}><Plus size={18} /> 新增字幕</button><button onClick={() => setCreatingShadowing(true)}><Mic size={18} /> 建立跟讀</button><ActionMenu><LearnedVisibilityToggle hidden={hideLearned} count={learnedCount} noun="字幕檔案" onToggle={() => setHideLearned((current) => !current)} /></ActionMenu></>}
       query={query}
       onQueryChange={setQuery}
       searchPlaceholder="搜尋標題、標籤、影片連結或字幕內容"
       error={error}
     >
       {actionError && <div className="form-error">{actionError}</div>}
-      {filtered.length ? <div className="folder-tag-groups yt-subtitle-tag-groups">{groups.map((group) => {
+      {!!groups.length && <div className="folder-tag-groups yt-subtitle-tag-groups">{groups.map((group) => {
         const collapsed = !expandedTags.has(group.label);
         return <CollapsibleGroup className="folder-tag-group" collapsed={collapsed} onToggle={() => toggleTag(group.label)} title={group.label} countLabel={`${group.notes.length} 個字幕檔案`} key={group.label}>
-          <EntityGrid className="yt-subtitle-note-grid">{group.notes.map((note) => <YoutubeSubtitleCard key={note.id} note={note} onOpen={onOpen} onEdit={setEditing} onDelete={deleteNote} />)}</EntityGrid>
+          {group.notes.length ? <EntityGrid className="yt-subtitle-note-grid">{group.notes.map((note) => <YoutubeSubtitleCard key={note.id} note={note} onOpen={onOpen} onEdit={setEditing} onDelete={deleteNote} />)}</EntityGrid> : <div className="grammar-empty">尚未建立跟讀練習。</div>}
         </CollapsibleGroup>;
-      })}</div> : <div className="panel grammar-empty">{query ? '找不到符合的字幕筆記。' : hideLearned && notes.length ? '目前沒有未學習的字幕筆記。取消隱藏即可查看全部字幕。' : '還沒有字幕筆記。新增一篇後即可放入中韓字幕。'}</div>}
+      })}</div>}
+      {!filtered.length && <div className="panel grammar-empty">{query ? '找不到符合的字幕筆記。' : hideLearned && notes.length ? '目前沒有未學習的字幕筆記。取消隱藏即可查看全部字幕。' : '還沒有字幕筆記。新增一篇後即可放入中韓字幕。'}</div>}
+      {creatingShadowing && <ShadowingCreatorModal notes={notes} onSave={async (note) => {
+        await onSave(note);
+        setExpandedTags((current) => new Set([...current, SHADOWING_SUBTITLE_TAG]));
+        setQuery('');
+        setCreatingShadowing(false);
+      }} onClose={() => setCreatingShadowing(false)} />}
       {editing && <YoutubeSubtitleEditorModal note={editing.id ? editing : null} tagSuggestions={tagSuggestions} onSave={async (note) => { await onSave(note); setEditing(null); }} onClose={() => setEditing(null)} />}
     </LibraryPageShell>
   );

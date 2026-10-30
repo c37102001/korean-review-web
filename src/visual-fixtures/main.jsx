@@ -9,6 +9,7 @@ import { WordChineseVisibilityButton } from '../features/word-library/components
 import { useWordCollection } from '../features/word-library/hooks/useWordCollection.js';
 import NotesNotebookPage from '../features/notes/pages/NotesNotebookPage.jsx';
 import { YoutubeSubtitleReader } from '../features/subtitles/pages/YoutubeSubtitleReader.jsx';
+import { ShadowingCreatorModal } from '../features/subtitles/components/ShadowingCreatorModal.jsx';
 import { ReadingTestPage } from '../features/reading/pages/ReadingTestPage.jsx';
 import { StudyPage } from '../features/sessions/study/StudyPage.jsx';
 import { PracticePage } from '../features/sessions/practice/PracticePage.jsx';
@@ -70,6 +71,7 @@ function FixtureApp() {
     content = <PracticePage store={store} updateStore={updateStore} set={session} allItems={words} folders={folders} {...commonClassification} />;
   }
   else if (fixture === 'yt-reader') content = <YoutubeSubtitleReader note={subtitle} allItems={words} folders={folders} onAddRecords={asyncNoop} onBack={noop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} />;
+  else if (fixture === 'shadowing-creator') content = <ShadowingCreatorModal notes={[{ ...subtitle, videoId: 'fixture-video' }]} onSave={asyncNoop} onClose={noop} />;
   else if (fixture === 'yt-reader-video') content = <YoutubeSubtitleReader note={{ ...subtitle, videoId: 'subtitle-video' }} allItems={words} folders={folders} onAddRecords={asyncNoop} onBack={noop} onOpenFolder={noop} onSave={asyncNoop} onDelete={asyncNoop} />;
   else if (fixture === 'notes' || fixture === 'notes-expanded') content = <NotesNotebookPage notes={notes} loading={false} error="" onSave={asyncNoop} onSetHidden={asyncNoop} onDelete={asyncNoop} onPractice={noop} />;
   else if (fixture === 'render-error') content = <AppErrorBoundary><BrokenFixture /></AppErrorBoundary>;

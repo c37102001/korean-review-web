@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const CASES = ['word-card', 'notebook', 'folder', 'folders-overview', 'study', 'practice', 'yt-reader', 'notes', 'notes-expanded', 'reading'];
+const CASES = ['word-card', 'notebook', 'folder', 'folders-overview', 'study', 'practice', 'yt-reader', 'shadowing-creator', 'notes', 'notes-expanded', 'reading'];
 const COLLECTION_FIXTURE_WORD_COUNT = 2;
 const VIEWPORTS = [
   { name: 'mobile-360', width: 360, height: 800 },
@@ -36,6 +36,11 @@ for (const viewport of VIEWPORTS) {
         });
         await expect(page.locator('[data-fixture]')).toHaveAttribute('data-fixture', fixture);
         await page.evaluate(() => document.fonts.ready);
+        if (fixture === 'shadowing-creator') {
+          await page.getByLabel('選擇影片').selectOption({ index: 1 });
+          await page.getByRole('button', { name: '下一步' }).click();
+          await page.getByRole('checkbox', { name: '第 1 句', exact: true }).check();
+        }
         if (fixture === 'folders-overview' || fixture === 'notes-expanded') {
           const toggles = page.locator('.folder-tag-group-toggle, .note-category-toggle');
           await expect(toggles).toHaveCount(2);
